@@ -156,6 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Users className={`w-3.5 h-3.5 ${isDark ? 'text-amber-400' : 'text-amber-700'}`} />
             <span>{t.friendModeration}</span>
+            <span className="px-1 text-[9px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/50">SIM</span>
           </button>
 
           <button
@@ -190,6 +191,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Radio className={`w-3.5 h-3.5 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
             <span>{t.cryptocloud}</span>
+            <span className="px-1 text-[9px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/50">SIM</span>
             <span className={`text-[10px] font-mono ${isDark ? 'text-emerald-300' : 'text-emerald-800 font-bold'}`}>
               ({swarmOnlineCount})
             </span>
