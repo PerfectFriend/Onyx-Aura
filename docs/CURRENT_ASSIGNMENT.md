@@ -1,7 +1,8 @@
 # Текущее задание
 
 **Этап 0:** 🟢 ЗАКРЫТ  
-**Спринт 1.1:** 🟢 ПРИНЯТ (useAppChrome + useBookingFlow, −144 строки)
+**Спринт 1.1:** 🟢 ПРИНЯТ (useAppChrome + useBookingFlow, −144 строки)  
+**Спринт 1.2:** 🟡 ВЫПОЛНЕН — [REPORT] отправлен на аудит (useChatConcierge + useCryptoSwarm, −70 строк)
 
 **Активный этап:** 1. Архитектурная гигиена  
 **Текущий спринт:** 1.2 — Chat + Crypto Swarm hooks

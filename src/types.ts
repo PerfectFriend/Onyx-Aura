@@ -147,12 +147,14 @@ export interface Appointment {
   createdAt: string;
 }
 
+export type UserRole = 'client' | 'master';
+
 export interface ChatMessage {
   id: string;
   threadId: string;
   senderId: string;
   senderName: string;
-  senderRole: 'client' | 'master';
+  senderRole: UserRole;
   recipientId: string;
   text: string;
   timestamp: string;

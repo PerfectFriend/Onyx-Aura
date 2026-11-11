@@ -27,8 +27,6 @@ import {
   INITIAL_ARTISTS, 
   INITIAL_PORTFOLIO, 
   INITIAL_REVIEWS, 
-  INITIAL_CHATS, 
-  INITIAL_PEERS,
   INITIAL_ANCHOR_POINTS
 } from './data/initialData';
 
@@ -38,18 +36,16 @@ import {
   Artist, 
   PortfolioItem, 
   Review, 
-  ChatMessage, 
-  PeerNode, 
-  CryptoCloudState, 
   ClientAnchorPoint,
   SponsoredAd,
 } from './types';
 
-import { cryptoCloudSwarm } from './simulation/cryptocloud';
 import { blockchainLedger } from './simulation/cryptoLedger';
 import { reminderService, ReminderNotificationEvent } from './services/reminderService';
 import { useAppChrome } from './hooks/useAppChrome';
 import { useBookingFlow } from './hooks/useBookingFlow';
+import { useChatConcierge } from './hooks/useChatConcierge';
+import { useCryptoSwarm } from './hooks/useCryptoSwarm';
 
 export default function App() {
   // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Extracted in Sprint 1.1
@@ -69,7 +65,6 @@ export default function App() {
   const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>(INITIAL_PORTFOLIO);
   const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(INITIAL_CHATS);
 
   // Notifications & Reminders
   const [toasts, setToasts] = useState<ReminderNotificationEvent[]>([]);
@@ -83,6 +78,15 @@ export default function App() {
   // Navigation & Role State
   const [activeTab, setActiveTab] = useState<string>('explore');
   const [userRole, setUserRole] = useState<'client' | 'master'>('client');
+
+  // Chat & Concierge Drawer - Extracted in Sprint 1.2
+  const chat = useChatConcierge({
+    userRole,
+    artists,
+  });
+
+  // CryptoCloud Swarm & P2P State [SIM] - Extracted in Sprint 1.2
+  const swarm = useCryptoSwarm();
 
   // Handle Android PWA shortcuts & deep links (e.g., /?tab=android or /?action=book)
   useEffect(() => {
@@ -119,17 +123,7 @@ export default function App() {
   // Android Permissions & Build Modal
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
 
-  // Chat Drawer
-  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
-  const [unreadChatCount, setUnreadChatCount] = useState<number>(1);
-
-  // CryptoCloud Swarm & P2P [SIM]
-  const [swarmState, setSwarmState] = useState<CryptoCloudState>(cryptoCloudSwarm.getState());
-  const [peers, setPeers] = useState<PeerNode[]>(INITIAL_PEERS);
-  const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
-  const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
-
-  // Subscribe to Reminder Service & Crypto Swarm on mount
+  // Subscribe to Reminder Service on mount
   useEffect(() => {
     const unsubReminders = reminderService.subscribe((evt) => {
       setToasts(prev => [evt, ...prev.slice(0, 4)]);
@@ -137,14 +131,6 @@ export default function App() {
       setTimeout(() => {
         setToasts(prev => prev.filter(t => t.id !== evt.id));
       }, 6000);
-    });
-
-    const unsubSwarm = cryptoCloudSwarm.subscribe((event) => {
-      const state = cryptoCloudSwarm.getState();
-      setSwarmState(state);
-      if (event.type === 'PEER_PULSE') {
-        setPeers(state.connectedPeers);
-      }
     });
 
     // Request notification permission smoothly on first user interaction
@@ -156,7 +142,6 @@ export default function App() {
 
     return () => {
       unsubReminders();
-      unsubSwarm();
       window.removeEventListener('click', requestNotice);
     };
   }, []);
@@ -194,30 +179,6 @@ export default function App() {
     booking.handleStartBookingWithLook(look);
   };
 
-  // Chat message sending
-  const handleSendMessage = (text: string, threadId: string, quoteAttachment?: ChatMessage['quoteAttachment']) => {
-    const activeArt = artists.find(a => a.id === threadId) || artists[0];
-    const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      threadId,
-      senderId: userRole === 'client' ? 'client-me' : threadId,
-      senderName: userRole === 'client' ? 'Genevieve Vance' : activeArt.name,
-      senderRole: userRole,
-      recipientId: activeArt.id,
-      text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      quoteAttachment,
-    };
-
-    setChatMessages(prev => [...prev, newMsg]);
-
-    // [SIM] Broadcast encrypted chat chunk to CryptoCloud peer buffer
-    cryptoCloudSwarm.broadcastBlock('CHAT_MESSAGE_BUFFERED', {
-      threadId,
-      msgId: newMsg.id,
-    });
-  };
-
   // Add review to blockchain ledger [SIM]
   const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
     const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
@@ -238,7 +199,7 @@ export default function App() {
     }));
 
     // [SIM] Broadcast review block to swarm
-    cryptoCloudSwarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
+    swarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
       reviewId: newReview.id,
       artistId: newReview.artistId,
       blockHash: newReview.blockHash,
@@ -280,7 +241,7 @@ export default function App() {
     setPortfolio(prev => [newLook, ...prev]);
 
     // [SIM] Broadcast synced look to swarm
-    cryptoCloudSwarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
+    swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
       lookId: newLook.id,
       igPostId: newLook.igPostId,
       artistId: newLook.artistId,
@@ -297,42 +258,6 @@ export default function App() {
       },
       ...prev,
     ]);
-  };
-
-  // Self-Hosted CryptoCloud Snapshot Backup Export [SIM]
-  const handleExportCryptoCloudBackup = async () => {
-    setIsBackingUp(true);
-    setBackupSuccessMessage(null);
-    try {
-      const { filename, blob, checksum } = await cryptoCloudSwarm.exportCryptographicBackup({
-        appointments: booking.appointments,
-        reviews,
-        portfolio,
-        chats: chatMessages,
-      });
-
-      // Trigger client file download
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      setBackupSuccessMessage(`Successfully saved ${filename}. Checksum: ${checksum.slice(0, 16)}...`);
-      setSwarmState(cryptoCloudSwarm.getState());
-    } finally {
-      setIsBackingUp(false);
-    }
-  };
-
-  // Simulate P2P Swarm Network Pulse [SIM]
-  const handleSimulatePeerPulse = () => {
-    const updatedPeers = cryptoCloudSwarm.simulatePeerPing();
-    setPeers(updatedPeers);
-    setSwarmState(cryptoCloudSwarm.getState());
   };
 
   // Client Anchor Point Update Handler
@@ -358,7 +283,7 @@ export default function App() {
   // Create new Sponsored Ad Campaign
   const handleCreateAdCampaign = (newAd: SponsoredAd) => {
     setAds(prev => [newAd, ...prev]);
-    cryptoCloudSwarm.broadcastBlock('NEW_SPONSORED_CAMPAIGN', {
+    swarm.broadcastBlock('NEW_SPONSORED_CAMPAIGN', {
       adId: newAd.id,
       title: newAd.title,
       brandName: newAd.brandName,
@@ -393,10 +318,10 @@ export default function App() {
         }}
         onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
         appointmentsCount={booking.appointments.length}
-        onOpenChat={() => setIsChatOpen(true)}
+        onOpenChat={chat.openChat}
         onOpenPermissions={() => setIsPermissionsModalOpen(true)}
-        unreadChatCount={unreadChatCount}
-        swarmOnlineCount={peers.filter(p => p.status === 'online').length + 1}
+        unreadChatCount={chat.unreadChatCount}
+        swarmOnlineCount={swarm.swarmOnlineCount}
         currentLanguage={currentLanguage}
         onSelectLanguage={setCurrentLanguage}
         theme={theme}
@@ -464,7 +389,7 @@ export default function App() {
               anchorPoints={anchorPoints}
               onUpdateAnchorPoint={handleUpdateAnchorPoint}
               onSelectArtistToBook={booking.handleStartBookingWithArtist}
-              onOpenChatWithArtist={() => setIsChatOpen(true)}
+              onOpenChatWithArtist={chat.openChat}
               userRole={userRole}
               onUpdateMasterSalon={handleUpdateMasterSalon}
               theme={theme}
@@ -491,9 +416,7 @@ export default function App() {
             <ArtistsView
               artists={artists}
               onSelectArtistToBook={booking.handleStartBookingWithArtist}
-              onOpenChatWithArtist={() => {
-                setIsChatOpen(true);
-              }}
+              onOpenChatWithArtist={chat.openChat}
             />
 
             <SponsoredAdsBanner
@@ -523,12 +446,19 @@ export default function App() {
 
         {activeTab === 'cryptocloud' && (
           <CryptoCloudPanel
-            swarmState={swarmState}
-            peers={peers}
-            onTriggerBackup={handleExportCryptoCloudBackup}
-            onSimulatePulse={handleSimulatePeerPulse}
-            isBackingUp={isBackingUp}
-            backupSuccessMessage={backupSuccessMessage}
+            swarmState={swarm.swarmState}
+            peers={swarm.peers}
+            onTriggerBackup={() =>
+              swarm.handleExportCryptoCloudBackup({
+                appointments: booking.appointments,
+                reviews,
+                portfolio,
+                chats: chat.chatMessages,
+              })
+            }
+            onSimulatePulse={swarm.handleSimulatePeerPulse}
+            isBackingUp={swarm.isBackingUp}
+            backupSuccessMessage={swarm.backupSuccessMessage}
           />
         )}
 
@@ -547,7 +477,7 @@ export default function App() {
             <AndroidExperienceView
               onBookLook={booking.handleStartBookingWithLook}
               onOpenBookingModal={() => booking.setIsBookingModalOpen(true)}
-              onOpenChat={() => setIsChatOpen(true)}
+              onOpenChat={chat.openChat}
               theme={theme}
               t={t}
             />
@@ -638,10 +568,10 @@ export default function App() {
       />
 
       <ChatDrawer
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        messages={chatMessages}
-        onSendMessage={handleSendMessage}
+        isOpen={chat.isChatOpen}
+        onClose={chat.closeChat}
+        messages={chat.chatMessages}
+        onSendMessage={chat.handleSendMessage}
         artists={artists}
         userRole={userRole}
         onBookService={(artist, serviceName) => {
@@ -735,7 +665,7 @@ export default function App() {
         onQuickBook={() => booking.setIsBookingModalOpen(true)}
         onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
         onOpenARCamera={() => setActiveTab('android')}
-        onOpenChat={() => setIsChatOpen(true)}
+        onOpenChat={chat.openChat}
         onOpenAndroidSuite={() => setActiveTab('android')}
         theme={theme}
       />
@@ -744,8 +674,8 @@ export default function App() {
       <AndroidBottomNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        unreadChatCount={unreadChatCount}
-        onOpenChat={() => setIsChatOpen(true)}
+        unreadChatCount={chat.unreadChatCount}
+        onOpenChat={chat.openChat}
         theme={theme}
         t={t}
       />
