@@ -21,19 +21,12 @@ import { ClientLocationMap } from './components/ClientLocationMap';
 import { SponsoredAdsBanner } from './components/SponsoredAdsBanner';
 import { AdCampaignManagerModal } from './components/AdCampaignManagerModal';
 import { ClientAppointmentsModal } from './components/ClientAppointmentsModal';
-
-import { 
-  TRANSLATIONS, 
-  LANGUAGES, 
-  SupportedLanguage, 
-  detectUserLanguage 
-} from './i18n/translations';
+import { WallpaperModal, OrnamentDivider } from './components/OrnamentalFlourish';
 
 import { 
   INITIAL_ARTISTS, 
   INITIAL_PORTFOLIO, 
   INITIAL_REVIEWS, 
-  INITIAL_APPOINTMENTS, 
   INITIAL_CHATS, 
   INITIAL_PEERS,
   INITIAL_ANCHOR_POINTS
@@ -45,65 +38,47 @@ import {
   Artist, 
   PortfolioItem, 
   Review, 
-  Appointment, 
   ChatMessage, 
   PeerNode, 
   CryptoCloudState, 
-  NailService,
   ClientAnchorPoint,
   SponsoredAd,
-  ThemeMode,
-  WallpaperTheme
 } from './types';
 
-import { WallpaperModal, CornerFlourish, OrnamentDivider } from './components/OrnamentalFlourish';
-
-import { cryptoCloudSwarm } from './services/cryptocloud';
-import { blockchainLedger } from './services/cryptoLedger';
+import { cryptoCloudSwarm } from './simulation/cryptocloud';
+import { blockchainLedger } from './simulation/cryptoLedger';
 import { reminderService, ReminderNotificationEvent } from './services/reminderService';
+import { useAppChrome } from './hooks/useAppChrome';
+import { useBookingFlow } from './hooks/useBookingFlow';
 
 export default function App() {
-  // Localization State (Top 10 Languages with auto-detection)
-  const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>(() => detectUserLanguage());
-  const t = TRANSLATIONS[currentLanguage] || TRANSLATIONS.en;
+  // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Extracted in Sprint 1.1
+  const {
+    currentLanguage,
+    setCurrentLanguage,
+    t,
+    theme,
+    handleToggleTheme,
+    wallpaper,
+    isWallpaperModalOpen,
+    setIsWallpaperModalOpen,
+    handleSelectWallpaper,
+  } = useAppChrome();
 
-  // Theme Mode State ('dark' | 'light') with system detection & persistence
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('nailix_theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    }
-    return 'dark';
+  // Core Data
+  const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
+  const [portfolio, setPortfolio] = useState<PortfolioItem[]>(INITIAL_PORTFOLIO);
+  const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(INITIAL_CHATS);
+
+  // Notifications & Reminders
+  const [toasts, setToasts] = useState<ReminderNotificationEvent[]>([]);
+
+  // Booking, Checkout & Appointments Flow - Extracted in Sprint 1.1
+  const booking = useBookingFlow({
+    artists,
+    onNotifyToast: (evt) => setToasts(prev => [evt, ...prev.slice(0, 4)]),
   });
-
-  // Sync theme to document.body and documentElement class & localStorage
-  useEffect(() => {
-    if (typeof document !== 'undefined') {
-      document.body.className = theme === 'dark' ? 'theme-dark' : 'theme-light';
-      if (theme === 'dark') {
-        document.documentElement.classList.add('theme-dark', 'dark');
-        document.documentElement.classList.remove('theme-light', 'light');
-      } else {
-        document.documentElement.classList.add('theme-light', 'light');
-        document.documentElement.classList.remove('theme-dark', 'dark');
-      }
-      localStorage.setItem('nailix_theme', theme);
-    }
-  }, [theme]);
-
-  const handleToggleTheme = () => {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  };
-
-  // Sync HTML lang and text direction (e.g. for Arabic RTL)
-  useEffect(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.lang = currentLanguage;
-      const langMeta = LANGUAGES.find(l => l.code === currentLanguage);
-      document.documentElement.dir = langMeta?.direction || 'ltr';
-    }
-  }, [currentLanguage]);
 
   // Navigation & Role State
   const [activeTab, setActiveTab] = useState<string>('explore');
@@ -120,19 +95,12 @@ export default function App() {
         setActiveTab(tabParam);
       }
       if (actionParam === 'book') {
-        setIsBookingModalOpen(true);
+        booking.setIsBookingModalOpen(true);
       } else if (actionParam === 'ar') {
         setActiveTab('android');
       }
     }
   }, []);
-
-  // Core Data
-  const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
-  const [portfolio, setPortfolio] = useState<PortfolioItem[]>(INITIAL_PORTFOLIO);
-  const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
-  const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(INITIAL_CHATS);
 
   // Client Frequent Anchor Points (Home, Work, Studio/Gym)
   const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>(INITIAL_ANCHOR_POINTS);
@@ -151,56 +119,15 @@ export default function App() {
   // Android Permissions & Build Modal
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
 
-  // Luxury Wallpaper & Ornament Selector
-  const [wallpaper, setWallpaper] = useState<WallpaperTheme>(() => {
-    try {
-      return (localStorage.getItem('nailix_wallpaper') as WallpaperTheme) || 'damask';
-    } catch {
-      return 'damask';
-    }
-  });
-  const [isWallpaperModalOpen, setIsWallpaperModalOpen] = useState<boolean>(false);
-
-  const handleSelectWallpaper = (wp: WallpaperTheme) => {
-    setWallpaper(wp);
-    try {
-      localStorage.setItem('nailix_wallpaper', wp);
-    } catch {}
-  };
-
-  // Booking & Checkout Flow
-  const [isBookingModalOpen, setIsBookingModalOpen] = useState<boolean>(false);
-  const [isAppointmentsModalOpen, setIsAppointmentsModalOpen] = useState<boolean>(false);
-  const [bookingArtistTarget, setBookingArtistTarget] = useState<Artist | null>(null);
-  const [bookingLookTarget, setBookingLookTarget] = useState<PortfolioItem | null>(null);
-  
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
-  const [pendingBookingDetails, setPendingBookingDetails] = useState<{
-    artist: Artist;
-    service: NailService;
-    date: string;
-    timeSlot: string;
-    clientName: string;
-    clientPhone: string;
-    clientEmail: string;
-    customNotes: string;
-    enablePush: boolean;
-    enableSMS: boolean;
-    referenceLook?: PortfolioItem;
-  } | null>(null);
-
   // Chat Drawer
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(1);
 
-  // CryptoCloud Swarm & P2P
+  // CryptoCloud Swarm & P2P [SIM]
   const [swarmState, setSwarmState] = useState<CryptoCloudState>(cryptoCloudSwarm.getState());
   const [peers, setPeers] = useState<PeerNode[]>(INITIAL_PEERS);
   const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
   const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
-
-  // Notifications & Reminders
-  const [toasts, setToasts] = useState<ReminderNotificationEvent[]>([]);
 
   // Subscribe to Reminder Service & Crypto Swarm on mount
   useEffect(() => {
@@ -261,80 +188,10 @@ export default function App() {
     });
   };
 
-  // Launch booking for a specific artwork look
-  const handleStartBookingWithLook = (look: PortfolioItem) => {
-    const artist = artists.find(a => a.id === look.artistId) || artists[0];
-    setBookingArtistTarget(artist);
-    setBookingLookTarget(look);
+  // Launch booking from look with closing lightbox
+  const handleStartBookingWithLookFromLightbox = (look: PortfolioItem) => {
     setSelectedLightboxItem(null);
-    setIsBookingModalOpen(true);
-  };
-
-  // Launch booking for a specific artist
-  const handleStartBookingWithArtist = (artist: Artist) => {
-    setBookingArtistTarget(artist);
-    setBookingLookTarget(null);
-    setIsBookingModalOpen(true);
-  };
-
-  // Step 1 Completed -> Open Multi-currency Escrow Checkout
-  const handleProceedToCheckout = (details: NonNullable<typeof pendingBookingDetails>) => {
-    setPendingBookingDetails(details);
-    setIsBookingModalOpen(false);
-    setIsCheckoutOpen(true);
-  };
-
-  // Step 2 Completed -> On-chain escrow locked & appointment confirmed
-  const handlePaymentSuccess = (newAppointment: Appointment) => {
-    setAppointments(prev => [newAppointment, ...prev]);
-
-    // Schedule automated SMS & Push reminders
-    reminderService.dispatch24HourReminder(newAppointment);
-    reminderService.dispatch2HourReminder(newAppointment);
-
-    // Broadcast appointment block to peer nodes
-    cryptoCloudSwarm.broadcastBlock('APPOINTMENT_ESCROW_LOCKED', {
-      appointmentId: newAppointment.id,
-      escrowHash: newAppointment.escrowTxHash || '0xESCROW_LOCKED',
-      artistId: newAppointment.artistId,
-      currency: newAppointment.currency,
-      price: newAppointment.price,
-    });
-
-    // Notify user
-    setToasts(prev => [
-      {
-        id: `toast-${Date.now()}`,
-        type: 'push',
-        title: 'Smart Escrow Locked On-Chain',
-        message: `Your appointment with ${newAppointment.artistName} for ${newAppointment.date} at ${newAppointment.timeSlot} is guaranteed.`,
-        timestamp: new Date().toLocaleTimeString(),
-        phoneOrTarget: 'Client Device',
-      },
-      ...prev,
-    ]);
-  };
-
-  // Release escrow from Admin Dashboard
-  const handleReleaseEscrow = (appointmentId: string) => {
-    setAppointments(prev => prev.map(app => {
-      if (app.id === appointmentId) {
-        return { ...app, status: 'completed' };
-      }
-      return app;
-    }));
-
-    // Broadcast payout to artist
-    cryptoCloudSwarm.broadcastBlock('ESCROW_RELEASED_TO_ARTIST', {
-      appointmentId,
-      timestamp: Date.now(),
-    });
-  };
-
-  // Manual trigger appointment reminder from dashboard
-  const handleTriggerAppointmentReminder = (appointment: Appointment) => {
-    reminderService.dispatch24HourReminder(appointment);
-    reminderService.dispatch2HourReminder(appointment);
+    booking.handleStartBookingWithLook(look);
   };
 
   // Chat message sending
@@ -354,14 +211,14 @@ export default function App() {
 
     setChatMessages(prev => [...prev, newMsg]);
 
-    // Broadcast encrypted chat chunk to CryptoCloud peer buffer
+    // [SIM] Broadcast encrypted chat chunk to CryptoCloud peer buffer
     cryptoCloudSwarm.broadcastBlock('CHAT_MESSAGE_BUFFERED', {
       threadId,
       msgId: newMsg.id,
     });
   };
 
-  // Add review to blockchain ledger
+  // Add review to blockchain ledger [SIM]
   const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
     const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
     setReviews(prev => [newReview, ...prev]);
@@ -380,7 +237,7 @@ export default function App() {
       return art;
     }));
 
-    // Broadcast review block to swarm
+    // [SIM] Broadcast review block to swarm
     cryptoCloudSwarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
       reviewId: newReview.id,
       artistId: newReview.artistId,
@@ -422,7 +279,7 @@ export default function App() {
 
     setPortfolio(prev => [newLook, ...prev]);
 
-    // Broadcast synced look to swarm
+    // [SIM] Broadcast synced look to swarm
     cryptoCloudSwarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
       lookId: newLook.id,
       igPostId: newLook.igPostId,
@@ -442,13 +299,13 @@ export default function App() {
     ]);
   };
 
-  // Self-Hosted CryptoCloud Snapshot Backup Export
+  // Self-Hosted CryptoCloud Snapshot Backup Export [SIM]
   const handleExportCryptoCloudBackup = async () => {
     setIsBackingUp(true);
     setBackupSuccessMessage(null);
     try {
       const { filename, blob, checksum } = await cryptoCloudSwarm.exportCryptographicBackup({
-        appointments,
+        appointments: booking.appointments,
         reviews,
         portfolio,
         chats: chatMessages,
@@ -471,7 +328,7 @@ export default function App() {
     }
   };
 
-  // Simulate P2P Swarm Network Pulse
+  // Simulate P2P Swarm Network Pulse [SIM]
   const handleSimulatePeerPulse = () => {
     const updatedPeers = cryptoCloudSwarm.simulatePeerPing();
     setPeers(updatedPeers);
@@ -530,12 +387,12 @@ export default function App() {
         userRole={userRole}
         setUserRole={setUserRole}
         onOpenBooking={() => {
-          setBookingArtistTarget(null);
-          setBookingLookTarget(null);
-          setIsBookingModalOpen(true);
+          booking.setBookingArtistTarget(null);
+          booking.setBookingLookTarget(null);
+          booking.setIsBookingModalOpen(true);
         }}
-        onOpenAppointments={() => setIsAppointmentsModalOpen(true)}
-        appointmentsCount={appointments.length}
+        onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
+        appointmentsCount={booking.appointments.length}
         onOpenChat={() => setIsChatOpen(true)}
         onOpenPermissions={() => setIsPermissionsModalOpen(true)}
         unreadChatCount={unreadChatCount}
@@ -559,9 +416,9 @@ export default function App() {
                 el?.scrollIntoView({ behavior: 'smooth' });
               }}
               onBookClick={() => {
-                setBookingArtistTarget(null);
-                setBookingLookTarget(null);
-                setIsBookingModalOpen(true);
+                booking.setBookingArtistTarget(null);
+                booking.setBookingLookTarget(null);
+                booking.setIsBookingModalOpen(true);
               }}
               onOpenLedger={() => setActiveTab('ledger')}
               onOpenPermissions={() => setIsPermissionsModalOpen(true)}
@@ -586,7 +443,7 @@ export default function App() {
               <PortfolioGallery
                 items={portfolio}
                 onSelectItem={(item) => setSelectedLightboxItem(item)}
-                onBookItem={handleStartBookingWithLook}
+                onBookItem={booking.handleStartBookingWithLook}
                 likedIds={likedIds}
                 onToggleLike={handleToggleLike}
                 savedIds={savedIds}
@@ -606,7 +463,7 @@ export default function App() {
               artists={artists}
               anchorPoints={anchorPoints}
               onUpdateAnchorPoint={handleUpdateAnchorPoint}
-              onSelectArtistToBook={handleStartBookingWithArtist}
+              onSelectArtistToBook={booking.handleStartBookingWithArtist}
               onOpenChatWithArtist={() => setIsChatOpen(true)}
               userRole={userRole}
               onUpdateMasterSalon={handleUpdateMasterSalon}
@@ -624,7 +481,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Friend Circle Consensus Moderation DAO View */}
+        {/* Friend Circle Consensus Moderation DAO View [SIM] */}
         {activeTab === 'moderation' && (
           <FriendModerationSection t={t} />
         )}
@@ -633,7 +490,7 @@ export default function App() {
           <div className="space-y-8">
             <ArtistsView
               artists={artists}
-              onSelectArtistToBook={handleStartBookingWithArtist}
+              onSelectArtistToBook={booking.handleStartBookingWithArtist}
               onOpenChatWithArtist={() => {
                 setIsChatOpen(true);
               }}
@@ -677,10 +534,10 @@ export default function App() {
 
         {activeTab === 'analytics' && (
           <AdminAnalyticsDashboard
-            appointments={appointments}
+            appointments={booking.appointments}
             artists={artists}
-            onReleaseEscrow={handleReleaseEscrow}
-            onTriggerReminder={handleTriggerAppointmentReminder}
+            onReleaseEscrow={booking.handleReleaseEscrow}
+            onTriggerReminder={booking.handleTriggerAppointmentReminder}
           />
         )}
 
@@ -688,8 +545,8 @@ export default function App() {
         {activeTab === 'android' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
             <AndroidExperienceView
-              onBookLook={handleStartBookingWithLook}
-              onOpenBookingModal={() => setIsBookingModalOpen(true)}
+              onBookLook={booking.handleStartBookingWithLook}
+              onOpenBookingModal={() => booking.setIsBookingModalOpen(true)}
               onOpenChat={() => setIsChatOpen(true)}
               theme={theme}
               t={t}
@@ -712,7 +569,7 @@ export default function App() {
       <LightboxModal
         item={selectedLightboxItem}
         onClose={() => setSelectedLightboxItem(null)}
-        onBookThisLook={handleStartBookingWithLook}
+        onBookThisLook={handleStartBookingWithLookFromLightbox}
         onLikeToggle={handleToggleLike}
         isLiked={selectedLightboxItem ? likedIds.has(selectedLightboxItem.id) : false}
         onSaveToggle={handleToggleSave}
@@ -720,12 +577,12 @@ export default function App() {
       />
 
       <BookingModal
-        isOpen={isBookingModalOpen}
-        onClose={() => setIsBookingModalOpen(false)}
+        isOpen={booking.isBookingModalOpen}
+        onClose={() => booking.setIsBookingModalOpen(false)}
         artists={artists}
-        initialArtist={bookingArtistTarget}
-        initialLook={bookingLookTarget}
-        onProceedToCheckout={handleProceedToCheckout}
+        initialArtist={booking.bookingArtistTarget}
+        initialLook={booking.bookingLookTarget}
+        onProceedToCheckout={booking.handleProceedToCheckout}
         onTestSMS={(phone, artistName, serviceName, date, time) => {
           reminderService.dispatch24HourReminder({
             id: 'test-preview',
@@ -774,10 +631,10 @@ export default function App() {
       />
 
       <CheckoutModal
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-        bookingDetails={pendingBookingDetails}
-        onPaymentSuccess={handlePaymentSuccess}
+        isOpen={booking.isCheckoutOpen}
+        onClose={() => booking.setIsCheckoutOpen(false)}
+        bookingDetails={booking.pendingBookingDetails}
+        onPaymentSuccess={booking.handlePaymentSuccess}
       />
 
       <ChatDrawer
@@ -787,9 +644,9 @@ export default function App() {
         onSendMessage={handleSendMessage}
         artists={artists}
         userRole={userRole}
-        onBookService={(artist, serviceName, price) => {
+        onBookService={(artist, serviceName) => {
           const srv = artist.services.find(s => s.name === serviceName) || artist.services[0];
-          handleProceedToCheckout({
+          booking.handleProceedToCheckout({
             artist,
             service: srv,
             date: '2026-09-25',
@@ -813,11 +670,11 @@ export default function App() {
 
       {/* Confirmed Appointments & Calendar Sync (.ICS / Google Calendar) Modal */}
       <ClientAppointmentsModal
-        isOpen={isAppointmentsModalOpen}
-        onClose={() => setIsAppointmentsModalOpen(false)}
-        appointments={appointments}
+        isOpen={booking.isAppointmentsModalOpen}
+        onClose={() => booking.setIsAppointmentsModalOpen(false)}
+        appointments={booking.appointments}
         artists={artists}
-        onOpenBooking={() => setIsBookingModalOpen(true)}
+        onOpenBooking={() => booking.setIsBookingModalOpen(true)}
         theme={theme}
         onNotification={(msg) => {
           setToasts(prev => [{
@@ -861,7 +718,7 @@ export default function App() {
             <span aria-hidden="true">·</span>
             <span className="text-cyan-300">E2E Cryptographic Chat</span>
             <span aria-hidden="true">·</span>
-            <span className="text-fuchsia-300">Friend Circle Jury DAO</span>
+            <span className="text-fuchsia-300">Friend Circle Jury DAO [SIM]</span>
             <span aria-hidden="true">·</span>
             <button 
               onClick={() => setIsPermissionsModalOpen(true)}
@@ -875,8 +732,8 @@ export default function App() {
 
       {/* Android Floating Action Button (FAB) Speed Dial */}
       <AndroidFAB
-        onQuickBook={() => setIsBookingModalOpen(true)}
-        onOpenAppointments={() => setIsAppointmentsModalOpen(true)}
+        onQuickBook={() => booking.setIsBookingModalOpen(true)}
+        onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
         onOpenARCamera={() => setActiveTab('android')}
         onOpenChat={() => setIsChatOpen(true)}
         onOpenAndroidSuite={() => setActiveTab('android')}
