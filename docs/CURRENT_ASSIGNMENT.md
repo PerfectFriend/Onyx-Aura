@@ -1,16 +1,13 @@
 # Текущее задание
 
-**Активный этап:** 0. Фундамент и Честность  
-**Спринт 0.1:** 🟢 ЗАКРЫТ И ПРИНЯТ  
-**Текущий спринт:** 0.2 — Доводка честности и качества
+**Этап 0:** 🟢 ЗАКРЫТ  
+**Спринт 0.2:** 🟢 ЗАКРЫТ  
 
-**Библия разработки:**  
-→ [`MANIFEST_CANONICAL_AI_DEVELOPER.md`](../MANIFEST_CANONICAL_AI_DEVELOPER.md)
+**Активный этап:** 1. Архитектурная гигиена  
+**Текущий спринт:** 1.1 — Первое разрезание App.tsx (booking flow + theme/locale)
 
-**План эволюции:**  
-→ [`EVOLUTION_PLAN.md`](../EVOLUTION_PLAN.md)
+**Библия:** [`MANIFEST_CANONICAL_AI_DEVELOPER.md`](../MANIFEST_CANONICAL_AI_DEVELOPER.md)  
+**План:** [`EVOLUTION_PLAN.md`](../EVOLUTION_PLAN.md)  
+**Журнал (append-only):** [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)
 
-**Журнал (append-only, не удалять!):**  
-→ [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)
-
-**Задание:** см. последнюю запись `[ASSIGNMENT]` (Спринт 0.2) в журнале.
+Задание — в последней записи `[ASSIGNMENT]` журнала.
