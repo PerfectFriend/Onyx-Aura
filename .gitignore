@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+dev-dist/
+android-build/bin/
+android-build/obj/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+

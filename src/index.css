@@ -1,0 +1,387 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    overflow-x: hidden;
+  }
+
+  body.theme-dark {
+    background-color: #07080e;
+    color: #edeef2;
+    background-image: 
+      linear-gradient(rgba(7, 8, 14, 0.88), rgba(7, 8, 14, 0.94)),
+      url('/assets/images/bg_ornament_dark_1790127006702.jpg');
+    background-size: cover, 700px;
+    background-attachment: fixed;
+  }
+
+  body.theme-light {
+    background-color: #f6f3eb;
+    color: #0f172a;
+    background-image: 
+      linear-gradient(rgba(246, 243, 235, 0.90), rgba(246, 243, 235, 0.96)),
+      url('/assets/images/bg_ornament_light_1790127019356.jpg');
+    background-size: cover, 700px;
+    background-attachment: fixed;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Syne', sans-serif;
+  }
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom scrollbar styling with iridescent jewel shimmer */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #d4af37 0%, #00f3ff 50%, #d946ef 100%);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #fcd34d 0%, #38bdf8 50%, #f43f5e 100%);
+}
+
+/* Luxury Ornament & Wallpaper Classes */
+.bg-starry-canvas {
+  background-attachment: fixed;
+}
+
+/* Wallpaper Themes */
+.app-wallpaper-damask-dark {
+  background-image: 
+    radial-gradient(circle at 50% 20%, rgba(245, 158, 11, 0.09) 0%, transparent 60%),
+    linear-gradient(rgba(7, 8, 14, 0.88), rgba(7, 8, 14, 0.95)),
+    url('/assets/images/bg_ornament_dark_1790127006702.jpg');
+  background-size: auto, auto, 520px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-damask-light {
+  background-image: 
+    radial-gradient(circle at 50% 20%, rgba(217, 119, 6, 0.06) 0%, transparent 60%),
+    linear-gradient(rgba(248, 246, 240, 0.90), rgba(248, 246, 240, 0.96)),
+    url('/assets/images/bg_ornament_light_1790127019356.jpg');
+  background-size: auto, auto, 520px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-filigree-dark {
+  background-image: 
+    radial-gradient(circle at 50% 30%, rgba(56, 189, 248, 0.08) 0%, transparent 65%),
+    linear-gradient(rgba(7, 8, 14, 0.89), rgba(7, 8, 14, 0.96)),
+    url('/assets/images/frame_ornament_border_1790127030568.jpg');
+  background-size: auto, auto, 640px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-filigree-light {
+  background-image: 
+    radial-gradient(circle at 50% 30%, rgba(2, 132, 199, 0.06) 0%, transparent 65%),
+    linear-gradient(rgba(248, 246, 240, 0.91), rgba(248, 246, 240, 0.97)),
+    url('/assets/images/bg_ornament_light_1790127019356.jpg');
+  background-size: auto, auto, 640px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-mosaic-dark {
+  background-image: 
+    radial-gradient(circle at 50% 30%, rgba(217, 70, 239, 0.07) 0%, transparent 65%),
+    linear-gradient(rgba(7, 8, 14, 0.88), rgba(7, 8, 14, 0.95)),
+    url('/assets/images/button_ornament_texture_1790127041006.jpg');
+  background-size: auto, auto, 480px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-mosaic-light {
+  background-image: 
+    radial-gradient(circle at 50% 30%, rgba(217, 119, 6, 0.06) 0%, transparent 65%),
+    linear-gradient(rgba(248, 246, 240, 0.91), rgba(248, 246, 240, 0.97)),
+    url('/assets/images/bg_ornament_light_1790127019356.jpg');
+  background-size: auto, auto, 480px auto;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+
+.app-wallpaper-minimal-dark {
+  background-color: #07080e;
+}
+
+.app-wallpaper-minimal-light {
+  background-color: #f8f6f0;
+}
+
+/* Mosaic & Filigree Card Effect with Shimmer Ribbon */
+.gaudi-mosaic-card,
+.ornament-card {
+  position: relative;
+  border-radius: 1.25rem;
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.theme-dark .gaudi-mosaic-card,
+.theme-dark .ornament-card {
+  background: linear-gradient(145deg, rgba(16, 20, 31, 0.92) 0%, rgba(10, 12, 20, 0.96) 100%);
+  border: 1px solid rgba(0, 243, 255, 0.28);
+  box-shadow: 
+    0 10px 30px -10px rgba(0, 0, 0, 0.7),
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    0 0 20px -5px rgba(0, 243, 255, 0.08);
+}
+
+.theme-light .gaudi-mosaic-card,
+.theme-light .ornament-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96) 0%, rgba(252, 249, 240, 0.98) 100%) !important;
+  border: 1px solid rgba(217, 119, 6, 0.35) !important;
+  box-shadow: 
+    0 12px 30px -10px rgba(180, 83, 9, 0.15),
+    inset 0 1px 1px rgba(255, 255, 255, 1),
+    0 0 15px -3px rgba(14, 165, 233, 0.12) !important;
+  color: #0f172a !important;
+}
+
+.gaudi-mosaic-card::before,
+.ornament-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #00f3ff, #d946ef, #fbbf24, #10b981, #00f3ff);
+  background-size: 200% 100%;
+  animation: trencadisShimmer 8s linear infinite;
+  z-index: 2;
+}
+
+@keyframes trencadisShimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* Raster Frame Ornament Trim */
+.raster-ornament-frame {
+  position: relative;
+  border: 3px solid transparent;
+  border-image-source: url('/assets/images/frame_ornament_border_1790127030568.jpg');
+  border-image-slice: 40;
+  border-image-repeat: round;
+}
+
+/* Glowing Neon Button Textured with Ornament */
+.btn-starry-neon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.65rem 1.4rem;
+  border-radius: 0.85rem;
+  color: #ffffff !important;
+  background-image: 
+    linear-gradient(rgba(15, 23, 42, 0.75), rgba(30, 27, 75, 0.85)),
+    url('/assets/images/button_ornament_texture_1790127041006.jpg');
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(0, 243, 255, 0.55);
+  box-shadow: 
+    0 4px 15px rgba(0, 243, 255, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 12px rgba(217, 70, 239, 0.25);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.btn-starry-neon:hover {
+  transform: translateY(-2px) scale(1.02);
+  border-color: #00f3ff;
+  box-shadow: 
+    0 8px 25px rgba(0, 243, 255, 0.45),
+    0 0 20px rgba(217, 70, 239, 0.4);
+}
+
+/* Gilded 24K Gold Button with Ornament Ribbon Texture */
+.btn-vangogh-gold,
+.btn-ornament-gold {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.7rem 1.5rem;
+  border-radius: 0.85rem;
+  color: #1c1917 !important;
+  background-image: 
+    linear-gradient(rgba(251, 191, 36, 0.88), rgba(217, 119, 6, 0.94)),
+    url('/assets/images/button_ornament_texture_1790127041006.jpg');
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 
+    0 4px 20px rgba(245, 158, 11, 0.45),
+    inset 0 1px 1px rgba(255, 255, 255, 0.8);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+
+.btn-vangogh-gold:hover,
+.btn-ornament-gold:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 
+    0 8px 30px rgba(245, 158, 11, 0.6),
+    0 0 18px rgba(251, 191, 36, 0.6);
+}
+
+/* Royal Organic Ornament Pill/Badge */
+.gaudi-organic-tag,
+.royal-ornament-tag {
+  background: linear-gradient(135deg, rgba(30, 27, 75, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(217, 70, 239, 0.35);
+  border-radius: 9999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #e2e8f0;
+  backdrop-filter: blur(8px);
+}
+
+.theme-light .gaudi-organic-tag,
+.theme-light .royal-ornament-tag {
+  background: linear-gradient(135deg, rgba(254, 243, 199, 0.95) 0%, rgba(253, 230, 138, 0.95) 100%) !important;
+  border: 1px solid rgba(217, 119, 6, 0.5) !important;
+  color: #78350f !important;
+  font-weight: 700 !important;
+}
+
+/* ========================================================
+   GLOBAL LIGHT THEME HIGH-CONTRAST & READABILITY GUARANTEES
+   ======================================================== */
+
+.theme-light h1,
+.theme-light h2,
+.theme-light h3,
+.theme-light h4,
+.theme-light h5,
+.theme-light h6 {
+  color: #090d16 !important;
+}
+
+/* Text overrides in light theme */
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+.theme-light .text-gray-100,
+.theme-light .text-gray-200,
+.theme-light .text-gray-300,
+.theme-light .text-slate-100,
+.theme-light .text-slate-200,
+.theme-light .text-slate-300 {
+  color: #1e293b !important;
+}
+.theme-light .text-gray-400,
+.theme-light .text-slate-400 {
+  color: #475569 !important;
+}
+.theme-light .text-gray-500,
+.theme-light .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* High contrast accent colors for light theme */
+.theme-light .text-cyan-300,
+.theme-light .text-cyan-400 {
+  color: #0284c7 !important; /* sky-600 */
+}
+.theme-light .text-amber-300,
+.theme-light .text-amber-400 {
+  color: #b45309 !important; /* amber-700 */
+}
+.theme-light .text-fuchsia-300,
+.theme-light .text-fuchsia-400 {
+  color: #9333ea !important; /* purple-600 */
+}
+.theme-light .text-emerald-300,
+.theme-light .text-emerald-400 {
+  color: #047857 !important; /* emerald-700 */
+}
+
+/* Soft, readable card containers and panels in light theme */
+.theme-light .bg-black\/30,
+.theme-light .bg-black\/40,
+.theme-light .bg-black\/50,
+.theme-light .bg-black\/60,
+.theme-light .bg-black\/70,
+.theme-light .bg-black\/75,
+.theme-light .bg-\[\#07080e\],
+.theme-light .bg-\[\#070912\],
+.theme-light .bg-\[\#070913\],
+.theme-light .bg-\[\#0a0d18\],
+.theme-light .bg-\[\#0c101c\],
+.theme-light .bg-\[\#0e1220\],
+.theme-light .bg-\[\#0f1423\] {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(217, 119, 6, 0.25) !important;
+}
+
+/* Light theme input fields, textareas and selects */
+.theme-light input,
+.theme-light textarea,
+.theme-light select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Modals and backdrop sheets in light mode */
+.theme-light .bg-black\/80,
+.theme-light .bg-black\/85,
+.theme-light .bg-black\/90 {
+  background-color: rgba(15, 23, 42, 0.6) !important;
+}
+
+/* Maintain pure contrast on buttons and active badges in light theme */
+.theme-light .btn-starry-neon,
+.theme-light .btn-starry-neon * {
+  color: #ffffff !important;
+}
+.theme-light .btn-vangogh-gold,
+.theme-light .btn-vangogh-gold * {
+  color: #1c1917 !important;
+}
+.theme-light .bg-rose-500,
+.theme-light .bg-rose-600,
+.theme-light .bg-emerald-600,
+.theme-light .bg-blue-600,
+.theme-light .bg-cyan-600 {
+  color: #ffffff !important;
+}
+.theme-light .bg-rose-500 *,
+.theme-light .bg-rose-600 *,
+.theme-light .bg-emerald-600 *,
+.theme-light .bg-blue-600 *,
+.theme-light .bg-cyan-600 * {
+  color: #ffffff !important;
+}

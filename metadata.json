@@ -1,0 +1,11 @@
+{
+  "name": "Nailix - Cyber-Gaudí Manicure Art Network",
+  "description": "Decentralized cross-platform manicure social network blending Cyberpunk, Van Gogh & Gaudí aesthetics, friend consensus moderation, multi-currency checkout, and Android PWA support.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
