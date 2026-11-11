@@ -130,7 +130,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-cyan-500/20">
           <div>
-            <div className="text-xs font-mono text-amber-300">STEP 2 OF 2 · DECENTRALIZED MULTI-CURRENCY CHECKOUT</div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-amber-300">STEP 2 OF 2 · MULTI-CURRENCY CHECKOUT</span>
+              <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/60 tracking-wider">
+                [SIM] ESCROW
+              </span>
+            </div>
             <h2 className="font-display text-lg font-bold text-white">Smart Contract Escrow Payment</h2>
           </div>
           <button
@@ -339,15 +344,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
 
             {/* Transaction Hash */}
-            <div className="p-3 bg-[#15171e] rounded-lg border border-[#272a33] text-left text-xs font-mono space-y-1">
+            <div className="p-3 bg-[#15171e] rounded-lg border border-red-500/40 text-left text-xs font-mono space-y-1">
               <div className="flex justify-between text-[#9ca3af] text-[11px]">
-                <span>SMART CONTRACT ESCROW TX</span>
-                <span className="text-[#34d399]">CONFIRMED ON-CHAIN</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="px-1 py-0.2 bg-red-900/60 text-red-300 rounded text-[9px] font-bold">[SIM]</span>
+                  <span>ESCROW PROTOCOL TX</span>
+                </span>
+                <span className="text-red-300 font-bold">[SIM] LOCAL VERIFIED HASH</span>
               </div>
               <p className="text-white truncate">{completedTx.txHash}</p>
               <div className="flex justify-between text-[11px] text-[#9ca3af] pt-1">
                 <span>Amount: {completedTx.totalAmount} {completedTx.currency}</span>
-                <span>Swarm Peers Notified: 4/4</span>
+                <span>Swarm Broadcast (BroadcastChannel)</span>
               </div>
             </div>
 

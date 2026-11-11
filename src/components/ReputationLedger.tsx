@@ -75,13 +75,22 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
         {/* Section Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-[#1f222b]">
           <div>
-            <div className="text-xs font-mono text-[#38bdf8] flex items-center gap-1.5 mb-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>IMMUTABLE ON-CHAIN REPUTATION LEDGER</span>
+            <div className="text-xs font-mono text-[#38bdf8] flex flex-wrap items-center gap-2 mb-1">
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>IMMUTABLE ON-CHAIN REPUTATION LEDGER</span>
+              </span>
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/60 tracking-wider">
+                [SIM] SIMULATED REPUTATION
+              </span>
             </div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
               Cryptographically Verified Reviews & Accreditations
             </h2>
+            <div className="my-2 p-2.5 bg-red-950/30 border border-red-500/40 rounded text-[11px] text-red-200 flex items-center gap-2">
+              <span className="font-mono font-bold bg-red-900/60 px-1.5 py-0.5 rounded text-red-300 text-[10px]">[SIM]</span>
+              <span>Локальная симуляция: хеши блоков вычисляются в браузере (SHA-256). Смарт-контракты в тестовой сети запланированы на Этапе 4 (Закон 1, 7, 10).</span>
+            </div>
             <p className="text-xs text-[#9ca3af] mt-1 max-w-2xl">
               Each review requires proof of an executed smart contract appointment transaction. Reviews cannot be edited, paid for, or erased by artists or platforms.
             </p>

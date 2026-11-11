@@ -159,15 +159,22 @@ export const FriendModerationSection: React.FC<FriendModerationSectionProps> = (
         {/* Section Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-cyan-500/20">
           <div>
-            <div className="text-xs font-mono text-cyan-400 flex items-center gap-2 mb-1.5">
+            <div className="text-xs font-mono text-cyan-400 flex flex-wrap items-center gap-2 mb-1.5">
               <span className="p-1 rounded-md bg-cyan-400/20 text-cyan-300">
                 <Users className="w-3.5 h-3.5" />
               </span>
               <span className="uppercase tracking-wider">WEB-OF-TRUST · FRIEND JURY DAO</span>
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/60 tracking-wider">
+                [SIM] DAO SIMULATION
+              </span>
             </div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
               {t.moderationTitle}
             </h2>
+            <div className="my-2 p-2.5 bg-red-950/30 border border-red-500/40 rounded text-[11px] text-red-200 flex items-center gap-2">
+              <span className="font-mono font-bold bg-red-900/60 px-1.5 py-0.5 rounded text-red-300 text-[10px]">[SIM]</span>
+              <span>Симуляция консенсуса жюри (локальный React State). P2P-синхронизация голосов запланирована на Этапе 5 (Закон 1, 7, 10).</span>
+            </div>
             <p className="text-xs text-gray-300 mt-1 max-w-2xl leading-relaxed">
               {t.moderationSubtitle}
             </p>
