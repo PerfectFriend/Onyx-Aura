@@ -1,12 +1,11 @@
 # Текущее задание
 
 **Этап 0:** 🟢 ЗАКРЫТ  
-**Спринт 1.1:** 🟢 ПРИНЯТ  
-**Спринт 1.2:** 🟢 ПРИНЯТ (useChatConcierge + useCryptoSwarm, App → 685 строк)  
-**Спринт 1.3:** 🟡 ВЫПОЛНЕН — [REPORT] отправлен на аудит (usePortfolioGallery + useSponsoredAds, App → 603 строки)
+**Спринт 1.1–1.3:** 🟢 ПРИНЯТЫ  
+(App: 899 → 603 строк, −32.9%; useState: 21 → 8)
 
 **Активный этап:** 1. Архитектурная гигиена  
-**Текущий спринт:** 1.3 — Portfolio gallery + Sponsored Ads hooks
+**Текущий спринт:** 1.4 — Error Boundaries + финальная гигиена App (закрытие Этапа 1)
 
 **Библия:** [`MANIFEST_CANONICAL_AI_DEVELOPER.md`](../MANIFEST_CANONICAL_AI_DEVELOPER.md)  
 **План:** [`EVOLUTION_PLAN.md`](../EVOLUTION_PLAN.md)  
