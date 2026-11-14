@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { PortfolioGallery } from './components/PortfolioGallery';
@@ -22,22 +22,24 @@ import { SponsoredAdsBanner } from './components/SponsoredAdsBanner';
 import { AdCampaignManagerModal } from './components/AdCampaignManagerModal';
 import { ClientAppointmentsModal } from './components/ClientAppointmentsModal';
 import { WallpaperModal, OrnamentDivider } from './components/OrnamentalFlourish';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
-import { 
-  INITIAL_ARTISTS, 
-  INITIAL_REVIEWS, 
-  INITIAL_ANCHOR_POINTS
+import {
+  INITIAL_ARTISTS,
+  INITIAL_REVIEWS,
+  INITIAL_ANCHOR_POINTS,
 } from './data/initialData';
 
-import { 
-  Artist, 
-  Review, 
+import {
+  Artist,
+  Review,
   ClientAnchorPoint,
 } from './types';
 
 import { blockchainLedger } from './simulation/cryptoLedger';
-import { reminderService, ReminderNotificationEvent } from './services/reminderService';
+import { reminderService } from './services/reminderService';
 import { useAppChrome } from './hooks/useAppChrome';
+import { useAppShell } from './hooks/useAppShell';
 import { useBookingFlow } from './hooks/useBookingFlow';
 import { useChatConcierge } from './hooks/useChatConcierge';
 import { useCryptoSwarm } from './hooks/useCryptoSwarm';
@@ -45,7 +47,7 @@ import { usePortfolioGallery } from './hooks/usePortfolioGallery';
 import { useSponsoredAds } from './hooks/useSponsoredAds';
 
 export default function App() {
-  // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Extracted in Sprint 1.1
+  // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Sprint 1.1 / 1.4
   const {
     currentLanguage,
     setCurrentLanguage,
@@ -53,38 +55,37 @@ export default function App() {
     theme,
     handleToggleTheme,
     wallpaper,
+    wallpaperClass,
     isWallpaperModalOpen,
     setIsWallpaperModalOpen,
     handleSelectWallpaper,
   } = useAppChrome();
 
-  // Core Data
+  // Application Shell (Tabs, Role, PWA Deep Links, Toast Queue, Reminders) - Sprint 1.4
+  const shell = useAppShell();
+
+  // Core Salon Orchestration Data (kept in App until Stage 2 Local-First store)
   const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
   const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
+  const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>(INITIAL_ANCHOR_POINTS);
 
-  // Notifications & Reminders
-  const [toasts, setToasts] = useState<ReminderNotificationEvent[]>([]);
-
-  // Booking, Checkout & Appointments Flow - Extracted in Sprint 1.1
+  // Booking, Checkout & Appointments Flow - Sprint 1.1
   const booking = useBookingFlow({
     artists,
-    onNotifyToast: (evt) => setToasts(prev => [evt, ...prev.slice(0, 4)]),
+    initialBookingOpen: shell.deepLinkAction === 'book',
+    onNotifyToast: shell.pushToast,
   });
 
-  // Navigation & Role State
-  const [activeTab, setActiveTab] = useState<string>('explore');
-  const [userRole, setUserRole] = useState<'client' | 'master'>('client');
-
-  // Chat & Concierge Drawer - Extracted in Sprint 1.2
+  // Chat & Concierge Drawer - Sprint 1.2
   const chat = useChatConcierge({
-    userRole,
+    userRole: shell.userRole,
     artists,
   });
 
-  // CryptoCloud Swarm & P2P State [SIM] - Extracted in Sprint 1.2
+  // CryptoCloud Swarm & P2P State [SIM] - Sprint 1.2
   const swarm = useCryptoSwarm();
 
-  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Extracted in Sprint 1.3
+  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Sprint 1.3
   const portfolio = usePortfolioGallery({
     onSyncPostToSwarm: (newLook, igPostId) => {
       swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
@@ -94,78 +95,27 @@ export default function App() {
       });
     },
     onNotify: (title, message) => {
-      setToasts(prev => [
-        {
-          id: `toast-ig-${Date.now()}`,
-          type: 'push',
-          title,
-          message,
-          timestamp: new Date().toLocaleTimeString(),
-          phoneOrTarget: 'Client Device',
-        },
-        ...prev,
-      ]);
+      shell.pushToast({
+        id: `toast-ig-${Date.now()}`,
+        type: 'push',
+        title,
+        message,
+        timestamp: new Date().toLocaleTimeString(),
+        phoneOrTarget: 'Client Device',
+      });
     },
   });
 
-  // Sponsored Ads Engine & Modal - Extracted in Sprint 1.3
+  // Sponsored Ads Engine & Modal - Sprint 1.3
   const adsEngine = useSponsoredAds({
     onBroadcastToSwarm: swarm.broadcastBlock,
   });
-
-  // Handle Android PWA shortcuts & deep links (e.g., /?tab=android or /?action=book)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get('tab');
-      const actionParam = params.get('action');
-
-      if (tabParam) {
-        setActiveTab(tabParam);
-      }
-      if (actionParam === 'book') {
-        booking.setIsBookingModalOpen(true);
-      } else if (actionParam === 'ar') {
-        setActiveTab('android');
-      }
-    }
-  }, []);
-
-  // Client Frequent Anchor Points (Home, Work, Studio/Gym)
-  const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>(INITIAL_ANCHOR_POINTS);
-
-  // Android Permissions & Build Modal
-  const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
-
-  // Subscribe to Reminder Service on mount
-  useEffect(() => {
-    const unsubReminders = reminderService.subscribe((evt) => {
-      setToasts(prev => [evt, ...prev.slice(0, 4)]);
-      // Auto-dismiss after 6 seconds
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== evt.id));
-      }, 6000);
-    });
-
-    // Request notification permission smoothly on first user interaction
-    const requestNotice = () => {
-      reminderService.requestPushPermission();
-      window.removeEventListener('click', requestNotice);
-    };
-    window.addEventListener('click', requestNotice);
-
-    return () => {
-      unsubReminders();
-      window.removeEventListener('click', requestNotice);
-    };
-  }, []);
 
   // Add review to blockchain ledger [SIM]
   const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
     const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
     setReviews(prev => [newReview, ...prev]);
 
-    // Recalculate artist rating
     setArtists(prev => prev.map(art => {
       if (art.id === reviewData.artistId) {
         const artistReviews = [...reviews.filter(r => r.artistId === art.id), newReview];
@@ -207,15 +157,6 @@ export default function App() {
     }));
   };
 
-  const wallpaperClass = 
-    wallpaper === 'damask' 
-      ? (theme === 'dark' ? 'app-wallpaper-damask-dark' : 'app-wallpaper-damask-light')
-      : wallpaper === 'filigree'
-      ? (theme === 'dark' ? 'app-wallpaper-filigree-dark' : 'app-wallpaper-filigree-light')
-      : wallpaper === 'mosaic'
-      ? (theme === 'dark' ? 'app-wallpaper-mosaic-dark' : 'app-wallpaper-mosaic-light')
-      : (theme === 'dark' ? 'app-wallpaper-minimal-dark' : 'app-wallpaper-minimal-light');
-
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 relative ${wallpaperClass} ${
       theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
@@ -223,10 +164,10 @@ export default function App() {
       
       {/* Top 3-Zone Navigation with Nailix Rebrand, Theme Toggle, Map & 10 Languages */}
       <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        userRole={userRole}
-        setUserRole={setUserRole}
+        activeTab={shell.activeTab}
+        setActiveTab={shell.setActiveTab}
+        userRole={shell.userRole}
+        setUserRole={shell.setUserRole}
         onOpenBooking={() => {
           booking.setBookingArtistTarget(null);
           booking.setBookingLookTarget(null);
@@ -235,7 +176,7 @@ export default function App() {
         onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
         appointmentsCount={booking.appointments.length}
         onOpenChat={chat.openChat}
-        onOpenPermissions={() => setIsPermissionsModalOpen(true)}
+        onOpenPermissions={() => shell.setIsPermissionsModalOpen(true)}
         unreadChatCount={chat.unreadChatCount}
         swarmOnlineCount={swarm.swarmOnlineCount}
         currentLanguage={currentLanguage}
@@ -249,7 +190,7 @@ export default function App() {
 
       {/* Main View Router with bottom padding for Android bottom nav */}
       <main className="flex-1 relative z-10 pb-24 sm:pb-28">
-        {activeTab === 'explore' && (
+        {shell.activeTab === 'explore' && (
           <>
             <HeroSection
               onExploreClick={() => {
@@ -261,8 +202,8 @@ export default function App() {
                 booking.setBookingLookTarget(null);
                 booking.setIsBookingModalOpen(true);
               }}
-              onOpenLedger={() => setActiveTab('ledger')}
-              onOpenPermissions={() => setIsPermissionsModalOpen(true)}
+              onOpenLedger={() => shell.setActiveTab('ledger')}
+              onOpenPermissions={() => shell.setIsPermissionsModalOpen(true)}
               theme={theme}
               t={t}
             />
@@ -272,7 +213,7 @@ export default function App() {
             {/* Targeted In-App Sponsored Ads (Salon Deals for Clients, Tools for Masters) */}
             <SponsoredAdsBanner
               ads={adsEngine.ads}
-              userRole={userRole}
+              userRole={shell.userRole}
               onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
@@ -281,40 +222,44 @@ export default function App() {
             <OrnamentDivider />
 
             <div id="portfolio-section">
-              <PortfolioGallery
-                items={portfolio.items}
-                onSelectItem={portfolio.openLightbox}
-                onBookItem={booking.handleStartBookingWithLook}
-                likedIds={portfolio.likedIds}
-                onToggleLike={portfolio.handleToggleLike}
-                savedIds={portfolio.savedIds}
-                onToggleSave={portfolio.handleToggleSave}
-                onFlagToJury={() => setActiveTab('moderation')}
-                theme={theme}
-                t={t}
-              />
+              <ErrorBoundary level="section" sectionName="Галерея портфолио" theme={theme}>
+                <PortfolioGallery
+                  items={portfolio.items}
+                  onSelectItem={portfolio.openLightbox}
+                  onBookItem={booking.handleStartBookingWithLook}
+                  likedIds={portfolio.likedIds}
+                  onToggleLike={portfolio.handleToggleLike}
+                  savedIds={portfolio.savedIds}
+                  onToggleSave={portfolio.handleToggleSave}
+                  onFlagToJury={() => shell.setActiveTab('moderation')}
+                  theme={theme}
+                  t={t}
+                />
+              </ErrorBoundary>
             </div>
           </>
         )}
 
         {/* Hyper-Local Map & Distance Proximity View */}
-        {activeTab === 'map' && (
+        {shell.activeTab === 'map' && (
           <div className="space-y-6">
-            <ClientLocationMap
-              artists={artists}
-              anchorPoints={anchorPoints}
-              onUpdateAnchorPoint={handleUpdateAnchorPoint}
-              onSelectArtistToBook={booking.handleStartBookingWithArtist}
-              onOpenChatWithArtist={chat.openChat}
-              userRole={userRole}
-              onUpdateMasterSalon={handleUpdateMasterSalon}
-              theme={theme}
-              t={t}
-            />
+            <ErrorBoundary level="section" sectionName="Карта локаций" theme={theme}>
+              <ClientLocationMap
+                artists={artists}
+                anchorPoints={anchorPoints}
+                onUpdateAnchorPoint={handleUpdateAnchorPoint}
+                onSelectArtistToBook={booking.handleStartBookingWithArtist}
+                onOpenChatWithArtist={chat.openChat}
+                userRole={shell.userRole}
+                onUpdateMasterSalon={handleUpdateMasterSalon}
+                theme={theme}
+                t={t}
+              />
+            </ErrorBoundary>
 
             <SponsoredAdsBanner
               ads={adsEngine.ads}
-              userRole={userRole}
+              userRole={shell.userRole}
               onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
@@ -323,21 +268,25 @@ export default function App() {
         )}
 
         {/* Friend Circle Consensus Moderation DAO View [SIM] */}
-        {activeTab === 'moderation' && (
-          <FriendModerationSection t={t} />
+        {shell.activeTab === 'moderation' && (
+          <ErrorBoundary level="section" sectionName="Круг доверия DAO [SIM]" theme={theme}>
+            <FriendModerationSection t={t} />
+          </ErrorBoundary>
         )}
 
-        {activeTab === 'artists' && (
+        {shell.activeTab === 'artists' && (
           <div className="space-y-8">
-            <ArtistsView
-              artists={artists}
-              onSelectArtistToBook={booking.handleStartBookingWithArtist}
-              onOpenChatWithArtist={chat.openChat}
-            />
+            <ErrorBoundary level="section" sectionName="Каталог мастеров" theme={theme}>
+              <ArtistsView
+                artists={artists}
+                onSelectArtistToBook={booking.handleStartBookingWithArtist}
+                onOpenChatWithArtist={chat.openChat}
+              />
+            </ErrorBoundary>
 
             <SponsoredAdsBanner
               ads={adsEngine.ads}
-              userRole={userRole}
+              userRole={shell.userRole}
               onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
@@ -345,58 +294,68 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'ledger' && (
-          <ReputationLedger
-            reviews={reviews}
-            artists={artists}
-            onAddReview={handleAddReview}
-          />
+        {shell.activeTab === 'ledger' && (
+          <ErrorBoundary level="section" sectionName="Реестр отзывов [SIM]" theme={theme}>
+            <ReputationLedger
+              reviews={reviews}
+              artists={artists}
+              onAddReview={handleAddReview}
+            />
+          </ErrorBoundary>
         )}
 
-        {activeTab === 'instagram' && (
-          <InstagramSyncSection
-            artists={artists}
-            onImportPost={portfolio.handleImportInstagramPost}
-          />
+        {shell.activeTab === 'instagram' && (
+          <ErrorBoundary level="section" sectionName="Синхронизация Instagram" theme={theme}>
+            <InstagramSyncSection
+              artists={artists}
+              onImportPost={portfolio.handleImportInstagramPost}
+            />
+          </ErrorBoundary>
         )}
 
-        {activeTab === 'cryptocloud' && (
-          <CryptoCloudPanel
-            swarmState={swarm.swarmState}
-            peers={swarm.peers}
-            onTriggerBackup={() =>
-              swarm.handleExportCryptoCloudBackup({
-                appointments: booking.appointments,
-                reviews,
-                portfolio: portfolio.items,
-                chats: chat.chatMessages,
-              })
-            }
-            onSimulatePulse={swarm.handleSimulatePeerPulse}
-            isBackingUp={swarm.isBackingUp}
-            backupSuccessMessage={swarm.backupSuccessMessage}
-          />
+        {shell.activeTab === 'cryptocloud' && (
+          <ErrorBoundary level="section" sectionName="CryptoCloud Swarm [SIM]" theme={theme}>
+            <CryptoCloudPanel
+              swarmState={swarm.swarmState}
+              peers={swarm.peers}
+              onTriggerBackup={() =>
+                swarm.handleExportCryptoCloudBackup({
+                  appointments: booking.appointments,
+                  reviews,
+                  portfolio: portfolio.items,
+                  chats: chat.chatMessages,
+                })
+              }
+              onSimulatePulse={swarm.handleSimulatePeerPulse}
+              isBackingUp={swarm.isBackingUp}
+              backupSuccessMessage={swarm.backupSuccessMessage}
+            />
+          </ErrorBoundary>
         )}
 
-        {activeTab === 'analytics' && (
-          <AdminAnalyticsDashboard
-            appointments={booking.appointments}
-            artists={artists}
-            onReleaseEscrow={booking.handleReleaseEscrow}
-            onTriggerReminder={booking.handleTriggerAppointmentReminder}
-          />
+        {shell.activeTab === 'analytics' && (
+          <ErrorBoundary level="section" sectionName="Аналитика студии" theme={theme}>
+            <AdminAnalyticsDashboard
+              appointments={booking.appointments}
+              artists={artists}
+              onReleaseEscrow={booking.handleReleaseEscrow}
+              onTriggerReminder={booking.handleTriggerAppointmentReminder}
+            />
+          </ErrorBoundary>
         )}
 
         {/* Android Native Suite & AR Fitting View */}
-        {activeTab === 'android' && (
+        {shell.activeTab === 'android' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-            <AndroidExperienceView
-              onBookLook={booking.handleStartBookingWithLook}
-              onOpenBookingModal={() => booking.setIsBookingModalOpen(true)}
-              onOpenChat={chat.openChat}
-              theme={theme}
-              t={t}
-            />
+            <ErrorBoundary level="section" sectionName="AR-примерка и Android Suite" theme={theme}>
+              <AndroidExperienceView
+                onBookLook={booking.handleStartBookingWithLook}
+                onOpenBookingModal={() => booking.setIsBookingModalOpen(true)}
+                onOpenChat={chat.openChat}
+                theme={theme}
+                t={t}
+              />
+            </ErrorBoundary>
           </div>
         )}
       </main>
@@ -485,34 +444,36 @@ export default function App() {
         onPaymentSuccess={booking.handlePaymentSuccess}
       />
 
-      <ChatDrawer
-        isOpen={chat.isChatOpen}
-        onClose={chat.closeChat}
-        messages={chat.chatMessages}
-        onSendMessage={chat.handleSendMessage}
-        artists={artists}
-        userRole={userRole}
-        onBookService={(artist, serviceName) => {
-          const srv = artist.services.find(s => s.name === serviceName) || artist.services[0];
-          booking.handleProceedToCheckout({
-            artist,
-            service: srv,
-            date: '2026-09-25',
-            timeSlot: '02:30 PM',
-            clientName: 'Genevieve Vance',
-            clientPhone: '+1 (555) 749-0182',
-            clientEmail: 'genevieve@pariscouture.com',
-            customNotes: 'Direct quote locked from studio chat.',
-            enablePush: true,
-            enableSMS: true,
-          });
-        }}
-      />
+      <ErrorBoundary level="section" sectionName="Чат-консьерж" theme={theme}>
+        <ChatDrawer
+          isOpen={chat.isChatOpen}
+          onClose={chat.closeChat}
+          messages={chat.chatMessages}
+          onSendMessage={chat.handleSendMessage}
+          artists={artists}
+          userRole={shell.userRole}
+          onBookService={(artist, serviceName) => {
+            const srv = artist.services.find(s => s.name === serviceName) || artist.services[0];
+            booking.handleProceedToCheckout({
+              artist,
+              service: srv,
+              date: '2026-09-25',
+              timeSlot: '02:30 PM',
+              clientName: 'Genevieve Vance',
+              clientPhone: '+1 (555) 749-0182',
+              clientEmail: 'genevieve@pariscouture.com',
+              customNotes: 'Direct quote locked from studio chat.',
+              enablePush: true,
+              enableSMS: true,
+            });
+          }}
+        />
+      </ErrorBoundary>
 
       {/* Android Permissions & APK Modal */}
       <AndroidPermissionsModal
-        isOpen={isPermissionsModalOpen}
-        onClose={() => setIsPermissionsModalOpen(false)}
+        isOpen={shell.isPermissionsModalOpen}
+        onClose={() => shell.setIsPermissionsModalOpen(false)}
         t={t}
       />
 
@@ -525,14 +486,14 @@ export default function App() {
         onOpenBooking={() => booking.setIsBookingModalOpen(true)}
         theme={theme}
         onNotification={(msg) => {
-          setToasts(prev => [{
+          shell.pushToast({
             id: `toast-cal-${Date.now()}`,
             type: 'push',
             title: 'Календарь',
             message: msg,
             timestamp: new Date().toLocaleTimeString(),
             phoneOrTarget: 'Календарь',
-          }, ...prev]);
+          });
         }}
       />
 
@@ -547,8 +508,8 @@ export default function App() {
 
       {/* Real-Time Toast Notifications (SMS, Push, P2P Sync) */}
       <ToastNotification
-        notifications={toasts}
-        onDismiss={(id) => setToasts(prev => prev.filter(t => t.id !== id))}
+        notifications={shell.toasts}
+        onDismiss={shell.dismissToast}
       />
 
       {/* Expressive Haute Couture & Ornament Art Footer */}
@@ -568,8 +529,8 @@ export default function App() {
             <span aria-hidden="true">·</span>
             <span className="text-fuchsia-300">Friend Circle Jury DAO [SIM]</span>
             <span aria-hidden="true">·</span>
-            <button 
-              onClick={() => setIsPermissionsModalOpen(true)}
+            <button
+              onClick={() => shell.setIsPermissionsModalOpen(true)}
               className="text-white hover:text-cyan-300 underline cursor-pointer"
             >
               {t.androidBuild}
@@ -582,16 +543,16 @@ export default function App() {
       <AndroidFAB
         onQuickBook={() => booking.setIsBookingModalOpen(true)}
         onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
-        onOpenARCamera={() => setActiveTab('android')}
+        onOpenARCamera={() => shell.setActiveTab('android')}
         onOpenChat={chat.openChat}
-        onOpenAndroidSuite={() => setActiveTab('android')}
+        onOpenAndroidSuite={() => shell.setActiveTab('android')}
         theme={theme}
       />
 
       {/* Android Native Material 3 Bottom Navigation Bar */}
       <AndroidBottomNav
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        activeTab={shell.activeTab}
+        setActiveTab={shell.setActiveTab}
         unreadChatCount={chat.unreadChatCount}
         onOpenChat={chat.openChat}
         theme={theme}

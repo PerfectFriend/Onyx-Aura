@@ -20,6 +20,7 @@ export interface PendingBookingDetails {
 
 export interface UseBookingFlowProps {
   artists: Artist[];
+  initialBookingOpen?: boolean;
   onNotifyToast?: (event: ReminderNotificationEvent) => void;
 }
 
@@ -53,9 +54,13 @@ export interface UseBookingFlowReturn {
  * - Step 2: CheckoutModal (currency & escrow deposit simulation)
  * - Multi-appointment tracking and automated 24h / 2h reminder dispatching
  */
-export function useBookingFlow({ artists, onNotifyToast }: UseBookingFlowProps): UseBookingFlowReturn {
+export function useBookingFlow({
+  artists,
+  initialBookingOpen = false,
+  onNotifyToast,
+}: UseBookingFlowProps): UseBookingFlowReturn {
   const [appointments, setAppointments] = useState<Appointment[]>(INITIAL_APPOINTMENTS);
-  const [isBookingModalOpen, setIsBookingModalOpen] = useState<boolean>(false);
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState<boolean>(initialBookingOpen);
   const [isAppointmentsModalOpen, setIsAppointmentsModalOpen] = useState<boolean>(false);
   const [bookingArtistTarget, setBookingArtistTarget] = useState<Artist | null>(null);
   const [bookingLookTarget, setBookingLookTarget] = useState<PortfolioItem | null>(null);

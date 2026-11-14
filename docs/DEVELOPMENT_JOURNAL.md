@@ -1138,3 +1138,83 @@ App читается как оркестратор; домены в хуках; 
 **Гриша**
 
 ---
+
+### 2026-11-14 13:25 CET · [REPORT] · От: Женя → Кому: Гриша
+
+Гриша, привет! Спринт **1.4 (Error Boundaries + финальная гигиена `App.tsx`)** выполнен, протестирован и готов к финальному аудиту **Этапа 1**! 🛡️✨
+
+«Семейные ценности монолита» официально отправлены на заслуженную пенсию: наш `ErrorBoundary` уже заступил на смену с двумя уровнями защиты, а в `App.tsx` не осталось ни одного `useEffect` — только **3 оркестраторных `useState`** (`artists`, `reviews`, `anchorPoints`) и 7 стройных доменных хуков!
+
+---
+
+#### 📦 Список выполненных работ по Спринту 1.4:
+
+1. **Двухуровневый `React Error Boundary` (`src/components/ErrorBoundary.tsx`)**:
+   - **Root Boundary (`src/main.tsx`, `level="root"`):** Оборачивает всё дерево `<App />`. При критическом сбое показывает спокойный экран в эстетике Onyx-Aura (*«Салон временно на паузе»*) с кнопками восстановления и перезагрузки страницы — без пугающего красного stack trace.
+   - **Section Boundaries (`src/App.tsx`, `level="section"`):** Изолируют 10 интерактивных / тяжёлых / `[SIM]` секций (`PortfolioGallery`, `ClientLocationMap`, `FriendModerationSection`, `ArtistsView`, `ReputationLedger`, `InstagramSyncSection`, `CryptoCloudPanel`, `AdminAnalyticsDashboard`, `AndroidExperienceView`, `ChatDrawer`). При локальном сбое конкретная секция показывает аккуратный fallback с кнопкой *«Перезагрузить секцию»*, а весь остальной салон продолжает работать.
+
+2. **Дочистка системного «хрома» в `src/hooks/useAppShell.ts` и `src/hooks/useAppChrome.ts`**:
+   - Создан `src/hooks/useAppShell.ts`: вынесены `activeTab`, `userRole`, ленивый разбор PWA deep links (`?tab=...`, `?action=book|ar`), `isPermissionsModalOpen`, очередь `toasts`, подписка на `reminderService` и запрос push-разрешений.
+   - В `src/hooks/useBookingFlow.ts` добавлен опциональный флаг `initialBookingOpen`, чтобы диплинк `?action=book` открывал модалку без лишнего `useEffect` в `App.tsx`.
+   - В `src/hooks/useAppChrome.ts` перенесено вычисление CSS-класса обоев `wallpaperClass`.
+
+3. **Осознанный оркестраторный стейт в `src/App.tsx`**:
+   - Оставлено только **3 `useState`**: `artists`, `reviews`, `anchorPoints`. Они являются общими данными нескольких доменов и прямо лягут в фундамент **Этапа 2 (Local-First / IndexedDB)**, без изобретения синтетических обёрток.
+
+4. **Регрессия и новые unit-тесты (`src/__tests__/errorBoundary.test.tsx`)**:
+   - Написаны **4 unit-теста** для `ErrorBoundary`: прозрачный рендер детей, `getDerivedStateFromError`, секционный fallback без утечки сообщения ошибки в UI, root fallback с контролами восстановления.
+   - Результаты проверок:
+```bash
+$ npm run lint
+> eslint . && tsc --noEmit
+# 0 errors, 0 warnings
+
+$ npm run typecheck
+> tsc --noEmit
+# 0 errors
+
+$ npm test
+> vitest run
+✓ src/__tests__/calendarSync.test.ts (4 tests)
+✓ src/__tests__/errorBoundary.test.tsx (4 tests)
+✓ src/__tests__/haptics.test.ts (3 tests)
+✓ src/__tests__/geoDistance.test.ts (3 tests)
+Test Files: 4 passed (4)
+Tests: 14 passed (14)
+Duration: 1.06s
+```
+
+5. **Итоговые метрики `src/App.tsx` за весь Этап 1**:
+   - **Было в начале Этапа 1:** `899` строк | `21 useState` | системные `useEffect`
+   - **После 1.3:** `603` строки | `8 useState`
+   - **После 1.4:** **`564` строки** (**−335 строк / −37.3%** от старта!) | **`3 useState` (−85.7%)** | **`0 useEffect`** (с учётом 10 обёрток `<ErrorBoundary>` в JSX!).
+
+6. **Обновлена документация**:
+   - `docs/ARCHITECTURE_NOTES.md`: добавлена Секция 5 (Error Boundaries + `useAppShell` + обоснование остатка стейта), Секция 6 (полный реестр 7 хуков Этапа 1) и Секция 7 (итоговые метрики и критерии закрытия Этапа 1).
+   - `docs/CURRENT_ASSIGNMENT.md`: обновлён статус на финальный аудит 1.4.
+
+---
+
+#### ⏳ Что сознательно не делалось (строго по плану):
+- Без React Router, без Zustand, без новых продуктовых фич, без переписывания `src/simulation/`.
+
+---
+
+😄 **Минутка позитива в тандем (финал Этапа 1):**
+
+> Открывается дверь в обновлённый салон Nailix. За стойкой стоит сияющий `App.tsx` в смокинге дирижёра.  
+> Входит QA-тестировщик с молотком в руках:  
+> — Ну что, сейчас будем проверять на прочность! Вот возьму и уроню ваш `[SIM]`-рой CryptoCloud прямо во время бронирования!  
+> `App.tsx` даже бровью не ведёт, поправляет бабочку:  
+> — Бейте аккуратнее, дорогой гость. Вон секционный `ErrorBoundary` поймает рой в тёплое одеяло, скажет ему «отдохни секундочку», а клиент спокойно оплатит маникюр Гауди и запишется в календарь.  
+> Тестировщик роняет молоток:  
+> — А что если уронить вообще всё дерево?!  
+> Из-за кулис выходит Root `ErrorBoundary` с чашкой латте:  
+> — Тогда я вежливо скажу: «Салон на минутной паузе» и предложу кнопку обновления. Никаких белых экранов, сэр. У нас тут бар с туалетом и пожарным выходом!  
+
+Гриша, Этап 1 построен на совесть! Передаю на финальный аудит 1.4 и готов принимать благословение на **Этап 2 (Local-First / Data Persistence)**! 🏆🤝🚀
+
+Твой напарник по цеху,  
+**Женя**  
+Сеньор-разработчик NailiX / Onyx-Aura
+

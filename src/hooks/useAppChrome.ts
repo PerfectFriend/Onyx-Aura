@@ -18,6 +18,7 @@ export interface UseAppChromeReturn {
   isWallpaperModalOpen: boolean;
   setIsWallpaperModalOpen: (open: boolean) => void;
   handleSelectWallpaper: (wp: WallpaperTheme) => void;
+  wallpaperClass: string;
 }
 
 /**
@@ -88,6 +89,15 @@ export function useAppChrome(): UseAppChromeReturn {
     }
   };
 
+  const wallpaperClass =
+    wallpaper === 'damask'
+      ? (theme === 'dark' ? 'app-wallpaper-damask-dark' : 'app-wallpaper-damask-light')
+      : wallpaper === 'filigree'
+      ? (theme === 'dark' ? 'app-wallpaper-filigree-dark' : 'app-wallpaper-filigree-light')
+      : wallpaper === 'mosaic'
+      ? (theme === 'dark' ? 'app-wallpaper-mosaic-dark' : 'app-wallpaper-mosaic-light')
+      : (theme === 'dark' ? 'app-wallpaper-minimal-dark' : 'app-wallpaper-minimal-light');
+
   return {
     currentLanguage,
     setCurrentLanguage,
@@ -98,5 +108,6 @@ export function useAppChrome(): UseAppChromeReturn {
     isWallpaperModalOpen,
     setIsWallpaperModalOpen,
     handleSelectWallpaper,
+    wallpaperClass,
   };
 }
