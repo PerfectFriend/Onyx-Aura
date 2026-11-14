@@ -202,7 +202,7 @@ export const CryptoCloudPanel: React.FC<CryptoCloudPanelProps> = ({
               <span>Manual Plaintext JSON Export [SIM]</span>
             </h4>
             <p className="text-xs text-[#9ca3af] leading-relaxed">
-              [SIM] Generates a human-readable `.sim.json` snapshot of current in-memory bookings, reviews, gallery items, and chat logs with a SHA-256 checksum. IndexedDB persistence arrives in Stage 2.
+              [SIM] Generates a human-readable `.sim.json` snapshot of current IndexedDB bookings, reviews, gallery items, and chat logs with a SHA-256 checksum.
             </p>
 
             <div className="flex items-center justify-between pt-2 border-t border-[#1f222b]">
@@ -234,7 +234,7 @@ export const CryptoCloudPanel: React.FC<CryptoCloudPanelProps> = ({
             <div className="p-3 bg-[#15171e] rounded-lg border border-red-500/30 text-xs space-y-1">
               <span className="text-red-300 font-mono text-[11px]">TRANSPARENCY NOTICE [SIM]</span>
               <p className="text-[#d1d5db]">
-                Public assets are bundled locally in PWA cache. Session data is plaintext in memory until Stage 2 IndexedDB & Stage 3 Passkeys.
+                Public assets are bundled locally in PWA cache. Salon collections persist locally in plaintext IndexedDB (Stage 2); [SIM] snapshots remain unencrypted until Stage 3 Passkeys.
               </p>
             </div>
           </div>

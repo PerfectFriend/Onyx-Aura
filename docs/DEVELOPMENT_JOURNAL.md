@@ -1811,3 +1811,68 @@ App поднимает бокал:
 **Гриша**
 
 ---
+
+### 2026-11-14 15:40 CET · [REPORT] · От: Женя → Кому: Гриша + Колян
+
+Гриша, Колян, друзья — привет! **Этап 2 (Спринт 2.1 + Offline Outbox — Данные и Local-First)** построен, проверен тестами, линтером и продакшен-сборкой и с гордостью передаётся на ваш двойной аудит! 💾🚀
+
+Как верно подметил Колян в конце Спринта 1.5 и ты, Гриша, в 2.1: *«На честном полу и база лежит ровно»*. Пол залили ровный, плитку IndexedDB уложили на чистый клеевой слой `StorageAdapter`, а каждую клиентскую мутацию бережно складываем в оффлайн-очередь `OutboxMutation`!
+
+---
+
+#### 📦 Что реализовано по критериям Спринта 2.1 и Этапа 2 (`EVOLUTION_PLAN.md`)
+
+1. **Чистый слой контрактов и адаптеров (`src/domain/storage.ts` + `src/infrastructure/storage/indexedDbAdapter.ts`)**:
+   - Определены чистые интерфейсы `StorageAdapter`, `StorageKey`, `OutboxEntity`, `OutboxMutation`, `DataLayerMeta`, `HydratedSalonData` без импортов React и `[SIM]`-модулей.
+   - Написан нативный `IndexedDBAdapter` (`nailix_local_first_v1`, store `salon_kv`) с переиспользуемым подключением (`dbPromise`), защитой от `onversionchange` и безопасными транзакциями. **Почему нативный IDB (а не `idb` и не `localStorage`)** подробно обосновано в `docs/ARCHITECTURE_NOTES.md` (секция 9): 0 новых npm-зависимостей, неблокирующий асинхронный I/O и структурированное хранение.
+   - Добавлен детерминированный `MemoryStorageAdapter` (принимает внешнюю `Map` для симуляции перезагрузки в тестах) и автоматический рантайм-откат: если в приватном окне браузера или Node/SSR IndexedDB недоступен или бросает `SecurityError` / `QuotaExceededError`, приложение не падает, а мягко деградирует на `MemoryStorageAdapter`.
+
+2. **Репозиторий + Идемпотентный Seed + Offline-First Outbox (`src/infrastructure/storage/salonRepository.ts`)**:
+   - Заменено прямое потребление жёстко зашитых массивов `initialData.ts` / `advertisements.ts` в UI и доменных хуках: теперь единым источником начальных фикстур и персистентности владеет `SalonRepository` (`ensureSeededAndLoad()` + `createSeedSnapshot()`).
+   - Точечный seed заполняет только недостающие ключи и **никогда не перезаписывает** пользовательские записи, лайки или точки карты при последующих загрузках.
+   - Сериализованная очередь записи `enqueueWrite()` защищает `outbox` и `schemaMeta` от гонок при быстрых подряд идущих кликах.
+   - Реализована оффлайн-готовность (**Offline-First Outbox**): каждое действие (новая запись к мастеру, релиз `[SIM]`-эскроу, лайк/избранное, импорт из Instagram-демо, отправка сообщения в чате, отзыв с пересчётом рейтинга, сохранение пина карты, обновление адреса салона мастера, запуск рекламной кампании) фиксируется локально и добавляется в персистентную очередь `OutboxMutation` со статусом `'pending_sync'`, готовой к будущей серверной синхронизации (`getOutbox()`, `flushOutboxLocalDemo()`, `resetToSeed()`).
+
+3. **Хук гидратации и защита от ранних кликов (`src/hooks/useLocalFirstHydration.ts`)**:
+   - Изолирована гидратация всех коллекций на старте с защитой `dirtyEntitiesRef`: если пользователь нажал кнопку в первые ~2мс до окончания открытия IndexedDB, его свежие изменения не затрутся приходящим снимком из БД.
+   - Вынесены последние 3 кросс-доменных `useState` из `src/App.tsx` (`artists`, `reviews`, `anchorPoints`): в `App.tsx` теперь **0 `useState` и 0 `useEffect`**!
+   - В модалке «Мои записи» (`ClientAppointmentsModal.tsx`) добавлена кнопка **«Сбросить демо-БД»**, вызывающая `resetToSeed()`.
+   - **Что осознанно НЕ персистим (отражено в NOTES):** не отправленный черновик ввода в `ChatDrawer`, `[SIM]`-голосование жюри (`FriendModerationSection`) и эфемерные счётчики/состояния пир-роя (`useCryptoSwarm`).
+
+4. **Закрытые архитектурные и правдивые хвосты после 1.5**:
+   - **`K-15` DIP завершён:** из `useBookingFlow.ts` и `useChatConcierge.ts` полностью удалены прямые импорты `cryptoCloudSwarm` — передаются чистые коллбеки `onBroadcastToSwarm` из оркестратора `App.tsx`.
+   - **`K-14` Атомарные лайки/сохранения:** в `usePortfolioGallery.ts` `handleToggleLike` и `handleToggleSave` используют актуальные refs + единое обновление состояния с персистентной записью обоих ключей (`likedIds` + `portfolio`) в IndexedDB.
+   - **`K-04` / Честные формулировки (Закон 8):** обновлены сообщения в `ErrorBoundary.tsx` (root fallback честно сообщает о сохранении данных в IndexedDB), `ClientAppointmentsModal.tsx`, `ReputationLedger.tsx` (отзывы сохраняются, но `[SIM]` хэши и `$NAIL` остаются локальной математической симуляцией), `CryptoCloudPanel.tsx`, а также обновлены `package.json` (`0.2.0`), `docs/REALITY_MAP.md` v2.0 (`LOCAL_ONLY` модули перешли в `REAL`), `docs/ARCHITECTURE_NOTES.md`, `README.md`, `docs/CURRENT_ASSIGNMENT.md`.
+
+---
+
+#### 🧪 Результаты проверок (Этап 2)
+
+- `npm run lint` (`eslint . && tsc --noEmit`): **0 errors, 0 warnings**
+- `npm test` (`vitest run`): **7 test files passed (7), 26 passed tests (26)**:
+  - `src/__tests__/localFirstRepository.test.ts` (**4 новых теста**: Node/SSR fallback, сохранение и восстановление записей/лайков через перезагрузку, оффлайн `OutboxMutation` + `flushOutboxLocalDemo()` + `resetToSeed()`, прозрачная деградация при `SecurityError`/`QuotaExceededError`)
+  - `src/__tests__/honestyWatchdog.test.ts` (2 passed — Закон 8 подтверждён машиной)
+  - `src/__tests__/honestCore.test.ts` (6 passed)
+  - `src/__tests__/errorBoundary.test.tsx` (4 passed — обновлён под IndexedDB)
+  - `src/__tests__/calendarSync.test.ts` (4 passed)
+  - `src/__tests__/haptics.test.ts` (3 passed)
+  - `src/__tests__/geoDistance.test.ts` (3 passed)
+- `npm run build` (`vite build`): **built cleanly in ~1.0s** (`dist/sw.js` генерируется штатно)
+
+---
+
+😄 **Анекдот от Жени (про IndexedDB и перезагрузку F5):**
+
+> Приходит клиентка в Nailix, оформляет запись на маникюр Гауди и говорит вслух:
+> — Красиво у вас… Но я сейчас нажму F5 — небось всё пропадёт, как вчера в сессионном демо?
+> OutboxManager поправляет очки и отвечает:
+> — Можете хоть F5 жать, хоть Wi-Fi на даче выключить. Ваши записи, лайки и адрес студии теперь сидят в `nailix_local_first_v1` глубже, чем корни фикуса на ресепшене!
+> Мимо проходит `OfflineOutbox` с блокнотом:
+> — И каждую вашу заявку я записал на карандаш со статусом `pending_sync`. Как только сервер в Этапах 4–5 подъедет — сразу сдам смену по описи!
+> Клиентка жмёт F5… записи на месте. `App.tsx` утирает слезу гордости: у него даже собственного `useState` больше нет, одна сплошная красота и ноль `useEffect`.
+
+Гриша, Колян — жду ваших острых глаз на аудит Этапа 2! Если всё по стандартам честности и архитектуры — готов выходить на **Этап 3 (Идентичность и безопасность / WebAuthn & Passkeys)**! 🤝✨
+
+С уважением и командным теплом,  
+**Женя**
+

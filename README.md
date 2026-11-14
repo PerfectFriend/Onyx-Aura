@@ -28,10 +28,11 @@
 
 ## ✨ Ключевые возможности / Core Highlights
 
-### 1. 📅 Интеллектуальный календарный сервис (Universal Calendar Sync) · 🟢 `REAL`
+### 1. 📅 Бронирование, Offline-First База и Календарный сервис · 🟢 `REAL`
+- **Local-First IndexedDB**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через чистый `SalonRepository` с идемпотентным сидом и оффлайн-очередью мутаций (`OutboxMutation`).
 - **Мгновенная синхронизация в Google Calendar / Microsoft Outlook** через веб-ссылки с предзаполненными параметрами.
 - **Экспорт в Apple Calendar / Outlook** через генерацию файла `.ics` (iCalendar RFC 5545) с напоминаниями `VALARM`.
-- Просмотр записей текущей сессии (`LOCAL_ONLY`) в модальном окне «Мои записи».
+- Просмотр записей и сброс демо-БД в модальном окне «Мои записи».
 
 ### 2. 💅 Галерея Высокого Нейл-Арта (Haute Couture Gallery) · 🟢 `REAL`
 - Интерактивный каталог эксклюзивных дизайнов с фильтрами по категориям и Lightbox-просмотром.
@@ -64,6 +65,7 @@
 - **Bundler & Tooling**: [Vite 6](https://vitejs.dev/), [Vitest](https://vitest.dev/), [ESLint 9](https://eslint.org/) (`typescript-eslint`, `react-hooks`, `jsx-a11y`)
 - **Styling & Design System**: [Tailwind CSS v4](https://tailwindcss.com/), Custom Cyber-Gaudí Ornament Engine
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
+- **Local-First Storage**: Native `IndexedDB` via `StorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue (with `MemoryStorageAdapter` fallback)
 - **PWA & Offline Engine**: [Vite Plugin PWA](https://vite-pwa-org.netlify.app/), Workbox
 - **Calendar Engine**: RFC 5545 iCalendar generator + Google/Outlook Calendar URL builder
 
@@ -78,15 +80,17 @@
 ├── public/                 # Статические ассеты, PWA-иконки, assetlinks.json
 │   └── assets/images/      # Локальные изображения (портфолио, баннеры, аватары)
 ├── src/
-│   ├── __tests__/          # Unit-тесты (Vitest): honestyWatchdog, calendarSync, geoDistance, haptics, ErrorBoundary
+│   ├── __tests__/          # Unit-тесты (Vitest): honestyWatchdog, localFirstRepository, calendarSync, geoDistance, haptics, ErrorBoundary
 │   ├── components/         # UI-компоненты, модалки, ErrorBoundary
-│   ├── data/               # Начальные демо-данные (мастера, портфолио, реклама)
-│   ├── hooks/              # 7 доменных хуков Этапа 1 (chrome, shell, booking, chat, swarm, portfolio, ads)
+│   ├── data/               # Начальные seed-фикстуры для SalonRepository
+│   ├── domain/             # Чистые интерфейсы StorageAdapter, OutboxMutation, HydratedSalonData
+│   ├── hooks/              # Доменные хуки + useLocalFirstHydration
 │   ├── i18n/               # Словарь переводов на 10 языков (LTR + RTL)
+│   ├── infrastructure/     # IndexedDBAdapter, MemoryStorageAdapter, SalonRepository + Outbox
 │   ├── services/           # geoDistance (REAL) и reminderService ([SIM])
 │   ├── simulation/         # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
 │   ├── utils/              # calendarSync.ts (RFC 5545), haptics.ts
-│   ├── App.tsx             # Оркестратор вкладок, хуков и ErrorBoundary-секций
+│   ├── App.tsx             # Чистый оркестратор хуков и ErrorBoundary-секций (0 useState, 0 useEffect)
 │   └── main.tsx            # Точка входа React + Root ErrorBoundary
 ├── eslint.config.js        # Strict TS/React/A11y ESLint конфиг
 ├── vite.config.ts          # Конфигурация Vite и PWA Workbox

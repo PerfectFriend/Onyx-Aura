@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { PortfolioGallery } from './components/PortfolioGallery';
@@ -25,18 +24,11 @@ import { WallpaperModal, OrnamentDivider } from './components/OrnamentalFlourish
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 import {
-  INITIAL_ARTISTS,
-  INITIAL_REVIEWS,
-  INITIAL_ANCHOR_POINTS,
   DEMO_CLIENT_PROFILE,
   getRelativeDateISO,
 } from './data/initialData';
 
-import {
-  Artist,
-  Review,
-  ClientAnchorPoint,
-} from './types';
+import { ClientAnchorPoint } from './types';
 
 import { blockchainLedger } from './simulation/cryptoLedger';
 import { reminderService } from './services/reminderService';
@@ -47,6 +39,7 @@ import { useChatConcierge } from './hooks/useChatConcierge';
 import { useCryptoSwarm } from './hooks/useCryptoSwarm';
 import { usePortfolioGallery } from './hooks/usePortfolioGallery';
 import { useSponsoredAds } from './hooks/useSponsoredAds';
+import { useLocalFirstHydration, useHydrationCommit } from './hooks/useLocalFirstHydration';
 
 /**
  * Computes incremental weighted average rating without depending on stale closures (K-09).
@@ -79,28 +72,30 @@ export default function App() {
   // Application Shell (Tabs, Role, PWA Deep Links, Toast Queue, Reminders) - Sprint 1.4
   const shell = useAppShell();
 
-  // Core Salon Orchestration Data (kept in App until Stage 2 Local-First store)
-  const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
-  const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
-  const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>(INITIAL_ANCHOR_POINTS);
-
-  // Booking, Checkout & Appointments Flow - Sprint 1.1
-  const booking = useBookingFlow({
-    artists,
-    initialBookingOpen: shell.deepLinkAction === 'book',
-    onNotifyToast: shell.pushToast,
-  });
-
-  // Chat & Concierge Drawer - Sprint 1.2
-  const chat = useChatConcierge({
-    userRole: shell.userRole,
-    artists,
-  });
-
   // CryptoCloud Swarm & P2P State [SIM] - Sprint 1.2
   const swarm = useCryptoSwarm();
 
-  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Sprint 1.3
+  // Stage 2 Local-First IndexedDB Repository + Offline Sync Outbox + Shared Entities
+  const localFirst = useLocalFirstHydration();
+
+  // Booking, Checkout & Appointments Flow - Sprint 1.1 + Stage 2 DIP & IndexedDB
+  const booking = useBookingFlow({
+    artists: localFirst.artists,
+    initialBookingOpen: shell.deepLinkAction === 'book',
+    onNotifyToast: shell.pushToast,
+    onBroadcastToSwarm: swarm.broadcastBlock,
+    onPersistAppointments: localFirst.persistAppointments,
+  });
+
+  // Chat & Concierge Drawer - Sprint 1.2 + Stage 2 DIP & IndexedDB
+  const chat = useChatConcierge({
+    userRole: shell.userRole,
+    artists: localFirst.artists,
+    onBroadcastToSwarm: swarm.broadcastBlock,
+    onPersistChats: localFirst.persistChats,
+  });
+
+  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Sprint 1.3 + Stage 2 K-14
   const portfolio = usePortfolioGallery({
     onSyncPostToSwarm: (newLook, igPostId) => {
       swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
@@ -119,28 +114,43 @@ export default function App() {
         phoneOrTarget: 'Client Device',
       });
     },
+    onPersistPortfolio: localFirst.persistPortfolio,
+    onPersistLikes: localFirst.persistLikesAndPortfolio,
+    onPersistSaves: localFirst.persistSaves,
   });
 
-  // Sponsored Ads Engine & Modal - Sprint 1.3
+  // Sponsored Ads Engine & Modal - Sprint 1.3 + Stage 2 IndexedDB
   const adsEngine = useSponsoredAds({
     onBroadcastToSwarm: swarm.broadcastBlock,
+    onPersistAds: localFirst.persistAds,
   });
 
-  // Add review to blockchain ledger [SIM]
+  // Synchronize persisted IndexedDB collections (or reset-to-seed) into domain hooks
+  useHydrationCommit(localFirst.hydrationEvent, (data, dirty, force) => {
+    if (force || !dirty.has('appointments')) {
+      booking.setAppointments(data.appointments);
+    }
+    if (force || !dirty.has('chats')) {
+      chat.setChatMessages(data.chats);
+    }
+    if (force || !dirty.has('portfolio')) {
+      portfolio.setItems(data.portfolio);
+    }
+    if (force || !dirty.has('likes')) {
+      portfolio.setLikedIds(new Set(data.likedIds));
+    }
+    if (force || !dirty.has('saves')) {
+      portfolio.setSavedIds(new Set(data.savedIds));
+    }
+    if (force || !dirty.has('ads')) {
+      adsEngine.setAds(data.ads);
+    }
+  });
+
+  // Add review to [SIM] ledger & persist reviews + recalculated artist rating locally
   const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
     const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
-    setReviews(prev => [newReview, ...prev]);
-
-    setArtists(prev => prev.map(art => {
-      if (art.id === reviewData.artistId) {
-        return {
-          ...art,
-          rating: computeUpdatedArtistRating(art.rating, art.totalReviews, newReview.rating),
-          totalReviews: art.totalReviews + 1,
-        };
-      }
-      return art;
-    }));
+    await localFirst.saveReviewAndUpdateArtistRating(newReview, computeUpdatedArtistRating);
 
     // [SIM] Broadcast review block to swarm
     swarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
@@ -150,24 +160,28 @@ export default function App() {
     });
   };
 
-  // Client Anchor Point Update Handler
+  // Client Anchor Point Update Handler (persisted locally in IndexedDB)
   const handleUpdateAnchorPoint = (updatedPoint: ClientAnchorPoint) => {
-    setAnchorPoints(prev => prev.map(p => p.id === updatedPoint.id ? updatedPoint : p));
+    void localFirst.updateAnchorPoint(updatedPoint);
   };
 
-  // Master Salon Address Registry Handler
+  // Master Salon Address Registry Handler (persisted locally in IndexedDB)
   const handleUpdateMasterSalon = (artistId: string, salonName: string, salonAddress: string, lat: number, lng: number) => {
-    setArtists(prev => prev.map(art => {
-      if (art.id === artistId) {
-        return {
-          ...art,
-          salonName,
-          salonAddress,
-          coordinates: { lat, lng },
-        };
-      }
-      return art;
-    }));
+    void localFirst.updateMasterSalon(artistId, salonName, salonAddress, lat, lng);
+  };
+
+  // Reset Local-First IndexedDB demo database back to clean seed fixtures
+  const handleResetDemoData = () => {
+    void localFirst.resetAllToSeed().then(() => {
+      shell.pushToast({
+        id: `toast-reset-${Date.now()}`,
+        type: 'push',
+        title: 'Локальная база сброшена',
+        message: 'Демо-данные IndexedDB (записи, лайки, отзывы, чат, локации) восстановлены до исходных значений.',
+        timestamp: new Date().toLocaleTimeString(),
+        phoneOrTarget: 'IndexedDB',
+      });
+    });
   };
 
   return (
@@ -258,8 +272,8 @@ export default function App() {
           <div className="space-y-6">
             <ErrorBoundary level="section" sectionName="Карта локаций" theme={theme}>
               <ClientLocationMap
-                artists={artists}
-                anchorPoints={anchorPoints}
+                artists={localFirst.artists}
+                anchorPoints={localFirst.anchorPoints}
                 onUpdateAnchorPoint={handleUpdateAnchorPoint}
                 onSelectArtistToBook={booking.handleStartBookingWithArtist}
                 onOpenChatWithArtist={chat.openChat}
@@ -291,7 +305,7 @@ export default function App() {
           <div className="space-y-8">
             <ErrorBoundary level="section" sectionName="Каталог мастеров" theme={theme}>
               <ArtistsView
-                artists={artists}
+                artists={localFirst.artists}
                 onSelectArtistToBook={booking.handleStartBookingWithArtist}
                 onOpenChatWithArtist={chat.openChat}
               />
@@ -310,8 +324,8 @@ export default function App() {
         {shell.activeTab === 'ledger' && (
           <ErrorBoundary level="section" sectionName="Реестр отзывов [SIM]" theme={theme}>
             <ReputationLedger
-              reviews={reviews}
-              artists={artists}
+              reviews={localFirst.reviews}
+              artists={localFirst.artists}
               onAddReview={handleAddReview}
             />
           </ErrorBoundary>
@@ -320,7 +334,7 @@ export default function App() {
         {shell.activeTab === 'instagram' && (
           <ErrorBoundary level="section" sectionName="Синхронизация Instagram" theme={theme}>
             <InstagramSyncSection
-              artists={artists}
+              artists={localFirst.artists}
               onImportPost={portfolio.handleImportInstagramPost}
             />
           </ErrorBoundary>
@@ -334,7 +348,7 @@ export default function App() {
               onTriggerBackup={() =>
                 swarm.handleExportCryptoCloudBackup({
                   appointments: booking.appointments,
-                  reviews,
+                  reviews: localFirst.reviews,
                   portfolio: portfolio.items,
                   chats: chat.chatMessages,
                 })
@@ -350,7 +364,7 @@ export default function App() {
           <ErrorBoundary level="section" sectionName="Аналитика студии" theme={theme}>
             <AdminAnalyticsDashboard
               appointments={booking.appointments}
-              artists={artists}
+              artists={localFirst.artists}
               onReleaseEscrow={booking.handleReleaseEscrow}
               onTriggerReminder={booking.handleTriggerAppointmentReminder}
             />
@@ -397,7 +411,7 @@ export default function App() {
       <BookingModal
         isOpen={booking.isBookingModalOpen}
         onClose={() => booking.setIsBookingModalOpen(false)}
-        artists={artists}
+        artists={localFirst.artists}
         initialArtist={booking.bookingArtistTarget}
         initialLook={booking.bookingLookTarget}
         onProceedToCheckout={booking.handleProceedToCheckout}
@@ -461,7 +475,7 @@ export default function App() {
           onClose={chat.closeChat}
           messages={chat.chatMessages}
           onSendMessage={chat.handleSendMessage}
-          artists={artists}
+          artists={localFirst.artists}
           userRole={shell.userRole}
           activeThreadId={chat.activeThreadId}
           onSelectThread={chat.setActiveThreadId}
@@ -495,8 +509,9 @@ export default function App() {
         isOpen={booking.isAppointmentsModalOpen}
         onClose={() => booking.setIsAppointmentsModalOpen(false)}
         appointments={booking.appointments}
-        artists={artists}
+        artists={localFirst.artists}
         onOpenBooking={() => booking.setIsBookingModalOpen(true)}
+        onResetLocalData={handleResetDemoData}
         theme={theme}
         onNotification={(msg) => {
           shell.pushToast({
@@ -536,7 +551,7 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-4 sm:gap-6 font-mono text-[11px] text-gray-400">
-            <span className="text-amber-300">Public Nail Art Showcase</span>
+            <span className="text-amber-300">Local-First IndexedDB</span>
             <span aria-hidden="true">·</span>
             <span className="text-cyan-300">Studio Concierge Chat [SIM]</span>
             <span aria-hidden="true">·</span>

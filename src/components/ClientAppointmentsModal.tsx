@@ -15,6 +15,7 @@ interface ClientAppointmentsModalProps {
   appointments: Appointment[];
   artists: Artist[];
   onOpenBooking: () => void;
+  onResetLocalData?: () => void;
   theme?: 'dark' | 'light';
   onNotification?: (msg: string) => void;
 }
@@ -25,6 +26,7 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
   appointments,
   artists,
   onOpenBooking,
+  onResetLocalData,
   theme = 'dark',
   onNotification,
 }) => {
@@ -218,17 +220,26 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
         {/* Footer */}
         <div className="p-4 bg-black/40 border-t border-amber-500/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400 font-mono">
           <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-red-400" />
-            <span>[SIM] Демо-режим текущей сессии (в памяти браузера до Этапа 2)</span>
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span>Локальная база IndexedDB (сохраняется оффлайн) · [SIM] Эскроу-демо</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {confirmedAppointments.length > 1 && (
               <button
                 onClick={handleDownloadAll}
                 className="text-amber-300 hover:text-amber-200 underline cursor-pointer"
               >
                 Скачать единый .ICS для всех записей
+              </button>
+            )}
+            {onResetLocalData && (
+              <button
+                type="button"
+                onClick={onResetLocalData}
+                className="text-xs text-gray-400 hover:text-red-300 underline cursor-pointer"
+              >
+                Сбросить демо-БД
               </button>
             )}
             <button

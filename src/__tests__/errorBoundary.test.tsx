@@ -44,7 +44,7 @@ describe('ErrorBoundary resilience', () => {
     consoleSpy.mockRestore();
   });
 
-  it('renders truthful root fallback screen without false persistence claims when level="root"', () => {
+  it('renders truthful root fallback screen noting IndexedDB local persistence when level="root"', () => {
     const boundary = new ErrorBoundary({
       level: 'root',
       theme: 'light',
@@ -57,7 +57,8 @@ describe('ErrorBoundary resilience', () => {
     expect(fallbackHtml).toContain('Салон временно на паузе');
     expect(fallbackHtml).toContain('Попробовать восстановить');
     expect(fallbackHtml).toContain('Обновить страницу');
-    expect(fallbackHtml).not.toContain('записи сохранены');
+    expect(fallbackHtml).toContain('IndexedDB');
+    expect(fallbackHtml).not.toContain('будут сброшены');
     expect(fallbackHtml).not.toContain('Fatal tree error');
   });
 });

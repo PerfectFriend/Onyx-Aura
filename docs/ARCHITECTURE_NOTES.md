@@ -182,3 +182,30 @@
 4. **Границы чистоты слоёв (UI ↔ `simulation/`):**
    - На Этапе 1 `ReputationLedger`, `CheckoutModal` и `FriendModerationSection` всё ещё обращаются к `src/simulation/` напрямую. В Спринте 1.5 сломаны дублирующие шимы `src/services/cryptoLedger.ts` и `src/services/cryptocloud.ts` — импорты приведены к единому источнику правды `src/simulation/*`. На Этапе 2 фасады переедут в сервисный слой хранилища.
 
+---
+
+## 💾 9. Этап 2 — Данные и Local-First Architecture (`src/domain/` + `src/infrastructure/storage/`)
+
+### Архитектурный слоёный срез Этапа 2:
+1. **Доменные контракты (`src/domain/storage.ts`):**
+   - Чистые интерфейсы `StorageAdapter`, `StorageKey`, `OutboxMutation`, `DataLayerMeta`, `HydratedSalonData` без зависимостей от DOM, React или `simulation/`.
+2. **Инфраструктурный драйвер IndexedDB + Fallback (`src/infrastructure/storage/indexedDbAdapter.ts`):**
+   - `IndexedDBAdapter` (`nailix_local_first_v1`, store `salon_kv`): ленивое переиспользуемое подключение (`dbPromise`), обработка `onversionchange`, безопасные readonly/readwrite транзакции.
+   - `MemoryStorageAdapter`: детерминированный fallback поверх `Map` (позволяет тестам проверять эмуляцию перезагрузки страницы через общую `Map`) + автоматический откат при отсутствии `indexedDB` или блокировке приватным режимом браузера.
+3. **Репозиторий + Идемпотентный Seed + Offline Outbox (`src/infrastructure/storage/salonRepository.ts`):**
+   - Внутри `SalonRepository` сериализована очередь записи `enqueueWrite()` (исключает гонки чтение→изменение→запись в `outbox` и `schemaMeta`).
+   - `ensureSeededAndLoad()` подгружает все сохранённые коллекции и точечно засевает только недостающие ключи из `createSeedSnapshot()`, **никогда не перезаписывая** уже сохранённые записи и лайки пользователя.
+   - При ошибках чтения/записи (например, `QuotaExceededError` / `SecurityError`) репозиторий деградирует на `MemoryStorageAdapter` без падения UI.
+   - Все мутации фиксируются в оффлайн-очередь `OutboxMutation` (`status: 'pending_sync'`), готовую к последовательной отправке при подключении сервера на Этапе 4–5 (а также поддержан ручной/демо сброс `resetToSeed()` и `flushOutboxLocalDemo()`).
+4. **Оркестрация и защита от ранних гонок (`src/hooks/useLocalFirstHydration.ts`):**
+   - Вынесены оставшиеся 3 кросс-доменных `useState` из `App.tsx` (`artists`, `reviews`, `anchorPoints`) → в `App.tsx` стало **0 `useState` и 0 `useEffect`**.
+   - Механизм `dirtyEntitiesRef` гарантирует, что если пользователь успел кликнуть в первые ~2мс до окончания асинхронного открытия IndexedDB, запоздавшая гидратация не затрёт свежие действия клиента.
+5. **Закрытие долгов `K-14` и `K-15` из Спринта 1.5:**
+   - **DIP завершён (`K-15`):** из `useBookingFlow.ts` и `useChatConcierge.ts` полностью удалены прямые импорты `cryptoCloudSwarm` — передаётся чистый коллбек `onBroadcastToSwarm` из `App.tsx`.
+   - **Атомарный лайк (`K-14`):** в `usePortfolioGallery.ts` `handleToggleLike` и `handleToggleSave` используют актуальные refs + атомарное обновление `likedIds` и `items.likes` с записью обоих в IndexedDB и `outbox`.
+6. **Почему Native IndexedDB (vs `idb` vs `localStorage`) и что осознанно НЕ персистим (Спринт 2.1):**
+   - *vs `localStorage`:* `localStorage` синхронен (блокирует UI-поток на крупных массивах портфолио/истории), ограничен ~5 МБ и требует ручного сериализованного `JSON.stringify`/`parse` при каждом чихе. IndexedDB работает асинхронно, нативно хранит structured objects и подходит для дальнейшего роста медиа-кэша и `OutboxMutation`.
+   - *vs `idb`:* Нативный `IndexedDBAdapter` (172 строки) позволил обойтись **без новой npm-зависимости**, дал прямой контроль над пулингом `dbPromise`, обработкой `onversionchange` и мгновенным переключением на `MemoryStorageAdapter` при ошибках приватного режима.
+   - *Осознанно остаётся эфемерным (`[SIM]` / UI):* не отправленный черновик в текстовом инпуте `ChatDrawer`, `[SIM]`-голосование жюри (`FriendModerationSection`), временные счётчики пиров (`useCryptoSwarm`) и UI-тосты — симулированный сетевой консенсус и эфемерные черновики не должны засорять локальную БД до появления настоящего сетевого слоя (Этап 4–5).
+
+

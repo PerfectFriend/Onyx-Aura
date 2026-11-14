@@ -1,11 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { PortfolioItem, ServiceCategory } from '../types';
-import { INITIAL_PORTFOLIO } from '../data/initialData';
+import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UsePortfolioGalleryOptions {
   initialItems?: PortfolioItem[];
   onSyncPostToSwarm?: (look: PortfolioItem, igPostId: string) => void;
   onNotify?: (title: string, message: string) => void;
+  onPersistPortfolio?: (items: PortfolioItem[], action: string, payload: unknown) => void;
+  onPersistLikes?: (likedIds: string[], items: PortfolioItem[], action: string, payload: unknown) => void;
+  onPersistSaves?: (savedIds: string[], action: string, payload: unknown) => void;
 }
 
 export interface InstagramImportPayload {
@@ -21,45 +24,93 @@ export interface InstagramImportPayload {
 }
 
 export function usePortfolioGallery({
-  initialItems = INITIAL_PORTFOLIO,
+  initialItems,
   onSyncPostToSwarm,
   onNotify,
+  onPersistPortfolio,
+  onPersistLikes,
+  onPersistSaves,
 }: UsePortfolioGalleryOptions = {}) {
-  const [items, setItems] = useState<PortfolioItem[]>(initialItems);
-  const [likedIds, setLikedIds] = useState<Set<string>>(() => new Set(['port-gaudi', 'port-1']));
-  const [savedIds, setSavedIds] = useState<Set<string>>(() => new Set(['port-gaudi', 'port-2']));
+  const [items, setItems] = useState<PortfolioItem[]>(
+    () => initialItems ?? createSeedSnapshot().portfolio
+  );
+  const [likedIds, setLikedIds] = useState<Set<string>>(
+    () => new Set(createSeedSnapshot().likedIds)
+  );
+  const [savedIds, setSavedIds] = useState<Set<string>>(
+    () => new Set(createSeedSnapshot().savedIds)
+  );
   const [selectedLightboxItem, setSelectedLightboxItem] = useState<PortfolioItem | null>(null);
 
+  const itemsRef = useRef<PortfolioItem[]>(items);
+  const likedIdsRef = useRef<Set<string>>(likedIds);
+  const savedIdsRef = useRef<Set<string>>(savedIds);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    likedIdsRef.current = likedIds;
+  }, [likedIds]);
+
+  useEffect(() => {
+    savedIdsRef.current = savedIds;
+  }, [savedIds]);
+
+  // Atomic, race-free like toggle + persistence (resolves K-14)
   const handleToggleLike = useCallback(
     (id: string) => {
-      const isCurrentlyLiked = likedIds.has(id);
-      setLikedIds(prev => {
-        const next = new Set(prev);
-        if (isCurrentlyLiked) next.delete(id);
-        else next.add(id);
-        return next;
-      });
+      const nextLiked = new Set(likedIdsRef.current);
+      const isCurrentlyLiked = nextLiked.has(id);
+      if (isCurrentlyLiked) {
+        nextLiked.delete(id);
+      } else {
+        nextLiked.add(id);
+      }
 
-      setItems(prevItems =>
-        prevItems.map(item => {
-          if (item.id === id) {
-            return { ...item, likes: item.likes + (isCurrentlyLiked ? -1 : 1) };
-          }
-          return item;
-        })
+      const nextItems = itemsRef.current.map(item =>
+        item.id === id
+          ? { ...item, likes: Math.max(0, item.likes + (isCurrentlyLiked ? -1 : 1)) }
+          : item
+      );
+
+      likedIdsRef.current = nextLiked;
+      itemsRef.current = nextItems;
+      setLikedIds(nextLiked);
+      setItems(nextItems);
+
+      onPersistLikes?.(
+        Array.from(nextLiked),
+        nextItems,
+        isCurrentlyLiked ? 'LOOK_UNLIKED' : 'LOOK_LIKED',
+        { lookId: id }
       );
     },
-    [likedIds]
+    [onPersistLikes]
   );
 
-  const handleToggleSave = useCallback((id: string) => {
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const handleToggleSave = useCallback(
+    (id: string) => {
+      const nextSaved = new Set(savedIdsRef.current);
+      const isCurrentlySaved = nextSaved.has(id);
+      if (isCurrentlySaved) {
+        nextSaved.delete(id);
+      } else {
+        nextSaved.add(id);
+      }
+
+      savedIdsRef.current = nextSaved;
+      setSavedIds(nextSaved);
+
+      onPersistSaves?.(
+        Array.from(nextSaved),
+        isCurrentlySaved ? 'LOOK_UNSAVED' : 'LOOK_SAVED',
+        { lookId: id }
+      );
+    },
+    [onPersistSaves]
+  );
 
   const openLightbox = useCallback((item: PortfolioItem) => {
     setSelectedLightboxItem(item);
@@ -96,7 +147,7 @@ export function usePortfolioGallery({
         likes: 0,
         saves: 0,
         date: 'Just now [SIM]',
-        description: `[SIM] Demo sample imported from @${post.artistHandle} preview feed into local session gallery.`,
+        description: `[SIM] Demo sample imported from @${post.artistHandle} preview feed and saved locally.`,
         materials: ['Gel Polish (Demo Sample)', 'Chrome Pigment (Demo Sample)'],
         durationMinutes: post.durationMinutes,
         priceUSD: post.priceUSD,
@@ -104,27 +155,32 @@ export function usePortfolioGallery({
         contentHash: `0xSIM_IG_${uniqueSuffix}`,
       };
 
-      setItems(prev => [newLook, ...prev]);
+      const nextItems = [newLook, ...itemsRef.current];
+      itemsRef.current = nextItems;
+      setItems(nextItems);
 
-      if (onSyncPostToSwarm) {
-        onSyncPostToSwarm(newLook, newLook.igPostId || '');
-      }
+      onPersistPortfolio?.(nextItems, 'INSTAGRAM_IMPORT_SAVED', {
+        lookId: newLook.id,
+        igPostId: newLook.igPostId,
+      });
 
-      if (onNotify) {
-        onNotify(
-          '[SIM] Demo Instagram Set Imported',
-          `Added demo look "${newLook.title}" to current browser session gallery.`
-        );
-      }
+      onSyncPostToSwarm?.(newLook, newLook.igPostId || '');
+
+      onNotify?.(
+        '[SIM] Demo Instagram Set Imported',
+        `Added demo look "${newLook.title}" and saved it to your local IndexedDB gallery.`
+      );
     },
-    [onSyncPostToSwarm, onNotify]
+    [onNotify, onPersistPortfolio, onSyncPostToSwarm]
   );
 
   return {
     items,
     setItems,
     likedIds,
+    setLikedIds,
     savedIds,
+    setSavedIds,
     selectedLightboxItem,
     openLightbox,
     closeLightbox,

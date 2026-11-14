@@ -1,17 +1,27 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { SponsoredAd } from '../types';
-import { INITIAL_SPONSORED_ADS } from '../data/advertisements';
+import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UseSponsoredAdsOptions {
   initialAds?: SponsoredAd[];
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
+  onPersistAds?: (ads: SponsoredAd[], payload: unknown) => void;
 }
 
 export function useSponsoredAds({
-  initialAds = INITIAL_SPONSORED_ADS,
+  initialAds,
   onBroadcastToSwarm,
+  onPersistAds,
 }: UseSponsoredAdsOptions = {}) {
-  const [ads, setAds] = useState<SponsoredAd[]>(initialAds);
+  const [ads, setAds] = useState<SponsoredAd[]>(
+    () => initialAds ?? createSeedSnapshot().ads
+  );
+  const adsRef = useRef<SponsoredAd[]>(ads);
+
+  useEffect(() => {
+    adsRef.current = ads;
+  }, [ads]);
+
   const [isAdManagerOpen, setIsAdManagerOpen] = useState<boolean>(false);
 
   const openAdManager = useCallback(() => {
@@ -24,18 +34,24 @@ export function useSponsoredAds({
 
   const handleCreateAdCampaign = useCallback(
     (newAd: SponsoredAd) => {
-      setAds(prev => [newAd, ...prev]);
+      const nextAds = [newAd, ...adsRef.current];
+      adsRef.current = nextAds;
+      setAds(nextAds);
 
-      if (onBroadcastToSwarm) {
-        onBroadcastToSwarm('NEW_SPONSORED_CAMPAIGN', {
-          adId: newAd.id,
-          title: newAd.title,
-          brandName: newAd.brandName,
-          target: newAd.targetAudience,
-        });
-      }
+      onPersistAds?.(nextAds, {
+        adId: newAd.id,
+        title: newAd.title,
+        brandName: newAd.brandName,
+      });
+
+      onBroadcastToSwarm?.('NEW_SPONSORED_CAMPAIGN', {
+        adId: newAd.id,
+        title: newAd.title,
+        brandName: newAd.brandName,
+        target: newAd.targetAudience,
+      });
     },
-    [onBroadcastToSwarm]
+    [onBroadcastToSwarm, onPersistAds]
   );
 
   return {

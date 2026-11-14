@@ -1,20 +1,32 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { ChatMessage, Artist, UserRole } from '../types';
-import { INITIAL_CHATS, DEMO_CLIENT_PROFILE } from '../data/initialData';
-import { cryptoCloudSwarm } from '../simulation/cryptocloud';
+import { DEMO_CLIENT_PROFILE } from '../data/initialData';
+import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UseChatConciergeOptions {
   userRole: UserRole;
   artists: Artist[];
   initialMessages?: ChatMessage[];
+  onBroadcastToSwarm?: (type: string, payload: unknown) => void;
+  onPersistChats?: (next: ChatMessage[], payload: unknown) => void;
 }
 
 export function useChatConcierge({
   userRole,
   artists,
-  initialMessages = INITIAL_CHATS,
+  initialMessages,
+  onBroadcastToSwarm,
+  onPersistChats,
 }: UseChatConciergeOptions) {
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialMessages);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(
+    () => initialMessages ?? createSeedSnapshot().chats
+  );
+  const chatMessagesRef = useRef<ChatMessage[]>(chatMessages);
+
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
+
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(1);
   const [activeThreadId, setActiveThreadId] = useState<string>(() => artists[0]?.id || 'artist-1');
@@ -54,15 +66,22 @@ export function useChatConcierge({
         quoteAttachment,
       };
 
-      setChatMessages(prev => [...prev, newMsg]);
+      const nextMessages = [...chatMessagesRef.current, newMsg];
+      chatMessagesRef.current = nextMessages;
+      setChatMessages(nextMessages);
 
-      // [SIM] Broadcast chat message event to local BroadcastChannel buffer (not encrypted)
-      cryptoCloudSwarm.broadcastBlock('CHAT_MESSAGE_BUFFERED', {
+      onPersistChats?.(nextMessages, {
+        threadId,
+        msgId: newMsg.id,
+      });
+
+      // [SIM] Broadcast chat message event via injected swarm facade (not encrypted)
+      onBroadcastToSwarm?.('CHAT_MESSAGE_BUFFERED', {
         threadId,
         msgId: newMsg.id,
       });
     },
-    [artists, userRole]
+    [artists, onBroadcastToSwarm, onPersistChats, userRole]
   );
 
   return {

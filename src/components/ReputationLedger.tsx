@@ -98,7 +98,7 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
                 [SIM]
               </span>
               <span>
-                Локальная симуляция в памяти браузера: хеши вычисляются через Web Crypto SHA-256, записи сбрасываются при обновлении страницы (Закон 1, 7, 10).
+                Локальное хранилище IndexedDB: демо-отзывы и рейтинг сохраняются между перезагрузками страницы, но [SIM] хэши (Web Crypto SHA-256) и баллы остаются локальной математической симуляцией (Закон 1, 7, 10).
               </span>
             </div>
             <p className="text-xs text-[#9ca3af] mt-1 max-w-2xl">
