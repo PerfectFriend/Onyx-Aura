@@ -1,3 +1,9 @@
+// =============================================================================
+// [SIM] — SIMULATED REMINDER DISPATCHER (in-app toast + optional Browser Notification)
+// No real SMS carrier gateway is connected in Stage 1.5; alerts fire locally.
+// See docs/REALITY_MAP.md & MANIFEST_CANONICAL_AI_DEVELOPER.md Law 1, 7, 10.
+// =============================================================================
+
 import { Appointment } from '../types';
 
 export interface ReminderNotificationEvent {
@@ -11,15 +17,15 @@ export interface ReminderNotificationEvent {
 
 type ReminderListener = (event: ReminderNotificationEvent) => void;
 
+function nextId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
 class ReminderService {
   private listeners: ReminderListener[] = [];
-  private notificationPermission: NotificationPermission = 'default';
-
-  constructor() {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      this.notificationPermission = Notification.permission;
-    }
-  }
 
   public subscribe(cb: ReminderListener) {
     this.listeners.push(cb);
@@ -33,11 +39,11 @@ class ReminderService {
       try {
         cb(event);
       } catch (err) {
-        console.error('Error in reminder listener', err);
+        console.error('[SIM] Error in reminder listener', err);
       }
     });
 
-    // Also dispatch native browser push notification if granted
+    // Dispatch native browser Notification API if user already granted permission
     if (event.type === 'push' && typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
@@ -46,7 +52,7 @@ class ReminderService {
             icon: '/assets/images/avatar_master_artist_1790123890131.jpg',
           });
         } catch {
-          // Ignore
+          // Ignore browser Notification constructor errors in headless/sandbox environments
         }
       }
     }
@@ -56,7 +62,6 @@ class ReminderService {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       try {
         const res = await Notification.requestPermission();
-        this.notificationPermission = res;
         return res === 'granted';
       } catch {
         return false;
@@ -72,51 +77,51 @@ class ReminderService {
     return 'denied';
   }
 
-  // Trigger simulated 24h appointment reminder
+  // [SIM] Trigger simulated 24h appointment reminder preview (fires immediately for demo)
   public dispatch24HourReminder(apt: Appointment) {
-    const smsMessage = `[ONYX & AURA] 24H Reminder: Your nail appointment with ${apt.artistName} for "${apt.serviceName}" is set for ${apt.date} at ${apt.timeSlot}. Escrow deposit locked. Reply RESCHEDULE if needed.`;
-    
+    const smsMessage = `[SIM Preview] 24h reminder: Appointment with ${apt.artistName} for "${apt.serviceName}" on ${apt.date} at ${apt.timeSlot}. No live SMS is sent.`;
+
     this.notify({
-      id: `rem-24h-${Date.now()}`,
+      id: nextId('sim-24h'),
       type: 'sms',
-      title: 'SMS Sent via Carrier Network',
+      title: '[SIM] Simulated 24h SMS Preview',
       message: smsMessage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      phoneOrTarget: apt.clientPhone || '+1 (555) 019-2831',
+      phoneOrTarget: `${apt.clientPhone || '+34 600 000 000'} (Demo)`,
     });
 
     if (apt.pushReminderScheduled) {
       this.notify({
-        id: `push-24h-${Date.now()}`,
+        id: nextId('sim-push-24h'),
         type: 'push',
-        title: `Appointment Tomorrow: ${apt.serviceName}`,
-        message: `Your session with master artist ${apt.artistName} is scheduled for tomorrow at ${apt.timeSlot}.`,
+        title: `[SIM] 24h Push Preview: ${apt.serviceName}`,
+        message: `Local preview for session with ${apt.artistName} at ${apt.timeSlot}.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        phoneOrTarget: 'Client Device Push Notification',
+        phoneOrTarget: 'Local Browser Toast [SIM]',
       });
     }
   }
 
-  // Trigger simulated 2h appointment reminder
+  // [SIM] Trigger simulated 2h appointment reminder preview (fires immediately for demo)
   public dispatch2HourReminder(apt: Appointment) {
-    const smsMessage = `[ONYX & AURA] 2-Hour Alert: ${apt.artistName} is prepping the studio for your "${apt.serviceName}". See you at ${apt.timeSlot}. Directions & studio code sent to your chat.`;
+    const smsMessage = `[SIM Preview] 2h alert: ${apt.artistName} for "${apt.serviceName}" at ${apt.timeSlot}. Demo notification only.`;
 
     this.notify({
-      id: `rem-2h-${Date.now()}`,
+      id: nextId('sim-2h'),
       type: 'sms',
-      title: 'SMS Sent (Priority Gateway)',
+      title: '[SIM] Simulated 2h SMS Preview',
       message: smsMessage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      phoneOrTarget: apt.clientPhone || '+1 (555) 019-2831',
+      phoneOrTarget: `${apt.clientPhone || '+34 600 000 000'} (Demo)`,
     });
 
     this.notify({
-      id: `push-2h-${Date.now()}`,
+      id: nextId('sim-push-2h'),
       type: 'push',
-      title: `Starting in 2 Hours: ${apt.artistName}`,
-      message: `Your appointment starts at ${apt.timeSlot}. Studio entry passcode is #4088.`,
+      title: `[SIM] 2h Push Preview: ${apt.artistName}`,
+      message: `Session scheduled for ${apt.timeSlot} (instant demo alert).`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      phoneOrTarget: 'Client Device Push Notification',
+      phoneOrTarget: 'Local Browser Toast [SIM]',
     });
   }
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, Download, ExternalLink, Check, Copy, ChevronDown, Share2 } from 'lucide-react';
+import { Calendar, Download, ExternalLink, Check, Copy, ChevronDown } from 'lucide-react';
 import { Appointment, Artist } from '../types';
 import { 
   downloadIcsFile, 

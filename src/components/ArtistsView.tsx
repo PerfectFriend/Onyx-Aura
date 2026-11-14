@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, CheckCircle2, Star, Calendar, MessageSquare, Instagram, MapPin, Sparkles } from 'lucide-react';
+import { ShieldCheck, Star, Calendar, MessageSquare, MapPin, Sparkles } from 'lucide-react';
 import { Artist } from '../types';
 
 interface ArtistsViewProps {
@@ -27,7 +27,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({
             Verified Master Sculptors & Technicians
           </h2>
           <p className="text-xs text-gray-300 mt-1 max-w-2xl leading-relaxed">
-            Every artist on Nailix is backed by Friend Circle consensus verification, on-chain staked $NAIL integrity deposits, and cryptographic portfolio reviews.
+            Browse curated salon master profiles, demo Friend Circle consensus scores [SIM], simulated $NAIL stakes [SIM], and session review ratings [SIM].
           </p>
         </div>
 
@@ -108,7 +108,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({
                 <button
                   onClick={() => onOpenChatWithArtist(artist)}
                   className="btn-starry-neon text-xs py-2 px-3 flex items-center justify-center gap-1.5"
-                  title="Encrypted Consultation"
+                  title="Open Studio Chat [SIM]"
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
                   <span className="hidden sm:inline">Consult</span>

@@ -40,21 +40,17 @@ export function parseAppointmentDateTime(dateStr: string, timeStr: string, durat
   let hours = 14;
   let minutes = 0;
 
-  // Check 12-hour AM/PM format (e.g. "02:30 PM", "2:30 pm")
-  const ampmMatch = cleanTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  if (ampmMatch) {
-    hours = parseInt(ampmMatch[1], 10);
-    minutes = parseInt(ampmMatch[2], 10);
-    const meridian = ampmMatch[3]?.toUpperCase();
+  // Check 12-hour AM/PM or 24-hour HH:MM format (e.g. "02:30 PM", "14:30")
+  const timeMatch = cleanTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (timeMatch) {
+    hours = Math.min(23, Math.max(0, parseInt(timeMatch[1], 10)));
+    minutes = Math.min(59, Math.max(0, parseInt(timeMatch[2], 10)));
+    const meridian = timeMatch[3]?.toUpperCase();
     if (meridian === 'PM' && hours < 12) {
       hours += 12;
     } else if (meridian === 'AM' && hours === 12) {
       hours = 0;
     }
-  } else if (/^\d{1,2}:\d{2}$/.test(cleanTime)) {
-    const [h, m] = cleanTime.split(':').map(Number);
-    hours = h;
-    minutes = m;
   }
 
   const start = new Date(
@@ -125,13 +121,12 @@ export function generateIcsContent(appointment: Appointment, artist?: Artist | n
     `Master Artisan: ${appointment.artistName}`,
     `Client: ${appointment.clientName || 'Confirmed Client'}`,
     `Date & Time: ${appointment.date} at ${appointment.timeSlot}`,
-    `Price: $${appointment.price} USD (${appointment.cryptoEquivalent || appointment.currency})`,
-    `Smart Contract Escrow: ${appointment.escrowTxHash || 'Secured On-Chain'}`,
+    `Quoted Fee: $${appointment.price} USD (Demo Currency: ${appointment.cryptoEquivalent || appointment.currency})`,
+    `Booking Reference [SIM]: ${appointment.escrowTxHash || 'Demo Booking'}`,
     appointment.customNotes ? `Notes: ${appointment.customNotes}` : '',
     appointment.referenceLookTitle ? `Reference Look: ${appointment.referenceLookTitle}` : '',
-    ``,
-    `Need to reschedule? Contact your master via Nailix Private E2E Chat: https://nailix.art`,
-  ].filter(line => line !== null && line !== undefined).join('\n');
+    `Need to reschedule? Manage booking in Nailix Studio App: https://nailix.art`,
+  ].filter(Boolean).join('\n');
 
   const description = escapeIcsText(descriptionLines);
 
@@ -188,7 +183,7 @@ export function downloadIcsFile(appointment: Appointment, artist?: Artist | null
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /**
@@ -206,12 +201,12 @@ export function generateGoogleCalendarUrl(appointment: Appointment, artist?: Art
     : 'Nailix Verified Master Atelier';
 
   const details = [
-    `Nailix Haute Manicure Confirmed Appointment`,
+    `Nailix Haute Manicure Booking`,
     `Service: ${appointment.serviceName}`,
     `Master Artisan: ${appointment.artistName}`,
     `Client: ${appointment.clientName}`,
-    `Escrow TX: ${appointment.escrowTxHash || 'Secured'}`,
-    `Price: $${appointment.price} USD (${appointment.currency})`,
+    `Booking Ref [SIM]: ${appointment.escrowTxHash || 'Demo Booking'}`,
+    `Quoted Fee: $${appointment.price} USD (Demo Currency: ${appointment.currency})`,
     appointment.customNotes ? `Notes: ${appointment.customNotes}` : '',
     `Booking Link: https://nailix.art`,
   ].filter(Boolean).join('\n');
@@ -234,11 +229,11 @@ export function generateOutlookCalendarUrl(appointment: Appointment, artist?: Ar
   const { start, end } = parseAppointmentDateTime(appointment.date, appointment.timeSlot);
 
   const title = `Nailix: ${appointment.serviceName} (${appointment.artistName})`;
-  const salonLocation = artist?.salonAddress 
+  const salonLocation = artist?.salonAddress
     ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
     : 'Nailix Verified Master Atelier';
 
-  const body = `Nailix Appointment for ${appointment.serviceName} with ${appointment.artistName}. Price: $${appointment.price} USD. Escrow TX: ${appointment.escrowTxHash || 'Secured'}.`;
+  const body = `Nailix Appointment for ${appointment.serviceName} with ${appointment.artistName}. Quoted Fee: $${appointment.price} USD. Ref [SIM]: ${appointment.escrowTxHash || 'Demo'}.`;
 
   const params = new URLSearchParams({
     path: '/calendar/action/compose',
@@ -268,9 +263,13 @@ export function downloadAllAppointmentsIcs(appointments: Appointment[], artists?
     const dtend = formatToIcsUtc(end);
     const uid = `nailix-apt-${apt.id}-${start.getTime()}@nailix.art`;
     const summary = escapeIcsText(`Nailix: ${apt.serviceName} (${apt.artistName})`);
-    const salonLocation = artist?.salonAddress || 'Nailix Verified Master Atelier';
+    const salonLocation = artist?.salonAddress
+      ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
+      : 'Nailix Verified Master Atelier';
     const location = escapeIcsText(salonLocation);
-    const desc = escapeIcsText(`Nailix Manicure with ${apt.artistName}. Fee: $${apt.price} USD. Escrow: ${apt.escrowTxHash || 'Secured'}`);
+    const desc = escapeIcsText(
+      `Nailix Manicure with ${apt.artistName}. Quoted Fee: $${apt.price} USD. Booking Ref [SIM]: ${apt.escrowTxHash || 'Demo'}`
+    );
 
     return [
       'BEGIN:VEVENT',
@@ -310,5 +309,5 @@ export function downloadAllAppointmentsIcs(appointments: Appointment[], artists?
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

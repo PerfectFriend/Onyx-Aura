@@ -23,6 +23,12 @@
       ]
     },
     "allowImportingTsExtensions": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src",
+    "vite.config.ts"
+  ]
 }

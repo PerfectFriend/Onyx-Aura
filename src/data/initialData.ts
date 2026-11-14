@@ -1,5 +1,20 @@
 import { Artist, PortfolioItem, Review, Appointment, ChatMessage, PeerNode, ClientAnchorPoint } from '../types';
 
+export const DEMO_CLIENT_PROFILE = {
+  name: 'Guest Client (Demo)',
+  phone: '+34 600 000 000',
+  email: 'guest.demo@nailix.example',
+} as const;
+
+export function getRelativeDateISO(offsetDays: number = 0): string {
+  const target = new Date();
+  target.setDate(target.getDate() + offsetDays);
+  const y = target.getFullYear();
+  const m = String(target.getMonth() + 1).padStart(2, '0');
+  const d = String(target.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export const INITIAL_ANCHOR_POINTS: ClientAnchorPoint[] = [
   {
     id: 'home',
@@ -87,7 +102,7 @@ export const INITIAL_ARTISTS: Artist[] = [
     avatar: '/assets/images/artist_chloe_chen.jpg',
     location: 'Passeig de Gràcia & Tokyo',
     bio: 'Specialist in Japanese airy glass aura gel, iridescent mother-of-pearl encapsulations, and magnetic cat-eye velvet illusions.',
-    verifiedTier: 'On-Chain Verified',
+    verifiedTier: 'Guild Verified [SIM]',
     reputationScore: 98.7,
     totalReviews: 184,
     rating: 4.95,
@@ -239,7 +254,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 195,
     igPostId: 'C9xMosaicVortex',
     igLikes: 7420,
-    onChainHash: '0x99201bc7d0e1f23456789abcdef0123456789abcdef0123456789abcdef012399',
+    contentHash: '0x99201bc7d0e1f23456789abcdef0123456789abcdef0123456789abcdef012399',
   },
   {
     id: 'port-1',
@@ -259,7 +274,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 165,
     igPostId: 'C8xK91LmP3q',
     igLikes: 3410,
-    onChainHash: '0x7e82a93910c8f12d4a5b6c7d8e9f0123456789abcdef0123456789abcdef0123',
+    contentHash: '0x7e82a93910c8f12d4a5b6c7d8e9f0123456789abcdef0123456789abcdef0123',
   },
   {
     id: 'port-2',
@@ -279,7 +294,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 140,
     igPostId: 'C7mP289Jk2L',
     igLikes: 5820,
-    onChainHash: '0x3bf92c4810e7a2b9d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456',
+    contentHash: '0x3bf92c4810e7a2b9d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456',
   },
   {
     id: 'port-3',
@@ -299,7 +314,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 195,
     igPostId: 'C9aL555Tx0m',
     igLikes: 9140,
-    onChainHash: '0x99a81234bcde5678f0123456789abcdef0123456789abcdef0123456789abcde',
+    contentHash: '0x99a81234bcde5678f0123456789abcdef0123456789abcdef0123456789abcde',
   },
   {
     id: 'port-4',
@@ -319,7 +334,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 125,
     igPostId: 'C6bX110Kx9z',
     igLikes: 2900,
-    onChainHash: '0x44d2e8910f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c',
+    contentHash: '0x44d2e8910f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c',
   },
   {
     id: 'port-5',
@@ -339,7 +354,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 135,
     igPostId: 'C5eZ892Nq4w',
     igLikes: 4320,
-    onChainHash: '0x12a3b4c5d6e7f809123456789abcdef0123456789abcdef0123456789abcdef0',
+    contentHash: '0x12a3b4c5d6e7f809123456789abcdef0123456789abcdef0123456789abcdef0',
   },
   {
     id: 'port-6',
@@ -359,7 +374,7 @@ export const INITIAL_PORTFOLIO: PortfolioItem[] = [
     priceUSD: 190,
     igPostId: 'C4tY991Px8m',
     igLikes: 7200,
-    onChainHash: '0x88f1e2d3c4b5a60718293a4b5c6d7e8f90123456789abcdef0123456789abcde',
+    contentHash: '0x88f1e2d3c4b5a60718293a4b5c6d7e8f90123456789abcdef0123456789abcde',
   },
 ];
 
@@ -377,7 +392,7 @@ export const INITIAL_REVIEWS: Review[] = [
       durability: 5,
       precision: 5,
     },
-    text: 'Elena is a true sculptress. My 3D liquid chrome stiletto set survived 5 weeks without a single chip or lifting. The hardware Russian manicure prep left my cuticles spotless. Immutable 5 stars.',
+    text: 'Elena is a true sculptress. My 3D liquid chrome stiletto set survived 5 weeks without a single chip or lifting. The hardware Russian manicure prep left my cuticles spotless. Effortless 5 stars.',
     date: 'March 16, 2026',
     blockHeight: 1849201,
     blockHash: '0x8a91bc7d0e1f23456789abcdef0123456789abcdef0123456789abcdef012345',
@@ -432,9 +447,9 @@ export const INITIAL_REVIEWS: Review[] = [
 export const INITIAL_APPOINTMENTS: Appointment[] = [
   {
     id: 'apt-1',
-    clientName: 'Aria Sterling',
-    clientPhone: '+1 (555) 234-8901',
-    clientEmail: 'aria.sterling@luxemail.com',
+    clientName: 'Aria Sterling (Demo)',
+    clientPhone: '+34 600 111 222',
+    clientEmail: 'aria.demo@nailix.example',
     artistId: 'artist-1',
     artistName: 'Elena Vasiliev',
     artistAvatar: '/assets/images/avatar_master_artist_1790123890131.jpg',
@@ -443,23 +458,23 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     price: 165,
     currency: 'USDC',
     cryptoEquivalent: '165.00 USDC',
-    date: '2026-09-24',
+    date: getRelativeDateISO(2),
     timeSlot: '14:30',
     status: 'escrow_locked',
-    escrowTxHash: '0xESCROW_7a89bc2130',
+    escrowTxHash: '0xSIM_ESCROW_7a89bc2130',
     remindersEnabled: true,
     pushReminderScheduled: true,
     smsReminderScheduled: true,
     referenceLookTitle: 'Liquid Mercury Chrome & Sculpted Drops',
     referenceLookImage: '/assets/images/portfolio_cyber_chrome_1790123880263.jpg',
     customNotes: 'Require almond length 3; silver liquid drops on ring and thumb nails.',
-    createdAt: '2026-09-21T14:20:00Z',
+    createdAt: new Date().toISOString(),
   },
   {
     id: 'apt-2',
-    clientName: 'Zoe Winters',
-    clientPhone: '+1 (555) 876-5432',
-    clientEmail: 'zoe@winterscollective.com',
+    clientName: 'Zoe Winters (Demo)',
+    clientPhone: '+34 600 333 444',
+    clientEmail: 'zoe.demo@nailix.example',
     artistId: 'artist-2',
     artistName: 'Chloe Chen (陳美華)',
     artistAvatar: '/assets/images/artist_chloe_chen.jpg',
@@ -468,17 +483,17 @@ export const INITIAL_APPOINTMENTS: Appointment[] = [
     price: 140,
     currency: 'ETH',
     cryptoEquivalent: '0.048 ETH',
-    date: '2026-09-26',
+    date: getRelativeDateISO(4),
     timeSlot: '11:00',
     status: 'confirmed',
-    escrowTxHash: '0xESCROW_33cc91a82',
+    escrowTxHash: '0xSIM_ESCROW_33cc91a82',
     remindersEnabled: true,
     pushReminderScheduled: true,
     smsReminderScheduled: true,
     referenceLookTitle: 'Japanese Glass Aura & Lilac Chromatics',
     referenceLookImage: '/assets/images/portfolio_aurora_glass_1790123870720.jpg',
     customNotes: 'Natural square rounded tips; lilac syrup with soft shimmer.',
-    createdAt: '2026-09-20T09:15:00Z',
+    createdAt: new Date().toISOString(),
   },
 ];
 

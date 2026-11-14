@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, Bookmark, Calendar, ShieldCheck, Sparkles, Filter, Users, Flag, Eye } from 'lucide-react';
+import { Heart, Bookmark, Calendar, ShieldCheck, Users, Flag, Eye } from 'lucide-react';
 import { PortfolioItem, ServiceCategory, ThemeMode } from '../types';
 import { TranslationStrings } from '../i18n/translations';
 

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { PortfolioItem } from '../types';
+import { PortfolioItem, ServiceCategory } from '../types';
 import { INITIAL_PORTFOLIO } from '../data/initialData';
 
 export interface UsePortfolioGalleryOptions {
@@ -15,7 +15,7 @@ export interface InstagramImportPayload {
   artistHandle: string;
   artistAvatar: string;
   image: string;
-  category: any;
+  category: ServiceCategory;
   priceUSD: number;
   durationMinutes: number;
 }
@@ -79,8 +79,13 @@ export function usePortfolioGallery({
 
   const handleImportInstagramPost = useCallback(
     (post: InstagramImportPayload) => {
+      const uniqueSuffix =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID().slice(0, 8).toUpperCase()
+          : `${Date.now()}`;
+
       const newLook: PortfolioItem = {
-        id: `port-ig-${Date.now()}`,
+        id: `port-ig-${uniqueSuffix}`,
         title: post.title,
         artistId: post.artistId,
         artistName: post.artistName,
@@ -88,15 +93,15 @@ export function usePortfolioGallery({
         artistAvatar: post.artistAvatar,
         category: post.category,
         image: post.image,
-        likes: Math.floor(Math.random() * 80) + 120,
-        saves: Math.floor(Math.random() * 40) + 45,
-        date: 'Just now',
-        description: `Directly synced from @${post.artistHandle} Instagram lookbook into the open public stream.`,
-        materials: ['Gel Polish', 'Chrome Pigment'],
+        likes: 0,
+        saves: 0,
+        date: 'Just now [SIM]',
+        description: `[SIM] Demo sample imported from @${post.artistHandle} preview feed into local session gallery.`,
+        materials: ['Gel Polish (Demo Sample)', 'Chrome Pigment (Demo Sample)'],
         durationMinutes: post.durationMinutes,
         priceUSD: post.priceUSD,
-        igPostId: `ig_${Date.now()}`,
-        onChainHash: `0xIG_${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+        igPostId: `ig_sim_${uniqueSuffix}`,
+        contentHash: `0xSIM_IG_${uniqueSuffix}`,
       };
 
       setItems(prev => [newLook, ...prev]);
@@ -106,7 +111,10 @@ export function usePortfolioGallery({
       }
 
       if (onNotify) {
-        onNotify('Instagram Art Synced', `Imported "${newLook.title}" directly to Nailix P2P Public Gallery.`);
+        onNotify(
+          '[SIM] Demo Instagram Set Imported',
+          `Added demo look "${newLook.title}" to current browser session gallery.`
+        );
       }
     },
     [onSyncPostToSwarm, onNotify]

@@ -17,15 +17,14 @@ describe('ErrorBoundary resilience', () => {
     expect(html).toContain('Salon Ready');
   });
 
-  it('produces calm fallback state from getDerivedStateFromError', () => {
-    const derived = ErrorBoundary.getDerivedStateFromError(new Error('Simulated failure'));
+  it('produces minimal hasError fallback state from getDerivedStateFromError without storing sensitive strings', () => {
+    const derived = ErrorBoundary.getDerivedStateFromError();
     expect(derived).toEqual({
       hasError: true,
-      errorMessage: 'Simulated failure',
     });
   });
 
-  it('catches render crash inside section boundary without leaking stack trace', () => {
+  it('renders section fallback screen cleanly when boundary hasError is triggered', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const boundary = new ErrorBoundary({
@@ -34,7 +33,7 @@ describe('ErrorBoundary resilience', () => {
       theme: 'dark',
       children: <Boom />,
     });
-    boundary.state = ErrorBoundary.getDerivedStateFromError(new Error('boom at line 42'));
+    boundary.state = ErrorBoundary.getDerivedStateFromError();
 
     const fallbackHtml = renderToStaticMarkup(boundary.render() as React.ReactElement);
 
@@ -45,19 +44,20 @@ describe('ErrorBoundary resilience', () => {
     consoleSpy.mockRestore();
   });
 
-  it('renders root fallback screen with recovery controls when level="root"', () => {
+  it('renders truthful root fallback screen without false persistence claims when level="root"', () => {
     const boundary = new ErrorBoundary({
       level: 'root',
       theme: 'light',
       children: null,
     });
-    boundary.state = ErrorBoundary.getDerivedStateFromError(new Error('Fatal tree error'));
+    boundary.state = ErrorBoundary.getDerivedStateFromError();
 
     const fallbackHtml = renderToStaticMarkup(boundary.render() as React.ReactElement);
 
     expect(fallbackHtml).toContain('Салон временно на паузе');
     expect(fallbackHtml).toContain('Попробовать восстановить');
     expect(fallbackHtml).toContain('Обновить страницу');
+    expect(fallbackHtml).not.toContain('записи сохранены');
     expect(fallbackHtml).not.toContain('Fatal tree error');
   });
 });

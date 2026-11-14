@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { X, Send, Image as ImageIcon, Sparkles, Check, Clock, DollarSign, Calendar, MessageSquare } from 'lucide-react';
-import { ChatMessage, Artist, PortfolioItem } from '../types';
+import React, { useState, useEffect } from 'react';
+import { X, Send, MessageSquare } from 'lucide-react';
+import { ChatMessage, Artist } from '../types';
 
 interface ChatDrawerProps {
   isOpen: boolean;
@@ -8,6 +8,8 @@ interface ChatDrawerProps {
   messages: ChatMessage[];
   onSendMessage: (text: string, threadId: string, quote?: ChatMessage['quoteAttachment']) => void;
   artists: Artist[];
+  activeThreadId?: string;
+  onSelectThread?: (threadId: string) => void;
   userRole: 'client' | 'master';
   onBookService: (artist: Artist, serviceName: string, price: number) => void;
 }
@@ -18,14 +20,55 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
   messages,
   onSendMessage,
   artists,
+  activeThreadId,
+  onSelectThread,
   userRole,
   onBookService,
 }) => {
   if (!isOpen) return null;
 
-  const [selectedThreadId, setSelectedThreadId] = useState<string>(artists[0]?.id || 'artist-1');
+  return (
+    <ChatDrawerContent
+      onClose={onClose}
+      messages={messages}
+      onSendMessage={onSendMessage}
+      artists={artists}
+      activeThreadId={activeThreadId}
+      onSelectThread={onSelectThread}
+      userRole={userRole}
+      onBookService={onBookService}
+    />
+  );
+};
+
+type ChatDrawerContentProps = Omit<ChatDrawerProps, 'isOpen'>;
+
+const ChatDrawerContent: React.FC<ChatDrawerContentProps> = ({
+  onClose,
+  messages,
+  onSendMessage,
+  artists,
+  activeThreadId,
+  onSelectThread,
+  userRole,
+  onBookService,
+}) => {
+  const [selectedThreadId, setSelectedThreadId] = useState<string>(
+    activeThreadId || artists[0]?.id || 'artist-1'
+  );
   const [inputText, setInputText] = useState<string>('');
   const [includeQuote, setIncludeQuote] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (activeThreadId && activeThreadId !== selectedThreadId) {
+      setSelectedThreadId(activeThreadId);
+    }
+  }, [activeThreadId, selectedThreadId]);
+
+  const handleSelectThread = (artistId: string) => {
+    setSelectedThreadId(artistId);
+    onSelectThread?.(artistId);
+  };
 
   const activeArtist = artists.find(a => a.id === selectedThreadId) || artists[0];
   const threadMessages = messages.filter(m => m.threadId === selectedThreadId);
@@ -53,14 +96,21 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
   return (
     <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-[#101218] border-l border-[#272a33] shadow-2xl flex flex-col">
       {/* Drawer Header */}
-      <div className="p-4 border-b border-cyan-500/20 flex items-center justify-between bg-[#070912]">
+      <div className="p-4 border-b border-red-500/30 flex items-center justify-between bg-[#070912]">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-cyan-950/80 text-cyan-300 border border-cyan-500/30">
+          <div className="p-2 rounded-xl bg-red-950/80 text-red-300 border border-red-500/40">
             <MessageSquare className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="font-display text-base font-bold text-white">Encrypted Studio Consultations</h3>
-            <p className="text-[11px] text-cyan-400 font-mono">🔒 E2E Cryptography Active · Client & Master Keypairs</p>
+            <div className="flex items-center gap-2">
+              <h3 className="font-display text-base font-bold text-white">Studio Consultations</h3>
+              <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold rounded bg-red-950 text-red-300 border border-red-500/50">
+                [SIM]
+              </span>
+            </div>
+            <p className="text-[11px] text-red-300 font-mono">
+              [SIM] Local session chat · Not encrypted (Stage 4 adds WebRTC)
+            </p>
           </div>
         </div>
         <button
@@ -72,9 +122,9 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
         </button>
       </div>
 
-      {/* E2E Security Badge */}
-      <div className="px-4 py-2 bg-gradient-to-r from-cyan-950/40 via-purple-950/40 to-slate-900 border-b border-cyan-500/20 text-[11px] font-mono text-cyan-200 flex items-center justify-between">
-        <span>Public art is unencrypted; chats & wallet remain cryptographically sealed.</span>
+      {/* Honest Simulation Notice */}
+      <div className="px-4 py-2 bg-red-950/30 border-b border-red-500/30 text-[11px] font-mono text-red-200 flex items-center justify-between">
+        <span>[SIM] Messages stay in browser session memory & local tab BroadcastChannel. Plaintext JSON in demo mode.</span>
       </div>
 
       {/* Artist Thread Switcher */}
@@ -84,7 +134,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
           return (
             <button
               key={art.id}
-              onClick={() => setSelectedThreadId(art.id)}
+              onClick={() => handleSelectThread(art.id)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-all cursor-pointer ${
                 isActive
                   ? 'bg-[#272a33] text-white font-medium'
@@ -111,7 +161,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
         {threadMessages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[#9ca3af]">
             <p className="text-xs">No previous consultation with {activeArtist?.name}.</p>
-            <p className="text-[11px] text-[#6b7280] mt-1">Send a message or reference photo to start custom quoting.</p>
+            <p className="text-[11px] text-[#6b7280] mt-1">Send a message or quote preview to test session chat [SIM].</p>
           </div>
         ) : (
           threadMessages.map(msg => {
@@ -137,7 +187,6 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
                 >
                   <p>{msg.text}</p>
 
-                  {/* Attached Inspiration Image */}
                   {msg.inspirationImg && (
                     <div className="rounded-lg overflow-hidden border border-black/20 my-1">
                       <img
@@ -152,15 +201,14 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
                     </div>
                   )}
 
-                  {/* Attached Consultation Quote */}
                   {msg.quoteAttachment && (
                     <div className="p-2.5 rounded-lg bg-black/25 border border-white/10 space-y-2 text-white">
                       <div className="flex items-center justify-between text-[11px] font-mono">
-                        <span className="text-[#38bdf8]">FORMAL STUDIO QUOTE</span>
+                        <span className="text-[#38bdf8]">STUDIO QUOTE [SIM]</span>
                         <span className="font-bold">${msg.quoteAttachment.price} {msg.quoteAttachment.currency}</span>
                       </div>
                       <p className="font-semibold text-xs">{msg.quoteAttachment.serviceName}</p>
-                      <p className="text-[10px] opacity-80">{msg.quoteAttachment.durationMinutes} mins slot lock</p>
+                      <p className="text-[10px] opacity-80">{msg.quoteAttachment.durationMinutes} mins session</p>
 
                       {userRole === 'client' && (
                         <button
@@ -172,7 +220,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
                           }}
                           className="w-full py-1.5 px-3 bg-white text-black font-semibold text-[11px] rounded hover:bg-[#e6c158] transition-colors cursor-pointer"
                         >
-                          Lock & Escrow Slot Now
+                          Book Quoted Slot [SIM]
                         </button>
                       )}
                     </div>

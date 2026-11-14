@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, MapPin, Scale, MessageSquare, Smartphone, Compass } from 'lucide-react';
+import { MapPin, Scale, MessageSquare, Smartphone, Compass } from 'lucide-react';
 import { triggerHaptic } from '../utils/haptics';
 import { ThemeMode } from '../types';
 import { TranslationStrings } from '../i18n/translations';
@@ -19,7 +19,6 @@ export const AndroidBottomNav: React.FC<AndroidBottomNavProps> = ({
   unreadChatCount,
   onOpenChat,
   theme,
-  t,
 }) => {
   const isDark = theme === 'dark';
 

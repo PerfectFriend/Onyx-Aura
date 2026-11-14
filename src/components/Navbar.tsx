@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
-  Sparkles, Radio, MessageSquare, ShieldCheck, Smartphone, 
-  ChevronDown, Check, Users, MapPin, Sun, Moon, Megaphone,
+  Sparkles, Radio, MessageSquare, Smartphone, 
+  ChevronDown, Check, Users, MapPin, Sun, Moon,
   Image as ImageIcon, Calendar
 } from 'lucide-react';
 import { LANGUAGES, SupportedLanguage, TranslationStrings } from '../i18n/translations';
@@ -44,7 +44,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectLanguage,
   theme,
   onToggleTheme,
-  onOpenAdManager,
   onOpenWallpaper,
   t,
 }) => {

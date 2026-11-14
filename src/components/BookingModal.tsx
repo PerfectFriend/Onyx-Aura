@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Calendar, Clock, DollarSign, Bell, MessageSquare, ShieldCheck, Check, Sparkles, AlertCircle } from 'lucide-react';
-import { Artist, NailService, PortfolioItem, Appointment, PaymentCurrency } from '../types';
+import { X, Calendar, Clock, Bell } from 'lucide-react';
+import { Artist, NailService, PortfolioItem } from '../types';
+import { DEMO_CLIENT_PROFILE, getRelativeDateISO } from '../data/initialData';
 import { CornerFlourish } from './OrnamentalFlourish';
 
 interface BookingModalProps {
@@ -48,30 +49,54 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  // Selected artist
+  return (
+    <BookingModalContent
+      onClose={onClose}
+      artists={artists}
+      initialArtist={initialArtist}
+      initialLook={initialLook}
+      onProceedToCheckout={onProceedToCheckout}
+      onTestSMS={onTestSMS}
+      onTestPush={onTestPush}
+    />
+  );
+};
+
+type BookingModalContentProps = Omit<BookingModalProps, 'isOpen'>;
+
+const BookingModalContent: React.FC<BookingModalContentProps> = ({
+  onClose,
+  artists,
+  initialArtist,
+  initialLook,
+  onProceedToCheckout,
+  onTestSMS,
+  onTestPush,
+}) => {
+  const minDateISO = getRelativeDateISO(0);
+
   const [selectedArtistId, setSelectedArtistId] = useState<string>(
     initialArtist?.id || initialLook?.artistId || artists[0]?.id || ''
   );
-  
+
   const currentArtist = artists.find(a => a.id === selectedArtistId) || artists[0];
 
-  // Selected service
   const [selectedServiceId, setSelectedServiceId] = useState<string>(
     currentArtist?.services[0]?.id || ''
   );
-  const currentService = currentArtist?.services.find(s => s.id === selectedServiceId) || currentArtist?.services[0];
+  const currentService =
+    currentArtist?.services.find(s => s.id === selectedServiceId) || currentArtist?.services[0];
 
-  // Booking details
-  const [selectedDate, setSelectedDate] = useState<string>('2026-09-25');
+  const [selectedDate, setSelectedDate] = useState<string>(() => getRelativeDateISO(2));
   const [selectedSlot, setSelectedSlot] = useState<string>('02:30 PM');
-  
-  // Client details
-  const [clientName, setClientName] = useState<string>('Genevieve Vance');
-  const [clientPhone, setClientPhone] = useState<string>('+1 (555) 749-0182');
-  const [clientEmail, setClientEmail] = useState<string>('genevieve@pariscouture.com');
-  const [customNotes, setCustomNotes] = useState<string>('Prefer coffin shape length 2; matte velvet base with sculpted liquid chrome crests.');
-  
-  // Automated Reminders Toggles
+
+  const [clientName, setClientName] = useState<string>(DEMO_CLIENT_PROFILE.name);
+  const [clientPhone, setClientPhone] = useState<string>(DEMO_CLIENT_PROFILE.phone);
+  const [clientEmail, setClientEmail] = useState<string>(DEMO_CLIENT_PROFILE.email);
+  const [customNotes, setCustomNotes] = useState<string>(
+    'Prefer coffin shape length 2; matte velvet base with sculpted liquid chrome crests.'
+  );
+
   const [enablePush, setEnablePush] = useState<boolean>(true);
   const [enableSMS, setEnableSMS] = useState<boolean>(true);
   const [smsTestDispatched, setSmsTestDispatched] = useState<boolean>(false);
@@ -112,7 +137,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md">
-      <div 
+      <div
         className="relative w-full max-w-2xl gaudi-mosaic-card border border-amber-400/40 shadow-2xl max-h-[92vh] flex flex-col"
         onClick={e => e.stopPropagation()}
       >
@@ -136,8 +161,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
         {/* Content Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6">
-          
-          {/* Reference Look Card (if booked from gallery) */}
+          {/* Reference Look Card */}
           {initialLook && (
             <div className="flex items-center gap-4 p-3 bg-[#15171e] rounded-xl border border-[#272a33]">
               <img
@@ -222,7 +246,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-mono text-base font-bold text-white">${srv.priceUSD}</p>
-                        <p className="text-[10px] text-[#9ca3af]">Escrow Locked</p>
+                        <p className="text-[10px] text-[#9ca3af]">Session Deposit [SIM]</p>
                       </div>
                     </div>
                   );
@@ -241,7 +265,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <input
                 type="date"
                 value={selectedDate}
-                min="2026-09-23"
+                min={minDateISO}
                 onChange={e => setSelectedDate(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-[#12141a] border border-[#272a33] rounded-lg text-white focus:outline-none focus:border-[#d4af37]"
                 required
@@ -251,7 +275,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="space-y-2">
               <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af] flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#d4af37]" />
-                <span>Available Time Slot</span>
+                <span>Available Time Slot (Demo Static Slots)</span>
               </label>
               <select
                 value={selectedSlot}
@@ -266,7 +290,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           </div>
 
           {/* Client Contact Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Your Full Name</label>
               <input
@@ -280,38 +304,49 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Mobile Phone (for SMS Reminders)</label>
+              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Mobile Phone</label>
               <input
                 type="tel"
                 value={clientPhone}
                 onChange={e => setClientPhone(e.target.value)}
-                placeholder="+1 (555) 000-0000"
+                placeholder="+34 600 000 000"
+                className="w-full px-3 py-2 text-sm bg-[#12141a] border border-[#272a33] rounded-lg text-white focus:outline-none focus:border-[#d4af37]"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Email (for Calendar)</label>
+              <input
+                type="email"
+                value={clientEmail}
+                onChange={e => setClientEmail(e.target.value)}
+                placeholder="guest.demo@nailix.example"
                 className="w-full px-3 py-2 text-sm bg-[#12141a] border border-[#272a33] rounded-lg text-white focus:outline-none focus:border-[#d4af37]"
                 required
               />
             </div>
           </div>
 
-          {/* Automated Reminders Configuration Section */}
-          <div className="p-4 rounded-xl bg-[#15171e] border border-[#272a33] space-y-4">
+          {/* Reminder Preview Section [SIM] */}
+          <div className="p-4 rounded-xl bg-[#15171e] border border-red-500/40 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Bell className="w-4 h-4 text-[#d4af37]" />
-                <h4 className="text-sm font-semibold text-white">Automated Appointment Reminders</h4>
+                <h4 className="text-sm font-semibold text-white">Reminder Previews [SIM]</h4>
               </div>
-              <span className="text-[11px] font-mono text-[#34d399]">Live Gateway Active</span>
+              <span className="text-[11px] font-mono text-red-300">[SIM] Local In-App Toast</span>
             </div>
-            
+
             <p className="text-xs text-[#9ca3af]">
-              Never miss a couture booking. Dispatches automated alerts 24 hours and 2 hours prior to start time.
+              [SIM] Previews 24h & 2h alerts immediately inside the app toast ledger. No external SMS gateway is connected.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              {/* Push Notification Toggle */}
               <div className="p-3 bg-[#101218] rounded-lg border border-[#272a33] flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-semibold text-white">Push Notifications</p>
-                  <p className="text-[11px] text-[#9ca3af]">Browser & mobile alert</p>
+                  <p className="text-xs font-semibold text-white">Push Alert Preview [SIM]</p>
+                  <p className="text-[11px] text-[#9ca3af]">Browser tray / in-app toast</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -319,7 +354,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     onClick={handleTriggerTestPush}
                     className="text-[10px] text-[#38bdf8] hover:underline cursor-pointer"
                   >
-                    {pushTestDispatched ? 'Sent!' : 'Test Push'}
+                    {pushTestDispatched ? 'Previewed!' : 'Test Push'}
                   </button>
                   <input
                     type="checkbox"
@@ -330,11 +365,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              {/* SMS Notification Toggle */}
               <div className="p-3 bg-[#101218] rounded-lg border border-[#272a33] flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-semibold text-white">Automated SMS</p>
-                  <p className="text-[11px] text-[#9ca3af]">Direct carrier text</p>
+                  <p className="text-xs font-semibold text-white">Simulated SMS [SIM]</p>
+                  <p className="text-[11px] text-[#9ca3af]">In-app demo preview only</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -342,7 +376,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     onClick={handleTriggerTestSMS}
                     className="text-[10px] text-[#d4af37] hover:underline cursor-pointer"
                   >
-                    {smsTestDispatched ? 'Sent!' : 'Test SMS'}
+                    {smsTestDispatched ? 'Previewed!' : 'Test SMS'}
                   </button>
                   <input
                     type="checkbox"
@@ -369,7 +403,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           {/* Action buttons */}
           <div className="pt-2 flex items-center justify-between border-t border-[#1f222b]">
             <div className="text-xs">
-              <span className="text-[#9ca3af]">Total Deposit: </span>
+              <span className="text-[#9ca3af]">Estimated Total: </span>
               <span className="font-mono text-base font-bold text-white">${currentService?.priceUSD || 0} USD</span>
             </div>
 
@@ -385,11 +419,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 type="submit"
                 className="btn-vangogh-gold text-xs py-2 px-5 flex items-center gap-1.5 shadow-lg"
               >
-                <span>Proceed to Multi-Currency Checkout</span>
+                <span>Proceed to Checkout [SIM]</span>
               </button>
             </div>
           </div>
-
         </form>
       </div>
     </div>

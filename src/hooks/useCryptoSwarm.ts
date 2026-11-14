@@ -5,8 +5,7 @@
 // =============================================================================
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { CryptoCloudState, PeerNode, Appointment, Review, PortfolioItem, ChatMessage } from '../types';
-import { INITIAL_PEERS } from '../data/initialData';
+import { CryptoCloudState, Appointment, Review, PortfolioItem, ChatMessage } from '../types';
 import { cryptoCloudSwarm } from '../simulation/cryptocloud';
 
 export interface CryptoCloudBackupPayload {
@@ -18,18 +17,15 @@ export interface CryptoCloudBackupPayload {
 
 export function useCryptoSwarm() {
   const [swarmState, setSwarmState] = useState<CryptoCloudState>(() => cryptoCloudSwarm.getState());
-  const [peers, setPeers] = useState<PeerNode[]>(INITIAL_PEERS);
   const [isBackingUp, setIsBackingUp] = useState<boolean>(false);
   const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
 
-  // Subscribe to swarm events (peer pulses, broadcast blocks) on mount
+  const peers = swarmState.connectedPeers;
+
+  // Subscribe to simulated BroadcastChannel events on mount
   useEffect(() => {
-    const unsubSwarm = cryptoCloudSwarm.subscribe((event) => {
-      const state = cryptoCloudSwarm.getState();
-      setSwarmState(state);
-      if (event.type === 'PEER_PULSE') {
-        setPeers(state.connectedPeers);
-      }
+    const unsubSwarm = cryptoCloudSwarm.subscribe(() => {
+      setSwarmState(cryptoCloudSwarm.getState());
     });
 
     return () => {
@@ -42,12 +38,12 @@ export function useCryptoSwarm() {
     return peers.filter(p => p.status === 'online').length + 1;
   }, [peers]);
 
-  // Export encrypted backup snapshot [SIM]
+  // Export plaintext JSON session snapshot [SIM]
   const handleExportCryptoCloudBackup = useCallback(async (data: CryptoCloudBackupPayload) => {
     setIsBackingUp(true);
     setBackupSuccessMessage(null);
     try {
-      const { filename, blob, checksum } = await cryptoCloudSwarm.exportCryptographicBackup(data);
+      const { filename, blob, checksum, isRealSha256 } = await cryptoCloudSwarm.exportSessionSnapshot(data);
 
       // Trigger client file download
       if (typeof window !== 'undefined') {
@@ -58,10 +54,13 @@ export function useCryptoSwarm() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
 
-      setBackupSuccessMessage(`Successfully saved ${filename}. Checksum: ${checksum.slice(0, 16)}...`);
+      const hashKind = isRealSha256 ? 'Web Crypto SHA-256' : '[SIM] Pseudohash (non-HTTPS)';
+      setBackupSuccessMessage(
+        `[SIM] Exported plaintext JSON snapshot ${filename}. ${hashKind}: ${checksum.slice(0, 16)}...`
+      );
       setSwarmState(cryptoCloudSwarm.getState());
     } finally {
       setIsBackingUp(false);
@@ -70,8 +69,7 @@ export function useCryptoSwarm() {
 
   // Simulate P2P Swarm Network Pulse [SIM]
   const handleSimulatePeerPulse = useCallback(() => {
-    const updatedPeers = cryptoCloudSwarm.simulatePeerPing();
-    setPeers(updatedPeers);
+    cryptoCloudSwarm.simulatePeerPing();
     setSwarmState(cryptoCloudSwarm.getState());
   }, []);
 

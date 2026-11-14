@@ -44,7 +44,7 @@ export function triggerHaptic(type: HapticType = 'selection'): boolean {
       default:
         return navigator.vibrate(15);
     }
-  } catch (e) {
+  } catch {
     // Suppress errors on unsupported platforms
     return false;
   }

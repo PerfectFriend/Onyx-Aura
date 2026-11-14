@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, X, Sparkles, Camera, Calendar, MessageSquare, Smartphone } from 'lucide-react';
+import { Plus, Sparkles, Camera, Calendar, MessageSquare, Smartphone } from 'lucide-react';
 import { triggerHaptic } from '../utils/haptics';
 import { ThemeMode } from '../types';
 

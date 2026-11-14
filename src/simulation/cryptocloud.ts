@@ -11,27 +11,41 @@ import { INITIAL_PEERS } from '../data/initialData';
 const SWARM_CHANNEL_NAME = 'onyx_cryptocloud_swarm_v1';
 
 /**
- * Real Web Crypto SHA-256 utility (used by simulation engine for deterministic hashing)
+ * Web Crypto SHA-256 helper with explicit fallback signaling (K-03).
  */
-export async function computeSHA256(message: string): Promise<string> {
+export async function computeSHA256Detailed(message: string): Promise<{ hash: string; isRealSha256: boolean }> {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
     try {
       const msgBuffer = new TextEncoder().encode(message);
       const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      return {
+        hash: '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join(''),
+        isRealSha256: true,
+      };
     } catch {
       // Fallback below
     }
   }
-  // Fallback pseudohash
+  // Explicit 32-bit pseudohash fallback when Web Crypto subtle is unavailable (e.g. non-HTTPS local IP)
   let hash = 0;
   for (let i = 0; i < message.length; i++) {
     const char = message.charCodeAt(i);
     hash = (hash << 5) - hash + char;
     hash |= 0;
   }
-  return '0x' + Math.abs(hash).toString(16).padStart(64, 'a');
+  return {
+    hash: '0xSIM_PSEUDO_' + Math.abs(hash).toString(16).padStart(16, '0'),
+    isRealSha256: false,
+  };
+}
+
+/**
+ * Convenience string wrapper over computeSHA256Detailed.
+ */
+export async function computeSHA256(message: string): Promise<string> {
+  const { hash } = await computeSHA256Detailed(message);
+  return hash;
 }
 
 /**
@@ -52,7 +66,7 @@ export class CryptoCloudEngine {
       totalSyncedBlocks: 1849202,
       localBufferedChunks: 412,
       storageUsedKB: 842.6,
-      encryptionMode: 'AES-256-GCM / Zero-Knowledge',
+      encryptionMode: 'Local Session JSON [SIM]',
       autoBackupIntervalHours: 6,
       lastBackupTimestamp: new Date().toISOString(),
     };
@@ -80,6 +94,14 @@ export class CryptoCloudEngine {
     };
   }
 
+  public destroy(): void {
+    if (this.channel) {
+      this.channel.close();
+      this.channel = null;
+    }
+    this.listeners = [];
+  }
+
   private emit(event: { type: string; payload: unknown }) {
     this.listeners.forEach(cb => {
       try {
@@ -92,7 +114,7 @@ export class CryptoCloudEngine {
 
   private handleIncomingPeerMessage(data: { type: string; payload: unknown; senderNode: string }) {
     if (data.senderNode === this.state.localNodeId) return;
-    
+
     // Simulate peer buffer sync
     this.state.localBufferedChunks += 1;
     this.state.storageUsedKB += 1.4;
@@ -110,42 +132,47 @@ export class CryptoCloudEngine {
     if (this.channel) {
       this.channel.postMessage(packet);
     }
-    
+
     this.state.localBufferedChunks += 1;
     this.state.totalSyncedBlocks += 1;
     this.emit({ type: 'BLOCK_BROADCAST', payload });
   }
 
-  // Create an encrypted snapshot JSON file for self-hosted backup
-  public async exportCryptographicBackup(data: {
+  // [SIM] Export a plaintext session JSON snapshot with integrity checksum (no encryption)
+  public async exportSessionSnapshot(data: {
     appointments: Appointment[];
     reviews: Review[];
     portfolio: PortfolioItem[];
     chats: ChatMessage[];
-  }): Promise<{ filename: string; blob: Blob; checksum: string }> {
+  }): Promise<{ filename: string; blob: Blob; checksum: string; isRealSha256: boolean }> {
     const snapshot = {
-      system: 'Nailix P2P CryptoCloud Protocol v3.0 [SIMULATED]',
+      system: 'Nailix Session Snapshot [SIMULATED]',
+      notice: '[SIM] Plaintext JSON export for demo inspection. Not encrypted.',
       generatedAt: new Date().toISOString(),
       nodeId: this.state.localNodeId,
-      architecture: 'Hybrid: Open Public Nail Art Stream + E2E Encrypted Chats & Wallet Escrow Keys [SIM]',
+      architecture: 'Hybrid: Open Public Nail Art Gallery + Local Session State Snapshot [SIM]',
       payload: {
         publicArtGallery: data.portfolio,
         clientBookings: data.appointments,
-        immutableReviews: data.reviews,
-        encryptedChatLedger: data.chats,
+        demoReviews: data.reviews,
+        sessionChatsPlaintext: data.chats,
       },
     };
 
     const serialized = JSON.stringify(snapshot, null, 2);
-    const checksum = await computeSHA256(serialized);
-    const enriched = JSON.stringify({ ...snapshot, integrityChecksumSHA256: checksum }, null, 2);
-    
+    const { hash: checksum, isRealSha256 } = await computeSHA256Detailed(serialized);
+    const enriched = JSON.stringify(
+      { ...snapshot, integrityChecksum: checksum, isRealSha256 },
+      null,
+      2
+    );
+
     const blob = new Blob([enriched], { type: 'application/json' });
     const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `nailix_vault_backup_${dateStr}_${this.state.localNodeId.toLowerCase()}.cryptocloud.json`;
+    const filename = `nailix_session_snapshot_${dateStr}_${this.state.localNodeId.toLowerCase()}.sim.json`;
 
     this.state.lastBackupTimestamp = new Date().toISOString();
-    return { filename, blob, checksum };
+    return { filename, blob, checksum, isRealSha256 };
   }
 
   // Simulated peer swarm pulse

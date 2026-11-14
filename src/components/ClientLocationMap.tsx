@@ -4,20 +4,15 @@ import {
   Home, 
   Briefcase, 
   Navigation, 
-  Search, 
   Calendar, 
   MessageSquare, 
-  ShieldCheck, 
   Star, 
   Clock, 
   Building2, 
-  Plus, 
   Edit3, 
   Check, 
-  ChevronRight, 
   Compass, 
   Crosshair,
-  Sparkles
 } from 'lucide-react';
 import { Artist, ClientAnchorPoint, ThemeMode } from '../types';
 import { calculateDistanceKm, formatTravelEstimate } from '../services/geoDistance';
@@ -44,7 +39,6 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
   userRole,
   onUpdateMasterSalon,
   theme,
-  t,
 }) => {
   const [selectedAnchorId, setSelectedAnchorId] = useState<'home' | 'work' | 'custom'>('home');
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
@@ -81,9 +75,6 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
       };
     }).sort((a, b) => a.distanceKm - b.distanceKm);
   }, [artists, currentAnchor]);
-
-  // Selected master detail
-  const activeMaster = sortedArtists.find(a => a.id === (selectedArtistId || sortedArtists[0]?.id));
 
   // Map coordinate bounds for the stylized district canvas (Barcelona center)
   // Lat: ~41.385 to 41.410, Lng: ~2.140 to 2.185

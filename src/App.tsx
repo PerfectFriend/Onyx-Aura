@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { PortfolioGallery } from './components/PortfolioGallery';
@@ -28,6 +28,8 @@ import {
   INITIAL_ARTISTS,
   INITIAL_REVIEWS,
   INITIAL_ANCHOR_POINTS,
+  DEMO_CLIENT_PROFILE,
+  getRelativeDateISO,
 } from './data/initialData';
 
 import {
@@ -45,6 +47,19 @@ import { useChatConcierge } from './hooks/useChatConcierge';
 import { useCryptoSwarm } from './hooks/useCryptoSwarm';
 import { usePortfolioGallery } from './hooks/usePortfolioGallery';
 import { useSponsoredAds } from './hooks/useSponsoredAds';
+
+/**
+ * Computes incremental weighted average rating without depending on stale closures (K-09).
+ */
+export function computeUpdatedArtistRating(
+  currentRating: number,
+  totalReviews: number,
+  newRating: number
+): number {
+  const safeCount = Math.max(0, totalReviews);
+  const weighted = (currentRating * safeCount + newRating) / (safeCount + 1);
+  return Number(weighted.toFixed(2));
+}
 
 export default function App() {
   // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Sprint 1.1 / 1.4
@@ -118,11 +133,9 @@ export default function App() {
 
     setArtists(prev => prev.map(art => {
       if (art.id === reviewData.artistId) {
-        const artistReviews = [...reviews.filter(r => r.artistId === art.id), newReview];
-        const avg = artistReviews.reduce((sum, r) => sum + r.rating, 0) / artistReviews.length;
         return {
           ...art,
-          rating: Number(avg.toFixed(2)),
+          rating: computeUpdatedArtistRating(art.rating, art.totalReviews, newReview.rating),
           totalReviews: art.totalReviews + 1,
         };
       }
@@ -347,11 +360,9 @@ export default function App() {
         {/* Android Native Suite & AR Fitting View */}
         {shell.activeTab === 'android' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-            <ErrorBoundary level="section" sectionName="AR-примерка и Android Suite" theme={theme}>
+            <ErrorBoundary level="section" sectionName="AR-примерка и PWA Suite [SIM]" theme={theme}>
               <AndroidExperienceView
-                onBookLook={booking.handleStartBookingWithLook}
                 onOpenBookingModal={() => booking.setIsBookingModalOpen(true)}
-                onOpenChat={chat.openChat}
                 theme={theme}
                 t={t}
               />
@@ -393,9 +404,9 @@ export default function App() {
         onTestSMS={(phone, artistName, serviceName, date, time) => {
           reminderService.dispatch24HourReminder({
             id: 'test-preview',
-            clientName: 'Client',
+            clientName: DEMO_CLIENT_PROFILE.name,
             clientPhone: phone,
-            clientEmail: '',
+            clientEmail: DEMO_CLIENT_PROFILE.email,
             artistId: '',
             artistName,
             artistAvatar: '',
@@ -416,9 +427,9 @@ export default function App() {
           reminderService.requestPushPermission();
           reminderService.dispatch2HourReminder({
             id: 'test-push',
-            clientName: 'Client',
-            clientPhone: '',
-            clientEmail: '',
+            clientName: DEMO_CLIENT_PROFILE.name,
+            clientPhone: DEMO_CLIENT_PROFILE.phone,
+            clientEmail: DEMO_CLIENT_PROFILE.email,
             artistId: '',
             artistName,
             artistAvatar: '',
@@ -426,7 +437,7 @@ export default function App() {
             serviceName,
             price: 150,
             currency: 'USD',
-            date: 'Tomorrow',
+            date: getRelativeDateISO(1),
             timeSlot: '14:30',
             status: 'confirmed',
             remindersEnabled: true,
@@ -444,7 +455,7 @@ export default function App() {
         onPaymentSuccess={booking.handlePaymentSuccess}
       />
 
-      <ErrorBoundary level="section" sectionName="Чат-консьерж" theme={theme}>
+      <ErrorBoundary level="section" sectionName="Чат-консьерж [SIM]" theme={theme}>
         <ChatDrawer
           isOpen={chat.isChatOpen}
           onClose={chat.closeChat}
@@ -452,17 +463,19 @@ export default function App() {
           onSendMessage={chat.handleSendMessage}
           artists={artists}
           userRole={shell.userRole}
+          activeThreadId={chat.activeThreadId}
+          onSelectThread={chat.setActiveThreadId}
           onBookService={(artist, serviceName) => {
             const srv = artist.services.find(s => s.name === serviceName) || artist.services[0];
             booking.handleProceedToCheckout({
               artist,
               service: srv,
-              date: '2026-09-25',
+              date: getRelativeDateISO(2),
               timeSlot: '02:30 PM',
-              clientName: 'Genevieve Vance',
-              clientPhone: '+1 (555) 749-0182',
-              clientEmail: 'genevieve@pariscouture.com',
-              customNotes: 'Direct quote locked from studio chat.',
+              clientName: DEMO_CLIENT_PROFILE.name,
+              clientPhone: DEMO_CLIENT_PROFILE.phone,
+              clientEmail: DEMO_CLIENT_PROFILE.email,
+              customNotes: 'Direct demo quote locked from studio chat.',
               enablePush: true,
               enableSMS: true,
             });
@@ -523,11 +536,11 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-4 sm:gap-6 font-mono text-[11px] text-gray-400">
-            <span className="text-amber-300">Public Unencrypted Art Stream</span>
+            <span className="text-amber-300">Public Nail Art Showcase</span>
             <span aria-hidden="true">·</span>
-            <span className="text-cyan-300">E2E Cryptographic Chat</span>
+            <span className="text-cyan-300">Studio Concierge Chat [SIM]</span>
             <span aria-hidden="true">·</span>
-            <span className="text-fuchsia-300">Friend Circle Jury DAO [SIM]</span>
+            <span className="text-fuchsia-300">Friend Circle Jury [SIM]</span>
             <span aria-hidden="true">·</span>
             <button
               onClick={() => shell.setIsPermissionsModalOpen(true)}

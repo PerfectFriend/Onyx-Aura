@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Instagram, RefreshCw, Check, ExternalLink, Sparkles, TrendingUp, Bookmark, Heart, Layers, ArrowUpRight } from 'lucide-react';
-import { Artist, PortfolioItem } from '../types';
+import { Instagram, RefreshCw, Check, Bookmark, Heart, Layers, ArrowUpRight } from 'lucide-react';
+import { Artist, ServiceCategory } from '../types';
 
 interface InstagramSyncSectionProps {
   artists: Artist[];
@@ -11,7 +11,7 @@ interface InstagramSyncSectionProps {
     artistHandle: string;
     artistAvatar: string;
     image: string;
-    category: any;
+    category: ServiceCategory;
     priceUSD: number;
     durationMinutes: number;
   }) => void;
@@ -54,15 +54,18 @@ export const InstagramSyncSection: React.FC<InstagramSyncSectionProps> = ({
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-[#1f222b]">
           <div>
-            <div className="text-xs font-mono text-[#ec4899] flex items-center gap-1.5 mb-1">
+            <div className="text-xs font-mono text-[#ec4899] flex items-center gap-2 mb-1">
               <Instagram className="w-3.5 h-3.5" />
-              <span>CROSS-PLATFORM SOCIAL SYNC ENGINE</span>
+              <span>INSTAGRAM PORTFOLIO SYNC [SIM]</span>
+              <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/60">
+                [SIM] DEMO FEED
+              </span>
             </div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              Instagram Portfolio Sync & Social Engagement Metrics
+              Instagram Portfolio Sync Preview [SIM]
             </h2>
             <p className="text-xs text-[#9ca3af] mt-1 max-w-2xl">
-              Sync high-retention Instagram reels and editorial carousel posts directly into your decentralized portfolio. Verifies authentic social engagement metrics without platform lock-in.
+              [SIM] Interactive preview of importing curated sample nail sets into the local session gallery. Live Meta OAuth API is not connected yet.
             </p>
           </div>
 
@@ -74,7 +77,7 @@ export const InstagramSyncSection: React.FC<InstagramSyncSectionProps> = ({
               className="px-4 py-2.5 text-xs font-semibold text-white bg-gradient-to-r from-[#d946ef] to-[#ec4899] hover:opacity-95 rounded-md transition-all flex items-center gap-2 shadow-lg shadow-pink-500/10 cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Fetching IG Media API...' : 'Sync Latest IG Sets'}</span>
+              <span>{isSyncing ? 'Importing Demo Sample [SIM]...' : 'Import Demo IG Set [SIM]'}</span>
             </button>
           </div>
         </div>
@@ -125,11 +128,11 @@ export const InstagramSyncSection: React.FC<InstagramSyncSectionProps> = ({
               </div>
 
               <div className="text-right">
-                <span className="text-[11px] font-mono text-[#34d399] flex items-center gap-1 justify-end">
+                <span className="text-[11px] font-mono text-red-300 flex items-center gap-1 justify-end">
                   <Check className="w-3.5 h-3.5" />
-                  <span>Meta API Connected</span>
+                  <span>Demo Feed [SIM]</span>
                 </span>
-                <p className="text-[10px] text-[#9ca3af]">OAuth 2.0 Webhook</p>
+                <p className="text-[10px] text-[#9ca3af]">No live OAuth connected</p>
               </div>
             </div>
 
@@ -139,19 +142,19 @@ export const InstagramSyncSection: React.FC<InstagramSyncSectionProps> = ({
                 <p className="font-mono text-lg font-bold text-white tabular-nums">
                   {selectedArtist.igFollowers.toLocaleString()}
                 </p>
-                <p className="text-[10px] text-[#9ca3af]">Followers</p>
+                <p className="text-[10px] text-[#9ca3af]">Seed Followers [SIM]</p>
               </div>
               <div>
                 <p className="font-mono text-lg font-bold text-[#ec4899] tabular-nums">
                   {selectedArtist.igEngagementRate}
                 </p>
-                <p className="text-[10px] text-[#9ca3af]">Engagement Rate</p>
+                <p className="text-[10px] text-[#9ca3af]">Seed Engagement [SIM]</p>
               </div>
               <div>
                 <p className="font-mono text-lg font-bold text-[#38bdf8] tabular-nums">
                   {syncedCount}
                 </p>
-                <p className="text-[10px] text-[#9ca3af]">Synced to Chain</p>
+                <p className="text-[10px] text-[#9ca3af]">Synced in Session</p>
               </div>
             </div>
 
@@ -235,8 +238,8 @@ export const InstagramSyncSection: React.FC<InstagramSyncSectionProps> = ({
               ))}
             </div>
 
-            <div className="p-3 bg-[#15171e] rounded-lg border border-[#272a33] flex items-center justify-between text-xs text-[#9ca3af]">
-              <span>Verified Meta Graph Token valid for 58 days</span>
+            <div className="p-3 bg-[#15171e] rounded-lg border border-red-500/30 flex items-center justify-between text-xs text-[#9ca3af]">
+              <span>[SIM] Static sample preview (live Meta Graph OAuth not configured)</span>
               <a
                 href={`https://instagram.com/${customHandle}`}
                 target="_blank"

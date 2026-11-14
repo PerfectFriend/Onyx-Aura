@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Heart, Bookmark, ShieldCheck, Clock, DollarSign, Calendar, Instagram, Share2, Layers } from 'lucide-react';
+import { X, Heart, Bookmark, ShieldCheck, Clock, DollarSign, Calendar, Instagram, Layers } from 'lucide-react';
 import { PortfolioItem } from '../types';
 
 interface LightboxModalProps {
@@ -53,11 +53,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           {/* Quick overlay pill replacement: subtle bottom bar */}
           <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-[#d1d5db] bg-[#0b0c10]/80 backdrop-blur-md px-3 py-2 rounded-md border border-[#272a33]">
             <span className="font-mono text-[11px] truncate max-w-[200px]">
-              SHA-256: {item.onChainHash.slice(0, 16)}...
+              Ref Hash: {item.contentHash.slice(0, 16)}...
             </span>
             <span className="text-[#38bdf8] flex items-center gap-1 text-[11px]">
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Immutable Proof</span>
+              <span>Demo Hash [SIM]</span>
             </span>
           </div>
         </div>

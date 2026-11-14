@@ -80,14 +80,14 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </span>
             </h1>
 
-            {/* Subtitle with unencrypted art + encrypted chat clarity */}
+            {/* Honest Subtitle */}
             <p className={`text-sm sm:text-base leading-relaxed max-w-xl ${
               isDark ? 'text-gray-300 font-normal' : 'text-slate-700 font-medium'
             }`}>
               {t.heroSubtitle}
             </p>
 
-            {/* Trust Principles Unboxed Grid (Public Art + E2E Chat + Friend Jury) */}
+            {/* Trust Principles Unboxed Grid */}
             <div className={`grid grid-cols-3 gap-3 py-3 border-y text-xs font-mono ${
               isDark ? 'border-cyan-500/20' : 'border-amber-600/25 bg-amber-50/70 rounded-xl px-2'
             }`}>
@@ -96,23 +96,27 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <Eye className={`w-3 h-3 ${isDark ? 'text-amber-400' : 'text-amber-700'}`} />
                   <span>Public Art Stream</span>
                 </span>
-                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Zero-encrypt showcase</p>
+                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Open gallery showcase</p>
               </div>
 
-              <div className={`space-y-0.5 border-x px-2 ${isDark ? 'border-cyan-500/20' : 'border-amber-600/25'}`}>
+              <button
+                type="button"
+                onClick={onOpenLedger}
+                className={`space-y-0.5 border-x px-2 text-left cursor-pointer ${isDark ? 'border-cyan-500/20' : 'border-amber-600/25'}`}
+              >
                 <span className={`font-bold flex items-center gap-1 ${isDark ? 'text-cyan-300' : 'text-sky-800'}`}>
                   <Lock className={`w-3 h-3 ${isDark ? 'text-cyan-400' : 'text-sky-700'}`} />
-                  <span>E2E & Escrow</span>
+                  <span>Chat & Deposit [SIM]</span>
                 </span>
-                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Crypto in chat & wallet</p>
-              </div>
+                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Session preview mode</p>
+              </button>
 
               <div className="space-y-0.5">
                 <span className={`font-bold flex items-center gap-1 ${isDark ? 'text-fuchsia-300' : 'text-purple-800'}`}>
                   <Users className={`w-3 h-3 ${isDark ? 'text-fuchsia-400' : 'text-purple-700'}`} />
-                  <span>Friend Jury</span>
+                  <span>Friend Jury [SIM]</span>
                 </span>
-                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Peer Web-of-Trust</p>
+                <p className={`text-[11px] ${isDark ? 'text-gray-400' : 'text-slate-600 font-medium'}`}>Circle consensus demo</p>
               </div>
             </div>
 

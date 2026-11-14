@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { 
-  Users, ShieldAlert, CheckCircle2, XCircle, AlertTriangle, Sparkles, 
-  UserPlus, Award, Eye, MessageSquare, ThumbsUp, ThumbsDown, Share2, ArrowRight 
+import {
+  Users, ShieldAlert, CheckCircle2, AlertTriangle,
+  UserPlus, Award, ThumbsUp, ThumbsDown
 } from 'lucide-react';
 import { TranslationStrings } from '../i18n/translations';
 
@@ -107,15 +107,19 @@ export const FriendModerationSection: React.FC<FriendModerationSectionProps> = (
   const [cases, setCases] = useState<ModerationCase[]>(INITIAL_CASES);
   const [inviteInput, setInviteInput] = useState<string>('');
   const [showInviteSuccess, setShowInviteSuccess] = useState<boolean>(false);
-  const [inspectedCase, setInspectedCase] = useState<ModerationCase | null>(null);
 
-  // Invite a new friend to user's jury circle
+  // Invite a new friend to user's jury circle [SIM]
   const handleInviteFriend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteInput.trim()) return;
 
+    const uniqueId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 8)
+        : `${Date.now()}`;
+
     const newFriend: FriendJuror = {
-      id: `fr-${Date.now()}`,
+      id: `fr-${uniqueId}`,
       name: inviteInput.trim(),
       avatar: '/assets/images/juror_user.jpg',
       handle: `@${inviteInput.trim().toLowerCase().replace(/\s+/g, '_')}`,
@@ -197,7 +201,7 @@ export const FriendModerationSection: React.FC<FriendModerationSectionProps> = (
                 <span className="text-xs font-mono text-cyan-400">({friends.length} Jurors)</span>
               </h3>
               <p className="text-xs text-gray-300">
-                These trusted masters and friends act as your decentralized jury quorum to verify your works and dispute reports.
+                [SIM] These sample trusted masters and friends model a jury quorum in local session state.
               </p>
             </div>
 

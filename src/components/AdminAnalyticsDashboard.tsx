@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { 
-  TrendingUp, DollarSign, Calendar, Users, Download, FileText, CheckCircle2, 
-  Clock, ShieldCheck, ArrowUpRight, Bell, Sparkles, Filter, AlertCircle 
+import {
+  TrendingUp, DollarSign, Calendar, Users, Download, FileText, CheckCircle2,
+  ShieldCheck, Sparkles
 } from 'lucide-react';
 import { Appointment, Artist } from '../types';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
@@ -20,7 +20,6 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
   onReleaseEscrow,
   onTriggerReminder,
 }) => {
-  const [selectedTimeframe, setSelectedTimeframe] = useState<'30d' | '90d' | 'all'>('30d');
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   // Compute key analytics
@@ -102,9 +101,9 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
         </style>
       </head>
       <body>
-        <h1>ONYX & AURA · MASTER STUDIO FINANCIAL REPORT</h1>
+        <h1>ONYX & AURA · STUDIO SESSION REPORT [DEMO / LOCAL_ONLY]</h1>
         <div class="header-meta">
-          Decentralized Smart Contract Escrow Ledger · Generated on ${new Date().toLocaleString()}
+          Local Session Booking & Deposit Simulation [SIM] · Generated on ${new Date().toLocaleString()}
         </div>
 
         <div class="summary-card">
@@ -149,7 +148,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
           </tbody>
         </table>
         <div style="margin-top: 30px; font-size: 11px; color: #888;">
-          Cryptographic ledger validation: Swarm consensus verified. Zero centralized platform commission deducted.
+          [SIM] Demo report generated from in-memory session appointments. Not an official accounting or payment ledger.
         </div>
       </body>
       </html>
@@ -175,10 +174,10 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
               <span>BUSINESS PERFORMANCE & FINANCIAL INTELLIGENCE</span>
             </div>
             <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              Studio Analytics & Escrow Settlement Dashboard
+              Studio Analytics & Deposit Simulation [LOCAL_ONLY · SIM]
             </h2>
             <p className="text-xs text-[#9ca3af] mt-1 max-w-2xl">
-              Monitor real-time booking throughput, multi-currency escrow settlements, automated reminder dispatch logs, and export certified tax statements.
+              Review session booking figures (seed baseline + live demo actions), test in-app reminder previews [SIM], and export real RFC 5545 `.ics` or CSV reports.
             </p>
           </div>
 
@@ -238,7 +237,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
             <p className="font-mono text-2xl font-bold text-white tabular-nums">
               {escrowLockedCount} Active
             </p>
-            <p className="text-[11px] text-[#9ca3af]">Secured in multi-sig smart escrow</p>
+            <p className="text-[11px] text-[#9ca3af]">[SIM] Local session deposit preview</p>
           </div>
 
           <div className="p-5 rounded-xl bg-[#12141a] border border-[#272a33] space-y-2">
@@ -275,7 +274,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#1f222b]">
             <h3 className="text-xs font-semibold text-white uppercase tracking-wider flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-[#d4af37]" />
-              <span>Smart Contract Escrow & Appointment Ledger</span>
+              <span>Session Appointments & Deposit Preview [SIM]</span>
             </h3>
 
             {/* Filter controls & ICS export */}
@@ -393,9 +392,9 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
                             Send 24h
                           </button>
                           <button
-                            onClick={() => onTriggerReminder(apt, '24h')}
+                            onClick={() => onTriggerReminder(apt, '2h')}
                             className="px-2 py-1 bg-[#1a1b24] hover:bg-[#272a33] text-[10px] text-[#d4af37] font-mono rounded border border-[#272a33] cursor-pointer"
-                            title="Dispatch 2H emergency reminder"
+                            title="Dispatch 2H simulated push and SMS preview"
                           >
                             Send 2h
                           </button>
@@ -464,20 +463,20 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
             </div>
           </div>
 
-          <div className="p-5 rounded-xl bg-[#12141a] border border-[#272a33] space-y-3">
-            <h4 className="text-xs font-semibold text-white uppercase tracking-wider">Decentralized SLA Status</h4>
+          <div className="p-5 rounded-xl bg-[#12141a] border border-red-500/30 space-y-3">
+            <h4 className="text-xs font-semibold text-white uppercase tracking-wider">Demo SLA Targets [SIM]</h4>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between">
-                <span>Escrow Dispute Rate</span>
-                <span className="font-mono text-[#34d399]">0.02% (Lowest)</span>
+                <span>Simulated Dispute Rate [SIM]</span>
+                <span className="font-mono text-[#34d399]">0.02% (Demo)</span>
               </div>
               <div className="flex justify-between">
-                <span>SMS Notification Delivery</span>
-                <span className="font-mono text-white">99.9%</span>
+                <span>Reminder Mode [SIM]</span>
+                <span className="font-mono text-white">In-App Toast Preview</span>
               </div>
               <div className="flex justify-between">
-                <span>Self-Hosted P2P Uptime</span>
-                <span className="font-mono text-[#34d399]">100%</span>
+                <span>Session Sync [SIM]</span>
+                <span className="font-mono text-[#34d399]">BroadcastChannel</span>
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+dist-apk/
 dev-dist/
 android-build/bin/
 android-build/obj/
@@ -9,4 +10,8 @@ coverage/
 *.log
 .env*
 !.env.example
+*.keystore
+*.jks
+*.apk
+*.idsig
 

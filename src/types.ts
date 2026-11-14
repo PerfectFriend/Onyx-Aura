@@ -34,7 +34,7 @@ export interface PortfolioItem {
   priceUSD: number;
   igPostId?: string;
   igLikes?: number;
-  onChainHash: string;
+  contentHash: string;
 }
 
 export interface Review {
@@ -66,7 +66,7 @@ export interface Artist {
   avatar: string;
   location: string;
   bio: string;
-  verifiedTier: 'Master Guild Gold' | 'On-Chain Verified' | 'Apprentice Guild';
+  verifiedTier: 'Master Guild Gold' | 'Guild Verified [SIM]' | 'Apprentice Guild';
   reputationScore: number; // 0-100
   totalReviews: number;
   rating: number;
@@ -184,7 +184,7 @@ export interface CryptoCloudState {
   totalSyncedBlocks: number;
   localBufferedChunks: number;
   storageUsedKB: number;
-  encryptionMode: 'AES-256-GCM / Zero-Knowledge' | 'Hardware Enclave';
+  encryptionMode: 'Local Session JSON [SIM]' | 'Hardware Enclave [SIM]';
   autoBackupIntervalHours: number;
   lastBackupTimestamp: string;
 }

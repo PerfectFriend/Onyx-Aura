@@ -5,7 +5,7 @@
       "namespace": "android_app",
       "package_name": "app.nailix.art",
       "sha256_cert_fingerprints": [
-        "0D:17:3A:E0:DE:D6:07:83:5C:9B:FB:BA:73:83:C1:33:DB:7B:C0:DC:65:83:DA:C5:16:47:1C:A4:9B:6D:22:9F"
+        "ROTATE_KEYSTORE_AND_SET_NEW_SHA256_CERT_FINGERPRINT"
       ]
     }
   }

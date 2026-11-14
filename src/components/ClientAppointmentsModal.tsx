@@ -1,12 +1,12 @@
 import React from 'react';
-import { 
-  X, Calendar, Clock, MapPin, DollarSign, ShieldCheck, 
-  Download, ExternalLink, Sparkles, AlertCircle, CheckCircle2 
+import {
+  X, Calendar, Clock, MapPin, ShieldCheck,
+  Download, Sparkles
 } from 'lucide-react';
 import { Appointment, Artist } from '../types';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
 import { downloadAllAppointmentsIcs } from '../utils/calendarSync';
-import { CornerFlourish, OrnamentDivider } from './OrnamentalFlourish';
+import { CornerFlourish } from './OrnamentalFlourish';
 import { triggerHaptic } from '../utils/haptics';
 
 interface ClientAppointmentsModalProps {
@@ -218,8 +218,8 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
         {/* Footer */}
         <div className="p-4 bg-black/40 border-t border-amber-500/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400 font-mono">
           <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Все записи защищены смарт-контрактом эскроу</span>
+            <ShieldCheck className="w-4 h-4 text-red-400" />
+            <span>[SIM] Демо-режим текущей сессии (в памяти браузера до Этапа 2)</span>
           </div>
 
           <div className="flex items-center gap-3">

@@ -52,15 +52,22 @@ echo "7. Running zipalign..."
 zipalign -f -v 4 nailix-unaligned.apk nailix-aligned.apk > /dev/null
 
 echo "8. Signing APK with release keystore..."
-if [ ! -f "$BUILD_DIR/nailix-release.keystore" ]; then
-    keytool -genkey -v -keystore "$BUILD_DIR/nailix-release.keystore" -alias nailix -keyalg RSA -keysize 2048 -validity 10000 -storepass nailix123 -keypass nailix123 -dname "CN=Nailix, OU=Mobile, O=NailixArt, L=Barcelona, ST=Catalonia, C=ES"
+KEYSTORE_PATH="${NAILIX_KEYSTORE_PATH:-$HOME/.android/nailix-release.keystore}"
+KS_PASS="${NAILIX_KEYSTORE_PASS:?Error: set NAILIX_KEYSTORE_PASS in your environment before signing}"
+KEY_PASS="${NAILIX_KEY_PASS:-$KS_PASS}"
+KEY_ALIAS="${NAILIX_KEY_ALIAS:-nailix}"
+
+if [ ! -f "$KEYSTORE_PATH" ]; then
+    mkdir -p "$(dirname "$KEYSTORE_PATH")"
+    keytool -genkey -v -keystore "$KEYSTORE_PATH" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$KS_PASS" -keypass "$KEY_PASS" -dname "CN=Nailix, OU=Mobile, O=NailixArt, L=Barcelona, ST=Catalonia, C=ES"
 fi
 
-mkdir -p "$ROOT_DIR/public"
-apksigner sign --ks "$BUILD_DIR/nailix-release.keystore" --ks-pass pass:nailix123 --key-pass pass:nailix123 --out "$ROOT_DIR/public/nailix.apk" nailix-aligned.apk
+APK_OUT_DIR="$ROOT_DIR/dist-apk"
+mkdir -p "$APK_OUT_DIR"
+apksigner sign --ks "$KEYSTORE_PATH" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" --out "$APK_OUT_DIR/nailix.apk" nailix-aligned.apk
 
 echo "9. Verifying APK signature..."
-apksigner verify --verbose "$ROOT_DIR/public/nailix.apk"
+apksigner verify --verbose "$APK_OUT_DIR/nailix.apk"
 
-echo "=== SUCCESS: APK created at public/nailix.apk ==="
-ls -lh "$ROOT_DIR/public/nailix.apk"
+echo "=== SUCCESS: APK created at dist-apk/nailix.apk (outside public/ and gitignored) ==="
+ls -lh "$APK_OUT_DIR/nailix.apk"

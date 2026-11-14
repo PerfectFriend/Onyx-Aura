@@ -1,20 +1,34 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Smartphone, Camera, Download, Bell, MapPin, HardDrive, 
-  Sparkles, ShieldCheck, Check, AlertCircle, Share2, 
-  RefreshCw, Sliders, Play, Square, Zap, Battery, Wifi, 
-  Volume2, Compass, Layers, Info, ExternalLink, QrCode
+import {
+  Smartphone, Camera, Bell, HardDrive,
+  Check, Share2,
+  RefreshCw, Sliders, Play, Square, Zap, Battery, Wifi,
+  Volume2, QrCode, Terminal,
 } from 'lucide-react';
 import { triggerHaptic, HapticType } from '../utils/haptics';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { ThemeMode, PortfolioItem, Artist } from '../types';
+import { ThemeMode } from '../types';
 import { TranslationStrings } from '../i18n/translations';
 import { reminderService } from '../services/reminderService';
+import { DEMO_CLIENT_PROFILE, getRelativeDateISO } from '../data/initialData';
+
+interface BatteryManagerLike extends EventTarget {
+  level: number;
+  charging: boolean;
+}
+
+interface NetworkInformationLike {
+  effectiveType?: string;
+  downlink?: number;
+}
+
+interface NavigatorWithHardware extends Navigator {
+  getBattery?: () => Promise<BatteryManagerLike>;
+  connection?: NetworkInformationLike;
+}
 
 interface AndroidExperienceViewProps {
-  onBookLook?: (look: PortfolioItem) => void;
   onOpenBookingModal?: () => void;
-  onOpenChat?: () => void;
   theme: ThemeMode;
   t: TranslationStrings;
 }
@@ -64,14 +78,11 @@ const AR_PATTERNS: ARPattern[] = [
 ];
 
 export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
-  onBookLook,
   onOpenBookingModal,
-  onOpenChat,
   theme,
-  t,
 }) => {
   const isDark = theme === 'dark';
-  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const { isInstalled, install } = usePWAInstall();
 
   // Telemetry states
   const [batteryLevel, setBatteryLevel] = useState<number | null>(88);
@@ -80,14 +91,15 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
   const [storageUsedMB, setStorageUsedMB] = useState<number>(14.2);
   const [storageQuotaMB, setStorageQuotaMB] = useState<number>(512);
 
-  // AR Camera States
+  // AR Camera States [SIM]
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [selectedPattern, setSelectedPattern] = useState<ARPattern>(AR_PATTERNS[0]);
   const [nailLength, setNailLength] = useState<number>(75);
   const [glowIntensity, setGlowIntensity] = useState<number>(85);
   const [capturedPhotoUrl, setCapturedPhotoUrl] = useState<string | null>(null);
   const [isShutterFlashing, setIsShutterFlashing] = useState<boolean>(false);
-  
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -101,19 +113,17 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
   );
   const [pushTestSuccess, setPushTestSuccess] = useState<string | null>(null);
 
-  // Geolocation coords
-  const [geoCoords, setGeoCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [geoLocating, setGeoLocating] = useState<boolean>(false);
-
   // Offline cache status
   const [isCaching, setIsCaching] = useState<boolean>(false);
   const [cacheDone, setCacheDone] = useState<boolean>(false);
 
   // Query hardware specs on mount
   useEffect(() => {
+    const nav = typeof navigator !== 'undefined' ? (navigator as NavigatorWithHardware) : null;
+
     // Battery API
-    if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
-      (navigator as any).getBattery().then((battery: any) => {
+    if (nav && typeof nav.getBattery === 'function') {
+      nav.getBattery().then((battery) => {
         setBatteryLevel(Math.round(battery.level * 100));
         setIsCharging(battery.charging);
         battery.addEventListener('levelchange', () => {
@@ -126,11 +136,9 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
     }
 
     // Network API
-    if (typeof navigator !== 'undefined' && 'connection' in navigator) {
-      const conn = (navigator as any).connection;
-      if (conn) {
-        setNetworkType(`${conn.effectiveType?.toUpperCase() || 'LTE'} (${conn.downlink || 20} Mbps)`);
-      }
+    if (nav && nav.connection) {
+      const conn = nav.connection;
+      setNetworkType(`${conn.effectiveType?.toUpperCase() || 'LTE'} (${conn.downlink || 20} Mbps)`);
     }
 
     // Storage Estimate API
@@ -151,10 +159,11 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
 
   // Camera Management
   const startCamera = async () => {
+    setStatusNotice(null);
     try {
       triggerHaptic('medium');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('WebRTC Camera is not supported on this device/browser.');
+        setStatusNotice('WebRTC Camera is not supported on this device/browser.');
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -182,8 +191,8 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           videoRef.current.play().catch(() => {});
         }
         setIsCameraActive(true);
-      } catch (e2) {
-        alert('Unable to access camera. Please verify camera permissions in Android settings.');
+      } catch {
+        setStatusNotice('Unable to access camera. Please verify camera permissions in browser settings.');
       }
     }
   };
@@ -259,17 +268,16 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
     if (typeof navigator !== 'undefined' && navigator.share) {
       try {
         await navigator.share({
-          title: 'Nailix Cyber-Gaudí AR Try-On',
-          text: `Check out my manicure look fitted with ${selectedPattern.name} in Nailix for Android!`,
+          title: 'Nailix AR Preview [SIM]',
+          text: `Check out this manicure preview fitted with ${selectedPattern.name} in Nailix!`,
           url: window.location.href,
         });
-      } catch (err) {
+      } catch {
         // User cancelled share
       }
     } else {
-      // Fallback copy link
       navigator.clipboard?.writeText(window.location.href);
-      alert('Link copied to clipboard! (Web Share API active on Android Chrome)');
+      setStatusNotice('Link copied to clipboard! (Web Share API active on Android Chrome)');
     }
   };
 
@@ -280,11 +288,11 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
     setTimeout(() => setLastHapticFired(null), 1500);
   };
 
-  // Real Android Push Notification Trigger
+  // Real Android Push / Simulated Reminder Trigger
   const handleTriggerPushNotification = async () => {
     triggerHaptic('selection');
     if (!('Notification' in window)) {
-      alert('Notification API is not supported on this browser.');
+      setPushTestSuccess('Browser Notification API is not available in this context.');
       return;
     }
 
@@ -296,22 +304,22 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
 
     if (perm === 'granted') {
       try {
-        new Notification('Nailix Android Push Engine', {
-          body: `✨ Appointment reminder for ${selectedPattern.name}. Master is preparing organic bio-gel!`,
+        new Notification('Nailix Push Preview [SIM]', {
+          body: `[SIM] Appointment reminder preview for ${selectedPattern.name}.`,
           icon: '/pwa-192x192.png',
           badge: '/pwa-192x192.png',
           tag: 'nailix-reminder',
         });
-        setPushTestSuccess('Push Notification successfully sent to Android status bar!');
+        setPushTestSuccess('[SIM] Browser Notification preview dispatched!');
         triggerHaptic('success');
         setTimeout(() => setPushTestSuccess(null), 4000);
-      } catch (e) {
-        // Service worker fallback
+      } catch {
+        // Service worker fallback -> simulated in-app toast
         reminderService.dispatch2HourReminder({
           id: 'android-sw-test',
-          clientName: 'You',
-          clientPhone: '',
-          clientEmail: '',
+          clientName: DEMO_CLIENT_PROFILE.name,
+          clientPhone: DEMO_CLIENT_PROFILE.phone,
+          clientEmail: DEMO_CLIENT_PROFILE.email,
           artistId: '',
           artistName: 'Mireia Vila',
           artistAvatar: '',
@@ -319,7 +327,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           serviceName: selectedPattern.name,
           price: 140,
           currency: 'USD',
-          date: 'Today',
+          date: getRelativeDateISO(0),
           timeSlot: '16:00',
           status: 'confirmed',
           remindersEnabled: true,
@@ -327,35 +335,11 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           smsReminderScheduled: true,
           createdAt: new Date().toISOString(),
         });
-        setPushTestSuccess('Simulated In-App Push dispatched to notification ledger!');
+        setPushTestSuccess('[SIM] Simulated In-App Notification dispatched!');
       }
     } else {
-      alert('Notifications are blocked in browser settings. Please allow notifications for Nailix.');
+      setPushTestSuccess('Notifications are blocked in browser settings.');
     }
-  };
-
-  // Geolocation trigger
-  const handleGetLocation = () => {
-    triggerHaptic('selection');
-    if (!navigator.geolocation) {
-      alert('Geolocation not supported.');
-      return;
-    }
-    setGeoLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGeoCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setGeoLocating(false);
-        triggerHaptic('success');
-      },
-      (err) => {
-        console.warn(err);
-        setGeoLocating(false);
-        // Fallback Barcelona Eixample
-        setGeoCoords({ lat: 41.3917, lng: 2.1649 });
-      },
-      { timeout: 8000 }
-    );
   };
 
   // Pre-cache Gallery for Offline Subway/Flight
@@ -372,7 +356,9 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           '/pwa-512x512.png',
         ];
         await cache.addAll(urlsToCache);
-      } catch (e) {}
+      } catch (err) {
+        console.warn('[PWA] Precache skipped:', err);
+      }
     }
     setTimeout(() => {
       setIsCaching(false);
@@ -411,7 +397,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                   isDark ? 'bg-cyan-400/20 text-cyan-300 border border-cyan-400/40' : 'bg-sky-100 text-sky-900 border border-sky-400/50'
                 }`}>
-                  Android 14/15 Native Engine
+                  PWA / WebAPK Companion &amp; AR [SIM]
                 </span>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                   isInstalled 
@@ -425,7 +411,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               <h1 className={`font-display text-2xl font-black tracking-tight mt-1 ${
                 isDark ? 'text-white' : 'text-slate-900'
               }`}>
-                Nailix Android Experience Suite
+                Nailix Android PWA &amp; AR Suite [SIM]
               </h1>
             </div>
           </div>
@@ -457,18 +443,6 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               <span>{storageUsedMB} MB / {storageQuotaMB} MB</span>
             </div>
 
-            {/* Direct APK Download Button */}
-            <a
-              href="/nailix.apk"
-              download="nailix-release.apk"
-              onClick={() => triggerHaptic('success')}
-              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/40 shrink-0 transition-transform active:scale-95 cursor-pointer"
-              title="Скачать нативный установочный файл Android APK"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Скачать APK (8.2 MB)</span>
-            </a>
-
             {/* PWA / WebAPK Install Button */}
             <button
               onClick={() => {
@@ -486,7 +460,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
         </div>
       </div>
 
-      {/* SECTION 1: 📸 Live AR Nail Camera & Virtual Fitting */}
+      {/* SECTION 1: Live AR Nail Camera & Virtual Fitting [SIM] */}
       <div className={`p-6 sm:p-8 rounded-2xl border backdrop-blur-xl shadow-2xl relative overflow-hidden ${
         isDark 
           ? 'gaudi-mosaic-card border-[#00f3ff]/30 text-white' 
@@ -498,17 +472,23 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           <div className="absolute inset-0 z-50 bg-white opacity-80 pointer-events-none transition-opacity duration-150" />
         )}
 
+        {statusNotice && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-300 text-xs font-mono">
+            {statusNotice}
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-cyan-500/20">
           <div>
-            <div className="flex items-center gap-2 text-xs font-mono text-cyan-400 font-bold mb-1">
+            <div className="flex items-center gap-2 text-xs font-mono text-rose-400 font-bold mb-1">
               <Camera className="w-4 h-4 text-[#00f3ff]" />
-              <span>LIVE WEBRTC HARDWARE ACCELERATION</span>
+              <span>[SIM] CANVAS 2D RETICLE OVERLAY · LIVE WEBRTC FEED</span>
             </div>
             <h2 className="font-display text-2xl font-bold tracking-tight">
-              Virtual AR Nail Fitting & Hand Reticle
+              Virtual AR Nail Overlay [SIM]
             </h2>
             <p className={`text-xs mt-1 max-w-xl ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
-              Point your Android camera at your fingers to live-preview intricate ornament patterns, test nail lengths, snap high-res designs, and send directly to your master.
+              [SIM] Uses WebRTC camera video with a 2D Canvas reticle overlay (MediaPipe/TFLite 3D hand tracking planned for Stage 6). Align fingers with the guide capsules to capture a local PNG preview.
             </p>
           </div>
 
@@ -919,8 +899,8 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                 <Bell className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="font-display font-bold text-base">Android Push & Reminders</h3>
-                <p className="text-[11px] text-gray-400">System tray notifications via Service Worker</p>
+                <h3 className="font-display font-bold text-base">Notifications &amp; Reminders [SIM]</h3>
+                <p className="text-[11px] text-gray-400">Browser notification API + in-app toast simulator</p>
               </div>
             </div>
 
@@ -934,7 +914,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           </div>
 
           <p className={`text-xs ${isDark ? 'text-gray-300' : 'text-slate-600'}`}>
-            Verify push delivery for 24h & 2h appointment reminders, studio arrival gates, and friend moderation consensus.
+            [SIM] Preview 24h &amp; 2h appointment reminder alerts locally (no live SMS carrier gateway connected yet).
           </p>
 
           {pushTestSuccess && (
@@ -949,7 +929,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               className="w-full btn-starry-neon text-xs py-2.5 flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
               <Bell className="w-3.5 h-3.5" />
-              <span>Send Test Android Notification to Status Bar</span>
+              <span>Send Test Browser Notification [SIM]</span>
             </button>
 
             <div className="grid grid-cols-2 gap-2">
@@ -958,9 +938,9 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                   triggerHaptic('selection');
                   reminderService.dispatch24HourReminder({
                     id: 'sched-24h',
-                    clientName: 'Genevieve',
-                    clientPhone: '+1-555-0192',
-                    clientEmail: '',
+                    clientName: DEMO_CLIENT_PROFILE.name,
+                    clientPhone: DEMO_CLIENT_PROFILE.phone,
+                    clientEmail: DEMO_CLIENT_PROFILE.email,
                     artistId: '',
                     artistName: 'Mireia Vila (Eixample)',
                     artistAvatar: '',
@@ -968,7 +948,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                     serviceName: 'Royal Obsidian Gel & Gold Leaf',
                     price: 150,
                     currency: 'USD',
-                    date: 'Tomorrow',
+                    date: getRelativeDateISO(1),
                     timeSlot: '14:30',
                     status: 'confirmed',
                     remindersEnabled: true,
@@ -976,13 +956,13 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                     smsReminderScheduled: true,
                     createdAt: new Date().toISOString(),
                   });
-                  setPushTestSuccess('24-Hour Reminder scheduled & recorded in notification ledger!');
+                  setPushTestSuccess('[SIM] 24-Hour Reminder preview dispatched!');
                 }}
                 className={`p-2.5 rounded-xl border text-xs font-semibold text-center cursor-pointer transition-all ${
                   isDark ? 'bg-[#0d1326] border-cyan-500/20 hover:border-cyan-400/50' : 'bg-slate-100 border-slate-300'
                 }`}
               >
-                Simulate 24h Alert
+                Simulate 24h Alert [SIM]
               </button>
 
               <button
@@ -990,9 +970,9 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                   triggerHaptic('selection');
                   reminderService.dispatch2HourReminder({
                     id: 'sched-2h',
-                    clientName: 'Genevieve',
-                    clientPhone: '+1-555-0192',
-                    clientEmail: '',
+                    clientName: DEMO_CLIENT_PROFILE.name,
+                    clientPhone: DEMO_CLIENT_PROFILE.phone,
+                    clientEmail: DEMO_CLIENT_PROFILE.email,
                     artistId: '',
                     artistName: 'Mireia Vila (Eixample)',
                     artistAvatar: '',
@@ -1000,21 +980,21 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                     serviceName: 'Royal Obsidian Gel & Gold Leaf',
                     price: 150,
                     currency: 'USD',
-                    date: 'Today',
-                    timeSlot: 'In 2 hours',
+                    date: getRelativeDateISO(0),
+                    timeSlot: '16:30',
                     status: 'confirmed',
                     remindersEnabled: true,
                     pushReminderScheduled: true,
                     smsReminderScheduled: true,
                     createdAt: new Date().toISOString(),
                   });
-                  setPushTestSuccess('2-Hour Rush Alert dispatched to device notification tray!');
+                  setPushTestSuccess('[SIM] 2-Hour Reminder preview dispatched!');
                 }}
                 className={`p-2.5 rounded-xl border text-xs font-semibold text-center cursor-pointer transition-all ${
                   isDark ? 'bg-[#0d1326] border-cyan-500/20 hover:border-cyan-400/50' : 'bg-slate-100 border-slate-300'
                 }`}
               >
-                Simulate 2h Alert
+                Simulate 2h Alert [SIM]
               </button>
             </div>
           </div>
@@ -1063,21 +1043,11 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               </div>
               <div className={`p-3 rounded-xl border ${isDark ? 'bg-black/30 border-cyan-500/20' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="text-gray-400">AssetLinks</div>
-                <div className="text-amber-400 font-bold mt-0.5">TWA Verified</div>
+                <div className="text-amber-400 font-bold mt-0.5">Pending Key Rotation</div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">
-              <a
-                href="/nailix.apk"
-                download="nailix-release.apk"
-                onClick={() => triggerHaptic('success')}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-white font-display font-bold text-sm flex items-center gap-2.5 shadow-xl shadow-emerald-950/50 cursor-pointer active:scale-95 transition-all"
-              >
-                <Download className="w-4 h-4" />
-                <span>Скачать готовый APK (8.2 MB)</span>
-              </a>
-
               <button
                 onClick={() => {
                   triggerHaptic('medium');
@@ -1102,24 +1072,23 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               </button>
             </div>
 
-            {/* Android APK Installation Steps */}
+            {/* Honest Local APK Build Instructions (K-01) */}
             <div className={`p-4 rounded-xl border text-xs space-y-2 mt-4 ${
-              isDark ? 'bg-[#060a14] border-emerald-500/30 text-gray-300' : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+              isDark ? 'bg-[#060a14] border-cyan-500/30 text-gray-300' : 'bg-slate-50 border-slate-200 text-slate-800'
             }`}>
-              <div className="flex items-center gap-2 text-emerald-400 font-mono font-bold text-[11px] uppercase">
-                <Check className="w-3.5 h-3.5" />
-                <span>Инструкция по установке APK на Android:</span>
+              <div className="flex items-center gap-2 text-cyan-400 font-mono font-bold text-[11px] uppercase">
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Локальная сборка APK (вне репозитория / public):</span>
               </div>
               <ol className="list-decimal list-inside space-y-1 text-[11px] leading-relaxed">
-                <li>Нажмите зелёную кнопку <strong>«Скачать готовый APK»</strong> (сохранится файл <code>nailix.apk</code>).</li>
-                <li>Откройте файл из шторки загрузок Android или через приложение «Файлы / Загрузки».</li>
-                <li>При запросе безопасности выберите <strong>«Настройки» → «Разрешить установку из этого источника»</strong>.</li>
-                <li>Нажмите <strong>«Установить»</strong>. На рабочем столе появится иконка Nailix с полным нативным доступом к AR-камере, виброотклику и оффлайн-режиму!</li>
+                <li>Сгенерируйте свой release-ключ согласно <code>docs/KEY_ROTATION_RUNBOOK.md</code> и задайте переменные окружения <code>NAILIX_KEYSTORE_PATH</code>, <code>NAILIX_KEYSTORE_PASS</code>.</li>
+                <li>Запустите <code>npm run build &amp;&amp; bash scripts/build-apk.sh</code> — APK соберётся локально в <code>dist-apk/nailix.apk</code> (игнорируется Git).</li>
+                <li>Пропишите новый SHA-256 отпечаток сертификата в <code>public/.well-known/assetlinks.json</code> перед публикацией TWA.</li>
               </ol>
-              <div className="pt-1 flex flex-wrap items-center gap-3 text-[10px] font-mono text-gray-400 border-t border-emerald-500/20">
+              <div className="pt-1 flex flex-wrap items-center gap-3 text-[10px] font-mono text-gray-400 border-t border-cyan-500/20">
                 <span>Пакет: <strong className="text-white">app.nailix.art</strong></span>
-                <span>Подпись: <strong className="text-emerald-400">v1 + v2 + v3 Verified</strong></span>
-                <span>Оффлайн бандл: <strong className="text-cyan-400">Встроен в APK</strong></span>
+                <span>Keystore: <strong className="text-amber-400">Env-based (rotated locally)</strong></span>
+                <span>Вывод: <strong className="text-cyan-400">dist-apk/nailix.apk</strong></span>
               </div>
             </div>
           </div>

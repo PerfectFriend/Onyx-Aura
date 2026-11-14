@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import { RefreshCw, ShieldAlert } from 'lucide-react';
 import { ThemeMode } from '../types';
 
@@ -12,7 +12,6 @@ export interface ErrorBoundaryProps {
 
 interface ErrorBoundaryState {
   hasError: boolean;
-  errorMessage: string | null;
 }
 
 /**
@@ -24,13 +23,11 @@ interface ErrorBoundaryState {
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = {
     hasError: false,
-    errorMessage: null,
   };
 
-  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  public static getDerivedStateFromError(): ErrorBoundaryState {
     return {
       hasError: true,
-      errorMessage: error.message || null,
     };
   }
 
@@ -46,7 +43,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   private handleReset = (): void => {
-    this.setState({ hasError: false, errorMessage: null });
+    this.setState({ hasError: false });
     if (this.props.onReset) {
       this.props.onReset();
     }
@@ -94,8 +91,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               Салон временно на паузе
             </h1>
             <p className={`text-sm leading-relaxed mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              Возникла непредвиденная ошибка интерфейса. Ваши записи и локальные настройки сохранены.
-              Обновите страницу, чтобы продолжить работу с Nailix.
+              Возникла непредвиденная ошибка интерфейса. Настройки темы и языка сохранены, однако
+              несохранённые данные текущей сессии (записи и черновики чата) после полной перезагрузки
+              страницы будут сброшены (постоянное локальное хранилище появится в Этапе 2).
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 justify-center">

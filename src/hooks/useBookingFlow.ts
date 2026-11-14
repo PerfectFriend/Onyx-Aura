@@ -70,7 +70,17 @@ export function useBookingFlow({
 
   // Launch booking for a specific artwork look
   const handleStartBookingWithLook = (look: PortfolioItem) => {
-    const artist = artists.find(a => a.id === look.artistId) || artists[0];
+    const artist = artists.find(a => a.id === look.artistId) || null;
+    if (!artist && onNotifyToast) {
+      onNotifyToast({
+        id: `toast-artist-missing-${Date.now()}`,
+        type: 'push',
+        title: '[SIM] Master Profile Not Matched',
+        message: `Please pick a master artist manually for "${look.title}".`,
+        timestamp: new Date().toLocaleTimeString(),
+        phoneOrTarget: 'Client Device',
+      });
+    }
     setBookingArtistTarget(artist);
     setBookingLookTarget(look);
     setIsBookingModalOpen(true);
@@ -83,25 +93,25 @@ export function useBookingFlow({
     setIsBookingModalOpen(true);
   };
 
-  // Step 1 Completed -> Open Multi-currency Escrow Checkout
+  // Step 1 Completed -> Open Multi-currency Demo Checkout
   const handleProceedToCheckout = (details: PendingBookingDetails) => {
     setPendingBookingDetails(details);
     setIsBookingModalOpen(false);
     setIsCheckoutOpen(true);
   };
 
-  // Step 2 Completed -> On-chain escrow locked & appointment confirmed
+  // Step 2 Completed -> Demo session booking saved (in-memory only until Stage 2)
   const handlePaymentSuccess = (newAppointment: Appointment) => {
     setAppointments(prev => [newAppointment, ...prev]);
 
-    // Schedule automated SMS & Push reminders
+    // [SIM] Trigger local simulated 24h & 2h reminder previews
     reminderService.dispatch24HourReminder(newAppointment);
     reminderService.dispatch2HourReminder(newAppointment);
 
     // [SIM] Broadcast appointment block to peer nodes
     cryptoCloudSwarm.broadcastBlock('APPOINTMENT_ESCROW_LOCKED', {
       appointmentId: newAppointment.id,
-      escrowHash: newAppointment.escrowTxHash || '0xESCROW_LOCKED',
+      escrowHash: newAppointment.escrowTxHash || '0xSIM_DEMO_REF',
       artistId: newAppointment.artistId,
       currency: newAppointment.currency,
       price: newAppointment.price,
@@ -112,8 +122,8 @@ export function useBookingFlow({
       onNotifyToast({
         id: `toast-${Date.now()}`,
         type: 'push',
-        title: 'Smart Escrow Locked On-Chain',
-        message: `Your appointment with ${newAppointment.artistName} for ${newAppointment.date} at ${newAppointment.timeSlot} is guaranteed.`,
+        title: 'Demo Booking Saved to Session [SIM]',
+        message: `Session deposit recorded for ${newAppointment.artistName} on ${newAppointment.date} at ${newAppointment.timeSlot} (in-memory preview only).`,
         timestamp: new Date().toLocaleTimeString(),
         phoneOrTarget: 'Client Device',
       });

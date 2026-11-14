@@ -46,8 +46,13 @@ export class BlockchainLedger {
     const blockHash = await computeSHA256(rawData);
     this.lastBlockHash = blockHash;
 
+    const uid =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 8)
+        : `${Date.now()}`;
+
     const newReview: Review = {
-      id: `rev-${Date.now()}`,
+      id: `rev-${uid}`,
       artistId: params.artistId,
       artistName: params.artistName,
       clientName: params.clientName,
@@ -60,7 +65,7 @@ export class BlockchainLedger {
       blockHash,
       parentHash,
       verifiedBookingTx: params.bookingTxId,
-      verifiedInPerson: true,
+      verifiedInPerson: false,
     };
 
     return newReview;

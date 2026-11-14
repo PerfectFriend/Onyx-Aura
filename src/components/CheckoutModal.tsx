@@ -1,26 +1,28 @@
 import React, { useState } from 'react';
-import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Sparkles, ArrowRight, Wallet, Receipt } from 'lucide-react';
+import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet } from 'lucide-react';
 import { Artist, NailService, PaymentCurrency, PortfolioItem, Appointment } from '../types';
-import { computeSHA256 } from '../services/cryptocloud';
+import { computeSHA256Detailed } from '../simulation/cryptocloud';
 import { CornerFlourish } from './OrnamentalFlourish';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
+
+interface BookingDetailsPayload {
+  artist: Artist;
+  service: NailService;
+  date: string;
+  timeSlot: string;
+  clientName: string;
+  clientPhone: string;
+  clientEmail: string;
+  customNotes: string;
+  enablePush: boolean;
+  enableSMS: boolean;
+  referenceLook?: PortfolioItem;
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
-  bookingDetails: {
-    artist: Artist;
-    service: NailService;
-    date: string;
-    timeSlot: string;
-    clientName: string;
-    clientPhone: string;
-    clientEmail: string;
-    customNotes: string;
-    enablePush: boolean;
-    enableSMS: boolean;
-    referenceLook?: PortfolioItem;
-  } | null;
+  bookingDetails: BookingDetailsPayload | null;
   onPaymentSuccess: (appointment: Appointment) => void;
 }
 
@@ -31,7 +33,7 @@ const RATES: Record<PaymentCurrency, { rate: number; symbol: string; isCrypto: b
   USDC: { rate: 1.0, symbol: 'USDC', isCrypto: true },
   ETH: { rate: 0.00034, symbol: 'ETH', isCrypto: true },
   SOL: { rate: 0.0071, symbol: 'SOL', isCrypto: true },
-  NAIL: { rate: 4.5, symbol: '$NAIL', isCrypto: true }, // Staking utility token
+  NAIL: { rate: 4.5, symbol: '$NAIL [SIM]', isCrypto: true },
 };
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -42,45 +44,71 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 }) => {
   if (!isOpen || !bookingDetails) return null;
 
+  return (
+    <CheckoutModalContent
+      onClose={onClose}
+      bookingDetails={bookingDetails}
+      onPaymentSuccess={onPaymentSuccess}
+    />
+  );
+};
+
+interface CheckoutModalContentProps {
+  onClose: () => void;
+  bookingDetails: BookingDetailsPayload;
+  onPaymentSuccess: (appointment: Appointment) => void;
+}
+
+const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
+  onClose,
+  bookingDetails,
+  onPaymentSuccess,
+}) => {
   const [selectedCurrency, setSelectedCurrency] = useState<PaymentCurrency>('USDC');
   const [tipPercentage, setTipPercentage] = useState<number>(18);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedTx, setCompletedTx] = useState<{
     txHash: string;
+    isRealSha256: boolean;
     totalAmount: string;
     currency: PaymentCurrency;
   } | null>(null);
   const [confirmedAppointment, setConfirmedAppointment] = useState<Appointment | null>(null);
 
-  // Card state for fiat
+  // Demo card form fields (UI simulation only; Stage 4 will use hosted PSP fields)
   const [cardNumber, setCardNumber] = useState<string>('•••• •••• •••• 4242');
   const [cardExp, setCardExp] = useState<string>('12/28');
   const [cardCvc, setCardCvc] = useState<string>('888');
 
-  // Wallet address for crypto
-  const [connectedWallet, setConnectedWallet] = useState<string>('0x71cA9...8E29 (Web3 Active)');
+  const demoWalletLabel = '0xSIM_WALLET_71cA9...8E29 (Demo Preview)';
 
   const basePriceUSD = bookingDetails.service.priceUSD;
   const tipAmountUSD = Math.round((basePriceUSD * tipPercentage) / 100);
   const totalUSD = basePriceUSD + tipAmountUSD;
 
-  // Convert to selected currency
   const currencyInfo = RATES[selectedCurrency];
   const convertedTotal = (totalUSD * currencyInfo.rate).toFixed(currencyInfo.isCrypto ? 4 : 2);
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
+    setErrorMessage(null);
 
     try {
       const txPayload = `${Date.now()}:${bookingDetails.artist.id}:${totalUSD}:${selectedCurrency}`;
-      const txHash = await computeSHA256(txPayload);
+      const { hash: txHash, isRealSha256 } = await computeSHA256Detailed(txPayload);
 
-      // Simulate network latency
-      await new Promise(resolve => setTimeout(resolve, 1400));
+      // [SIM] Simulated checkout latency
+      await new Promise(resolve => setTimeout(resolve, 900));
+
+      const uniqueSuffix =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID().slice(0, 8)
+          : `${Date.now()}`;
 
       const newAppointment: Appointment = {
-        id: `apt-${Date.now()}`,
+        id: `apt-${uniqueSuffix}`,
         clientName: bookingDetails.clientName,
         clientPhone: bookingDetails.clientPhone,
         clientEmail: bookingDetails.clientEmail,
@@ -107,12 +135,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
       setCompletedTx({
         txHash,
+        isRealSha256,
         totalAmount: convertedTotal,
         currency: selectedCurrency,
       });
       setConfirmedAppointment(newAppointment);
-
       onPaymentSuccess(newAppointment);
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : 'Unable to complete demo checkout snapshot.'
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -120,7 +152,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md">
-      <div 
+      <div
         className="relative w-full max-w-xl gaudi-mosaic-card border border-amber-400/40 shadow-2xl flex flex-col max-h-[92vh]"
         onClick={e => e.stopPropagation()}
       >
@@ -131,12 +163,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-cyan-500/20">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-amber-300">STEP 2 OF 2 · MULTI-CURRENCY CHECKOUT</span>
+              <span className="text-xs font-mono text-amber-300">STEP 2 OF 2 · MULTI-CURRENCY PREVIEW</span>
               <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-red-950/90 text-red-300 border border-red-500/60 tracking-wider">
-                [SIM] ESCROW
+                [SIM] DEMO CHECKOUT
               </span>
             </div>
-            <h2 className="font-display text-lg font-bold text-white">Smart Contract Escrow Payment</h2>
+            <h2 className="font-display text-lg font-bold text-white">Deposit Checkout [SIM]</h2>
           </div>
           <button
             onClick={onClose}
@@ -150,7 +182,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         {/* Content */}
         {!completedTx ? (
           <form onSubmit={handlePay} className="p-6 overflow-y-auto space-y-6">
-            
+            {errorMessage && (
+              <div className="p-3 rounded-lg bg-red-950/70 border border-red-500/50 text-xs text-red-200">
+                {errorMessage}
+              </div>
+            )}
+
             {/* Order Summary Item */}
             <div className="p-4 bg-[#15171e] rounded-xl border border-[#272a33] flex items-center justify-between">
               <div>
@@ -170,10 +207,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">
-                  Payment Currency (Fiat & Crypto)
+                  Estimated Display Currency [SIM Rates]
                 </label>
                 {selectedCurrency === 'NAIL' && (
-                  <span className="text-[11px] text-[#34d399] font-mono">5% Community Staking Rebate Applied</span>
+                  <span className="text-[11px] text-[#34d399] font-mono">[SIM] Demo Token Preview</span>
                 )}
               </div>
               <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
@@ -222,31 +259,30 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
             {/* Payment Method Interface */}
             {currencyInfo.isCrypto ? (
-              <div className="p-4 bg-[#12141a] rounded-xl border border-[#272a33] space-y-3">
+              <div className="p-4 bg-[#12141a] rounded-xl border border-red-500/30 space-y-3">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#9ca3af] flex items-center gap-1.5">
                     <Wallet className="w-3.5 h-3.5 text-[#38bdf8]" />
-                    <span>Decentralized Wallet</span>
+                    <span>Wallet Preview [SIM]</span>
                   </span>
-                  <span className="font-mono text-[#34d399] text-[11px]">Connected</span>
+                  <span className="font-mono text-red-300 text-[11px]">[SIM] Local Mock</span>
                 </div>
                 <div className="p-2.5 bg-[#0b0c10] rounded border border-[#272a33] font-mono text-xs text-white truncate">
-                  {connectedWallet}
+                  {demoWalletLabel}
                 </div>
                 <p className="text-[11px] text-[#9ca3af]">
-                  Network gas fee: ~0.0001 {selectedCurrency} · Instant cryptographic settlement
+                  [SIM] Static demo rate · No real blockchain transaction or wallet signing occurs.
                 </p>
               </div>
             ) : (
-              <div className="p-4 bg-[#12141a] rounded-xl border border-[#272a33] space-y-3">
+              <div className="p-4 bg-[#12141a] rounded-xl border border-red-500/30 space-y-3">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#9ca3af] flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-[#d4af37]" />
-                    <span>Card Checkout (Multi-Currency)</span>
+                    <span>Demo Card Form [SIM]</span>
                   </span>
-                  <span className="text-[11px] text-[#9ca3af] flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-[#34d399]" />
-                    <span>256-Bit Encrypted</span>
+                  <span className="text-[11px] text-red-300 font-mono">
+                    [SIM] Not Charged
                   </span>
                 </div>
                 <input
@@ -254,7 +290,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   value={cardNumber}
                   onChange={e => setCardNumber(e.target.value)}
                   className="w-full px-3 py-2 text-xs bg-[#0b0c10] border border-[#272a33] rounded text-white font-mono"
-                  placeholder="Card Number"
+                  placeholder="Demo Card Number"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -275,13 +311,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             )}
 
-            {/* Smart Contract Escrow Guarantee Box */}
-            <div className="p-3.5 rounded-lg bg-[#15171e] border border-[#272a33] flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-[#d4af37] shrink-0 mt-0.5" />
+            {/* Honest Demo Deposit Box */}
+            <div className="p-3.5 rounded-lg bg-red-950/25 border border-red-500/40 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
-                <p className="font-semibold text-white">Smart Contract Escrow Guarantee</p>
+                <p className="font-semibold text-white">Demo Deposit Guarantee [SIM]</p>
                 <p className="text-[#9ca3af] leading-relaxed">
-                  Your funds are locked in an immutable multi-sig escrow contract. The artist receives payment only after you verify the physical appointment completion in the app.
+                  [SIM] Local session simulation: no real money, card charge, or smart contract execution takes place. Booking state lives in memory for this browser session.
                 </p>
               </div>
             </div>
@@ -297,7 +333,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <span className="font-mono tabular-nums">${tipAmountUSD}</span>
               </div>
               <div className="flex justify-between text-white font-semibold text-sm pt-2 border-t border-[#1f222b]">
-                <span>Total Escrow Deposit</span>
+                <span>Simulated Total [SIM]</span>
                 <span className="font-mono text-base text-[#d4af37] tabular-nums">
                   {convertedTotal} {selectedCurrency} (${totalUSD} USD)
                 </span>
@@ -314,17 +350,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 {isProcessing ? (
                   <>
                     <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                    <span>Broadcasting Escrow to Swarm...</span>
+                    <span>Saving Demo Booking [SIM]...</span>
                   </>
                 ) : (
                   <>
                     <Lock className="w-4 h-4" />
-                    <span>Lock Escrow ({convertedTotal} {selectedCurrency})</span>
+                    <span>Confirm Demo Deposit ({convertedTotal} {selectedCurrency}) [SIM]</span>
                   </>
                 )}
               </button>
             </div>
-
           </form>
         ) : (
           /* Confirmation State */
@@ -334,10 +369,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
 
             <div className="space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white">Escrow Secured & Locked</h3>
+              <h3 className="font-display text-2xl font-bold text-white">Demo Booking Recorded [SIM]</h3>
               <p className="text-xs text-[#9ca3af] max-w-md mx-auto leading-relaxed">
-                Your appointment with <span className="text-white font-medium">{bookingDetails.artist.name}</span> for{' '}
-                <span className="text-white font-medium">{bookingDetails.service.name}</span> is confirmed for{' '}
+                Your session preview with <span className="text-white font-medium">{bookingDetails.artist.name}</span> for{' '}
+                <span className="text-white font-medium">{bookingDetails.service.name}</span> is set for{' '}
                 <span className="text-[#d4af37] font-medium">{bookingDetails.date}</span> at{' '}
                 <span className="text-[#d4af37] font-medium">{bookingDetails.timeSlot}</span>.
               </p>
@@ -348,28 +383,29 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <div className="flex justify-between text-[#9ca3af] text-[11px]">
                 <span className="flex items-center gap-1.5">
                   <span className="px-1 py-0.2 bg-red-900/60 text-red-300 rounded text-[9px] font-bold">[SIM]</span>
-                  <span>ESCROW PROTOCOL TX</span>
+                  <span>LOCAL BOOKING REF</span>
                 </span>
-                <span className="text-red-300 font-bold">[SIM] LOCAL VERIFIED HASH</span>
+                <span className="text-red-300 font-bold">
+                  {completedTx.isRealSha256 ? '[SIM] LOCAL SHA-256' : '[SIM] PSEUDOHASH (non-HTTPS)'}
+                </span>
               </div>
               <p className="text-white truncate">{completedTx.txHash}</p>
               <div className="flex justify-between text-[11px] text-[#9ca3af] pt-1">
-                <span>Amount: {completedTx.totalAmount} {completedTx.currency}</span>
-                <span>Swarm Broadcast (BroadcastChannel)</span>
+                <span>Demo Amount: {completedTx.totalAmount} {completedTx.currency}</span>
+                <span>BroadcastChannel [SIM]</span>
               </div>
             </div>
 
             {/* Reminder Badge */}
             <div className="text-xs text-[#9ca3af]">
               {bookingDetails.enableSMS && (
-                <p>✓ 24h & 2h automated SMS reminders queued for {bookingDetails.clientPhone}</p>
+                <p>✓ [SIM] In-app SMS preview queued for {bookingDetails.clientPhone} (no carrier text sent)</p>
               )}
               {bookingDetails.enablePush && (
-                <p>✓ Instant push notifications active on this browser</p>
+                <p>✓ [SIM] In-app notification preview triggered for this browser session</p>
               )}
             </div>
 
-            {/* Standardized Calendar Sync (Google Calendar & Apple Calendar .ICS Download) */}
             {confirmedAppointment && (
               <div className="pt-2 text-left">
                 <CalendarSyncButtons
@@ -385,12 +421,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 onClick={onClose}
                 className="px-6 py-2.5 text-xs font-semibold text-[#0b0c10] bg-[#d4af37] hover:bg-[#e6c158] rounded-md transition-all cursor-pointer shadow-lg active:scale-95"
               >
-                Return to Network
+                Return to Salon
               </button>
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

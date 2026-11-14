@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, Check, X, Sliders, Image as ImageIcon } from 'lucide-react';
+import { Sparkles, Check, X, Image as ImageIcon } from 'lucide-react';
 import { WallpaperTheme } from '../types';
 import { triggerHaptic } from '../utils/haptics';
 

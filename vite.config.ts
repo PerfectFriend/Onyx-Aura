@@ -7,18 +7,6 @@ import {VitePWA} from 'vite-plugin-pwa';
 export default defineConfig(() => {
   return {
     plugins: [
-      {
-        name: 'apk-headers',
-        configureServer(server) {
-          server.middlewares.use((req, res, next) => {
-            if (req.url && req.url.startsWith('/nailix.apk')) {
-              res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-              res.setHeader('Content-Disposition', 'attachment; filename="nailix-release.apk"');
-            }
-            next();
-          });
-        },
-      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -58,7 +46,7 @@ export default defineConfig(() => {
           id: '/',
           name: 'Nailix - Haute Manicure Art Network',
           short_name: 'Nailix',
-          description: 'Decentralized cross-platform manicure social network with luxury aesthetic ornaments, friend consensus moderation, and multi-currency checkout.',
+          description: 'Luxury Cyber-Gaudí manicure art showcase, studio radar, RFC 5545 booking export, and [SIM] interactive demo suite.',
           theme_color: '#07080d',
           background_color: '#07080d',
           display: 'standalone',
@@ -89,9 +77,9 @@ export default defineConfig(() => {
               icons: [{ src: '/pwa-192x192.png', sizes: '192x192' }],
             },
             {
-              name: 'Jury Consensus DAO',
-              short_name: 'Jury',
-              description: 'Vote on flagged designs with your circle',
+              name: 'Friend Jury [SIM]',
+              short_name: 'Jury [SIM]',
+              description: 'Simulated peer moderation quorum preview',
               url: '/?tab=moderation',
               icons: [{ src: '/pwa-192x192.png', sizes: '192x192' }],
             },
@@ -118,7 +106,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: false,
         },
       }),
     ],

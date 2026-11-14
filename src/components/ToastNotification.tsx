@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, MessageSquare, Radio, ShieldCheck, X } from 'lucide-react';
+import { Bell, MessageSquare, X } from 'lucide-react';
 import { ReminderNotificationEvent } from '../services/reminderService';
 
 interface ToastNotificationProps {

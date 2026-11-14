@@ -6,13 +6,6 @@ import {
   Check, 
   TrendingUp, 
   Megaphone, 
-  ChevronRight, 
-  ShieldCheck, 
-  Wrench, 
-  Building2, 
-  Percent, 
-  Zap,
-  Layers
 } from 'lucide-react';
 import { SponsoredAd, ThemeMode } from '../types';
 import { TranslationStrings } from '../i18n/translations';
@@ -29,8 +22,6 @@ export const SponsoredAdsBanner: React.FC<SponsoredAdsBannerProps> = ({
   ads,
   userRole,
   onOpenAdManager,
-  theme,
-  t,
 }) => {
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
 

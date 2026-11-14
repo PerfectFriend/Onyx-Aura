@@ -159,9 +159,26 @@
 - **Сокращение `useState` в `App.tsx`:** **21 → 3 (−85.7%)**
 - **Количество `useEffect` в `App.tsx`:** **0** (100% side-effects изолированы в хуках!)
 
-### Критерии закрытия Этапа 1 — выполнены:
+### Критерии закрытия Этапа 1 — выполнены (с доработкой в Спринте 1.5):
 - ✅ `App.tsx` читается как чистый оркестратор-дирижёр: подключает 7 доменных хуков и рендерит секции/модалки.
 - ✅ Работает двухуровневая защита `ErrorBoundary` (root + per-section).
-- ✅ Все `[SIM]`-модули остаются честно изолированными в `src/simulation/` и промаркированы.
-- ✅ `npm run lint`, `npm run typecheck` и `npm test` (14/14 тестов) полностью зелёные.
-- ✅ Код готов к старту **Этапа 2 (Local-First / Data Persistence)**.
+- ✅ Все `[SIM]`-модули остаются честно изолированными в `src/simulation/` и `src/services/reminderService.ts` и промаркированы.
+- ✅ Сформирован честный отчёт по Спринту 1.5 и тест-сторож честности (`honestyWatchdog.test.ts`).
+
+---
+
+## 🔍 8. Честные архитектурные заметки после аудита Спринта 1.5 (`K-15`)
+
+По итогам перекрёстного ревью Коляна (`docs/KOLYAN_REVIEW_STAGE1.md`) и решения Гриши `[DECISION]` от `2026-11-14 14:00 CET` в `docs/DEVELOPMENT_JOURNAL.md`:
+
+1. **Официальный пересмотр целевых метрик `App.tsx` и слоёв:**
+   - Исходный ориентир `App.tsx < 150–200 строк` признан смягчённым: текущие ~560 строк + 7 доменных хуков + 2-уровневый `ErrorBoundary` — достаточная база Stage 1 без искусственного переусложнения.
+   - Разделение на `domain / application / infrastructure / presentation` официально перенесено на стык Этапа 1 → Этапа 2 при внедрении IndexedDB Repository.
+2. **Честная фиксация прямого связывания (DIP gap):**
+   - В отличие от `usePortfolioGallery` и `useSponsoredAds` (которые получают `onBroadcastToSwarm` через коллбеки), хуки `useBookingFlow` и `useChatConcierge` **напрямую импортируют `cryptoCloudSwarm`** (`src/simulation/cryptocloud.ts`).
+   - Это осознанный временный компромисс Этапа 1; на Этапе 2 вызовы симуляции будут переведены за абстракцию `SyncTransport` / инъекцию зависимостей аналогично Спринту 1.3.
+3. **Lifecycle-очистка `CryptoCloudEngine`:**
+   - В `src/simulation/cryptocloud.ts` добавлен метод `destroy()` для явного закрытия `BroadcastChannel` и очистки слушателей в тестах и при размонтировании провайдера.
+4. **Границы чистоты слоёв (UI ↔ `simulation/`):**
+   - На Этапе 1 `ReputationLedger`, `CheckoutModal` и `FriendModerationSection` всё ещё обращаются к `src/simulation/` напрямую. В Спринте 1.5 сломаны дублирующие шимы `src/services/cryptoLedger.ts` и `src/services/cryptocloud.ts` — импорты приведены к единому источнику правды `src/simulation/*`. На Этапе 2 фасады переедут в сервисный слой хранилища.
+
