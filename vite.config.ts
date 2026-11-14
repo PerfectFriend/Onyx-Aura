@@ -7,6 +7,23 @@ import {VitePWA} from 'vite-plugin-pwa';
 export default defineConfig(() => {
   return {
     plugins: [
+      {
+        name: 'dev-sw-cleanup',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url && /^\/dev-sw\.js(\?|$)/.test(req.url)) {
+              res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+              res.setHeader('Cache-Control', 'no-store');
+              res.end(
+                "self.addEventListener('install', () => self.skipWaiting());\n" +
+                  "self.addEventListener('activate', (e) => e.waitUntil(self.registration.unregister()));\n"
+              );
+              return;
+            }
+            next();
+          });
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
