@@ -2,7 +2,8 @@
 
 **Этап 0:** 🟢 ЗАКРЫТ  
 **Спринт 1.1:** 🟢 ПРИНЯТ  
-**Спринт 1.2:** 🟢 ПРИНЯТ (useChatConcierge + useCryptoSwarm, App → 685 строк)
+**Спринт 1.2:** 🟢 ПРИНЯТ (useChatConcierge + useCryptoSwarm, App → 685 строк)  
+**Спринт 1.3:** 🟡 ВЫПОЛНЕН — [REPORT] отправлен на аудит (usePortfolioGallery + useSponsoredAds, App → 603 строки)
 
 **Активный этап:** 1. Архитектурная гигиена  
 **Текущий спринт:** 1.3 — Portfolio gallery + Sponsored Ads hooks

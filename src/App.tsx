@@ -25,19 +25,14 @@ import { WallpaperModal, OrnamentDivider } from './components/OrnamentalFlourish
 
 import { 
   INITIAL_ARTISTS, 
-  INITIAL_PORTFOLIO, 
   INITIAL_REVIEWS, 
   INITIAL_ANCHOR_POINTS
 } from './data/initialData';
 
-import { INITIAL_SPONSORED_ADS } from './data/advertisements';
-
 import { 
   Artist, 
-  PortfolioItem, 
   Review, 
   ClientAnchorPoint,
-  SponsoredAd,
 } from './types';
 
 import { blockchainLedger } from './simulation/cryptoLedger';
@@ -46,6 +41,8 @@ import { useAppChrome } from './hooks/useAppChrome';
 import { useBookingFlow } from './hooks/useBookingFlow';
 import { useChatConcierge } from './hooks/useChatConcierge';
 import { useCryptoSwarm } from './hooks/useCryptoSwarm';
+import { usePortfolioGallery } from './hooks/usePortfolioGallery';
+import { useSponsoredAds } from './hooks/useSponsoredAds';
 
 export default function App() {
   // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Extracted in Sprint 1.1
@@ -63,7 +60,6 @@ export default function App() {
 
   // Core Data
   const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
-  const [portfolio, setPortfolio] = useState<PortfolioItem[]>(INITIAL_PORTFOLIO);
   const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
 
   // Notifications & Reminders
@@ -88,6 +84,35 @@ export default function App() {
   // CryptoCloud Swarm & P2P State [SIM] - Extracted in Sprint 1.2
   const swarm = useCryptoSwarm();
 
+  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Extracted in Sprint 1.3
+  const portfolio = usePortfolioGallery({
+    onSyncPostToSwarm: (newLook, igPostId) => {
+      swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
+        lookId: newLook.id,
+        igPostId,
+        artistId: newLook.artistId,
+      });
+    },
+    onNotify: (title, message) => {
+      setToasts(prev => [
+        {
+          id: `toast-ig-${Date.now()}`,
+          type: 'push',
+          title,
+          message,
+          timestamp: new Date().toLocaleTimeString(),
+          phoneOrTarget: 'Client Device',
+        },
+        ...prev,
+      ]);
+    },
+  });
+
+  // Sponsored Ads Engine & Modal - Extracted in Sprint 1.3
+  const adsEngine = useSponsoredAds({
+    onBroadcastToSwarm: swarm.broadcastBlock,
+  });
+
   // Handle Android PWA shortcuts & deep links (e.g., /?tab=android or /?action=book)
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -108,17 +133,6 @@ export default function App() {
 
   // Client Frequent Anchor Points (Home, Work, Studio/Gym)
   const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>(INITIAL_ANCHOR_POINTS);
-
-  // Sponsored Ads Engine
-  const [ads, setAds] = useState<SponsoredAd[]>(INITIAL_SPONSORED_ADS);
-  const [isAdManagerOpen, setIsAdManagerOpen] = useState<boolean>(false);
-  
-  // Likes & Saves state
-  const [likedIds, setLikedIds] = useState<Set<string>>(new Set(['port-gaudi', 'port-1']));
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set(['port-gaudi', 'port-2']));
-
-  // Lightbox Modal
-  const [selectedLightboxItem, setSelectedLightboxItem] = useState<PortfolioItem | null>(null);
 
   // Android Permissions & Build Modal
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
@@ -145,39 +159,6 @@ export default function App() {
       window.removeEventListener('click', requestNotice);
     };
   }, []);
-
-  // Handlers
-  const handleToggleLike = (id: string) => {
-    setLikedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-    setPortfolio(prev => prev.map(item => {
-      if (item.id === id) {
-        const delta = likedIds.has(id) ? -1 : 1;
-        return { ...item, likes: item.likes + delta };
-      }
-      return item;
-    }));
-  };
-
-  const handleToggleSave = (id: string) => {
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  // Launch booking from look with closing lightbox
-  const handleStartBookingWithLookFromLightbox = (look: PortfolioItem) => {
-    setSelectedLightboxItem(null);
-    booking.handleStartBookingWithLook(look);
-  };
 
   // Add review to blockchain ledger [SIM]
   const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
@@ -206,60 +187,6 @@ export default function App() {
     });
   };
 
-  // Instagram Sync Handler
-  const handleImportInstagramPost = (post: {
-    title: string;
-    artistId: string;
-    artistName: string;
-    artistHandle: string;
-    artistAvatar: string;
-    image: string;
-    category: any;
-    priceUSD: number;
-    durationMinutes: number;
-  }) => {
-    const newLook: PortfolioItem = {
-      id: `port-ig-${Date.now()}`,
-      title: post.title,
-      artistId: post.artistId,
-      artistName: post.artistName,
-      artistHandle: post.artistHandle,
-      artistAvatar: post.artistAvatar,
-      category: post.category,
-      image: post.image,
-      likes: Math.floor(Math.random() * 80) + 120,
-      saves: Math.floor(Math.random() * 40) + 45,
-      date: 'Just now',
-      description: `Directly synced from @${post.artistHandle} Instagram lookbook into the open public stream.`,
-      materials: ['Gel Polish', 'Chrome Pigment'],
-      durationMinutes: post.durationMinutes,
-      priceUSD: post.priceUSD,
-      igPostId: `ig_${Date.now()}`,
-      onChainHash: `0xIG_${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
-    };
-
-    setPortfolio(prev => [newLook, ...prev]);
-
-    // [SIM] Broadcast synced look to swarm
-    swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
-      lookId: newLook.id,
-      igPostId: newLook.igPostId,
-      artistId: newLook.artistId,
-    });
-
-    setToasts(prev => [
-      {
-        id: `toast-ig-${Date.now()}`,
-        type: 'push',
-        title: 'Instagram Art Synced',
-        message: `Imported "${newLook.title}" directly to Nailix P2P Public Gallery.`,
-        timestamp: new Date().toLocaleTimeString(),
-        phoneOrTarget: 'Client Device',
-      },
-      ...prev,
-    ]);
-  };
-
   // Client Anchor Point Update Handler
   const handleUpdateAnchorPoint = (updatedPoint: ClientAnchorPoint) => {
     setAnchorPoints(prev => prev.map(p => p.id === updatedPoint.id ? updatedPoint : p));
@@ -278,17 +205,6 @@ export default function App() {
       }
       return art;
     }));
-  };
-
-  // Create new Sponsored Ad Campaign
-  const handleCreateAdCampaign = (newAd: SponsoredAd) => {
-    setAds(prev => [newAd, ...prev]);
-    swarm.broadcastBlock('NEW_SPONSORED_CAMPAIGN', {
-      adId: newAd.id,
-      title: newAd.title,
-      brandName: newAd.brandName,
-      target: newAd.targetAudience,
-    });
   };
 
   const wallpaperClass = 
@@ -326,7 +242,7 @@ export default function App() {
         onSelectLanguage={setCurrentLanguage}
         theme={theme}
         onToggleTheme={handleToggleTheme}
-        onOpenAdManager={() => setIsAdManagerOpen(true)}
+        onOpenAdManager={adsEngine.openAdManager}
         onOpenWallpaper={() => setIsWallpaperModalOpen(true)}
         t={t}
       />
@@ -355,9 +271,9 @@ export default function App() {
 
             {/* Targeted In-App Sponsored Ads (Salon Deals for Clients, Tools for Masters) */}
             <SponsoredAdsBanner
-              ads={ads}
+              ads={adsEngine.ads}
               userRole={userRole}
-              onOpenAdManager={() => setIsAdManagerOpen(true)}
+              onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
             />
@@ -366,13 +282,13 @@ export default function App() {
 
             <div id="portfolio-section">
               <PortfolioGallery
-                items={portfolio}
-                onSelectItem={(item) => setSelectedLightboxItem(item)}
+                items={portfolio.items}
+                onSelectItem={portfolio.openLightbox}
                 onBookItem={booking.handleStartBookingWithLook}
-                likedIds={likedIds}
-                onToggleLike={handleToggleLike}
-                savedIds={savedIds}
-                onToggleSave={handleToggleSave}
+                likedIds={portfolio.likedIds}
+                onToggleLike={portfolio.handleToggleLike}
+                savedIds={portfolio.savedIds}
+                onToggleSave={portfolio.handleToggleSave}
                 onFlagToJury={() => setActiveTab('moderation')}
                 theme={theme}
                 t={t}
@@ -397,9 +313,9 @@ export default function App() {
             />
 
             <SponsoredAdsBanner
-              ads={ads}
+              ads={adsEngine.ads}
               userRole={userRole}
-              onOpenAdManager={() => setIsAdManagerOpen(true)}
+              onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
             />
@@ -420,9 +336,9 @@ export default function App() {
             />
 
             <SponsoredAdsBanner
-              ads={ads}
+              ads={adsEngine.ads}
               userRole={userRole}
-              onOpenAdManager={() => setIsAdManagerOpen(true)}
+              onOpenAdManager={adsEngine.openAdManager}
               theme={theme}
               t={t}
             />
@@ -440,7 +356,7 @@ export default function App() {
         {activeTab === 'instagram' && (
           <InstagramSyncSection
             artists={artists}
-            onImportPost={handleImportInstagramPost}
+            onImportPost={portfolio.handleImportInstagramPost}
           />
         )}
 
@@ -452,7 +368,7 @@ export default function App() {
               swarm.handleExportCryptoCloudBackup({
                 appointments: booking.appointments,
                 reviews,
-                portfolio,
+                portfolio: portfolio.items,
                 chats: chat.chatMessages,
               })
             }
@@ -487,23 +403,25 @@ export default function App() {
 
       {/* Ad Campaign Manager Modal */}
       <AdCampaignManagerModal
-        isOpen={isAdManagerOpen}
-        onClose={() => setIsAdManagerOpen(false)}
-        ads={ads}
-        onCreateCampaign={handleCreateAdCampaign}
+        isOpen={adsEngine.isAdManagerOpen}
+        onClose={adsEngine.closeAdManager}
+        ads={adsEngine.ads}
+        onCreateCampaign={adsEngine.handleCreateAdCampaign}
         theme={theme}
         t={t}
       />
 
       {/* Modals & Overlays */}
       <LightboxModal
-        item={selectedLightboxItem}
-        onClose={() => setSelectedLightboxItem(null)}
-        onBookThisLook={handleStartBookingWithLookFromLightbox}
-        onLikeToggle={handleToggleLike}
-        isLiked={selectedLightboxItem ? likedIds.has(selectedLightboxItem.id) : false}
-        onSaveToggle={handleToggleSave}
-        isSaved={selectedLightboxItem ? savedIds.has(selectedLightboxItem.id) : false}
+        item={portfolio.selectedLightboxItem}
+        onClose={portfolio.closeLightbox}
+        onBookThisLook={(look) =>
+          portfolio.handleStartBookingWithLookFromLightbox(look, booking.handleStartBookingWithLook)
+        }
+        onLikeToggle={portfolio.handleToggleLike}
+        isLiked={portfolio.selectedLightboxItem ? portfolio.likedIds.has(portfolio.selectedLightboxItem.id) : false}
+        onSaveToggle={portfolio.handleToggleSave}
+        isSaved={portfolio.selectedLightboxItem ? portfolio.savedIds.has(portfolio.selectedLightboxItem.id) : false}
       />
 
       <BookingModal
