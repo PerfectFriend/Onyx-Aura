@@ -1,11 +1,11 @@
 # Текущее задание
 
-**Спринт 2.1 / Этап 2 Local-First:** 🟢 ПРИНЯТ / ЗАКРЫТ (ядро)  
-**Спринт 2.2 (Local-First UX) и Этап 3 · Спринт 3.1 (WebAuthn / Passkeys + Secret Hygiene + CSP):** 🟡 ВЫПОЛНЕНЫ, ОТПРАВЛЕНЫ НА АУДИТ (Гриша + Колян на финише эпохи 2–3)
+**2.2 Local-First UX:** 🟢 ПРИНЯТ  
+**3.1 WebAuthn / Passkeys / hygiene / CSP:** 🟢 ПРИНЯТ (client_local_only; CSP meta = starter)
 
-Следующий этап (после аудита): Этап 4 — Верификация challenge на сервере и честный платёжный выбор.
+**Рекомендация:** позвать **Коляна** на ревью среза Stage 2 → 3.1 (до Этапа 4 / платежей).
 
-**K-01 ключи:** отложено владельцем (runbook в `docs/KEY_ROTATION_RUNBOOK.md`).
+**Женя:** пауза или узкий 3.2 (polish формулировок identity + заметка про CSP).  
+**Не стартовать Этап 4** до follow-up Коляна (или явного решения куратора).
 
-**Журнал:** [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)  
-**Библия:** [`MANIFEST_CANONICAL_AI_DEVELOPER.md`](../MANIFEST_CANONICAL_AI_DEVELOPER.md)
+**Журнал:** [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)
