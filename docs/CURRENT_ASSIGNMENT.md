@@ -1,9 +1,12 @@
 # Текущее задание
 
-**2.2 Local-First UX:** 🟢 ПРИНЯТ (дозакалён в 3.2: Load-then-Mount + `ResilientStorageAdapter` + allowlist + миграции)  
-**3.1 WebAuthn / Passkeys / hygiene / CSP:** 🟡 → 🛡️ **Закалён в Спринте 3.2 («Закалка перед Этапом 4»)**  
-**3.2 Статус:** Выполнен в полном объёме по списку Коляна (`L-01 … L-19`, пункты 1–9 приоритетного плана + закрыты `L-14` и ключевые части `L-13`, `L-16`, `L-17`, `L-18`, `L-19`).
+**3.2 Закалка (L-01…L-17):** 🟢 ПРИНЯТА Гришей  
+**Этап 4:** 🟢 открыт  
 
-**Ожидает:** Финального `[AUDIT]` от **Гриши** и **Коляна** перед стартом Этапа 4 (серверный challenge и честные платежи).
+**Спринт 4.1 — Payments & server identity foundation**  
+(ADR, domain ports, `[SIM]` mock provider only, mock challenge stub — **без PCI-полей в нашем UI**)
+
+**Бэклог:** L-18, L-19, старые K-хвосты  
+**CI:** убедиться, что workflow доступен GitHub Actions (`.github/workflows/`)
 
 **Журнал:** [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)
