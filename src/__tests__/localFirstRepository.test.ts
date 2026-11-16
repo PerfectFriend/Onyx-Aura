@@ -143,4 +143,83 @@ describe('Stage 2 — Local-First Storage & SalonRepository', () => {
     expect(loaded.artists.length).toBeGreaterThanOrEqual(3);
     warnSpy.mockRestore();
   });
+
+  it('upgrades Stage 2 (schema v1) storage non-destructively to v2 while preserving existing bookings & persisting Passkeys', async () => {
+    const persistentBackingMap = new Map<string, unknown>();
+
+    const v1Storage = new MemoryStorageAdapter(persistentBackingMap);
+    await v1Storage.set('schemaMeta', {
+      schemaVersion: 1,
+      seededAt: '2026-11-14T10:00:00.000Z',
+      lastUpdatedAt: '2026-11-14T12:00:00.000Z',
+    });
+    const legacyAppointment: Appointment = {
+      id: 'apt-v1-legacy',
+      clientName: 'Sofia V1',
+      clientPhone: '+34 600 999 000',
+      clientEmail: 'sofia@example.com',
+      artistId: 'artist-1',
+      artistName: 'Elena Vasiliev',
+      artistAvatar: '/assets/images/avatar_master_artist_1790123890131.jpg',
+      serviceId: 'srv-1',
+      serviceName: 'Gaudí Mosaic',
+      price: 180,
+      currency: 'USD',
+      date: getRelativeDateISO(5),
+      timeSlot: '11:00',
+      status: 'confirmed',
+      remindersEnabled: true,
+      pushReminderScheduled: true,
+      smsReminderScheduled: true,
+      createdAt: '2026-11-14T11:00:00.000Z',
+    };
+    await v1Storage.set('appointments', [legacyAppointment]);
+
+    const v2Repo = new SalonRepository(new MemoryStorageAdapter(persistentBackingMap));
+    const migrated = await v2Repo.ensureSeededAndLoad();
+
+    expect(SALON_SCHEMA_VERSION).toBe(2);
+    expect(migrated.meta.schemaVersion).toBe(2);
+    expect(migrated.meta.seededAt).toBe('2026-11-14T10:00:00.000Z');
+    expect(migrated.appointments).toHaveLength(1);
+    expect(migrated.appointments[0].id).toBe('apt-v1-legacy');
+    expect(migrated.passkeys).toEqual([]);
+    expect(migrated.identitySession.authenticated).toBe(false);
+
+    await v2Repo.savePasskeys([
+      {
+        id: 'cred-pub-1',
+        rawIdBase64Url: 'AQIDBA',
+        publicKeySpkiBase64Url: 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE',
+        displayName: 'Elena Vasiliev',
+        role: 'master',
+        rpId: 'localhost',
+        algorithm: -7,
+        createdAt: '2026-11-15T10:00:00.000Z',
+        lastUsedAt: '2026-11-15T10:00:00.000Z',
+        transports: ['internal'],
+        isSimulatedFallback: false,
+      },
+    ]);
+    await v2Repo.saveIdentitySession({
+      authenticated: true,
+      credentialId: 'cred-pub-1',
+      displayName: 'Elena Vasiliev',
+      role: 'master',
+      authMethod: 'webauthn_passkey',
+      signedInAt: '2026-11-15T10:00:00.000Z',
+      verificationScope: 'client_local_only',
+    });
+
+    const reloadedRepo = new SalonRepository(new MemoryStorageAdapter(persistentBackingMap));
+    const reloaded = await reloadedRepo.ensureSeededAndLoad();
+    expect(reloaded.passkeys).toHaveLength(1);
+    expect(reloaded.passkeys[0].id).toBe('cred-pub-1');
+    expect(reloaded.identitySession.authenticated).toBe(true);
+    expect(reloaded.identitySession.role).toBe('master');
+
+    const reset = await reloadedRepo.resetToSeed();
+    expect(reset.passkeys).toEqual([]);
+    expect(reset.identitySession.authenticated).toBe(false);
+  });
 });

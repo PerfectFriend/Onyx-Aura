@@ -12,6 +12,7 @@ import {
   ChatMessage,
   SponsoredAd,
 } from '../types';
+import { IdentitySession, PasskeyCredentialRecord } from './identity';
 
 export type StorageBackendKind = 'indexeddb' | 'memory';
 
@@ -25,6 +26,8 @@ export type StorageKey =
   | 'anchorPoints'
   | 'chats'
   | 'ads'
+  | 'passkeys'
+  | 'identitySession'
   | 'outbox'
   | 'schemaMeta';
 
@@ -49,7 +52,8 @@ export type OutboxEntity =
   | 'reviews'
   | 'anchorPoints'
   | 'chats'
-  | 'ads';
+  | 'ads'
+  | 'identity';
 
 export interface OutboxMutation {
   id: string;
@@ -78,6 +82,8 @@ export interface HydratedSalonData {
   anchorPoints: ClientAnchorPoint[];
   chats: ChatMessage[];
   ads: SponsoredAd[];
+  passkeys: PasskeyCredentialRecord[];
+  identitySession: IdentitySession;
   outbox: OutboxMutation[];
   meta: DataLayerMeta;
 }

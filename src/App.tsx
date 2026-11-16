@@ -20,6 +20,7 @@ import { ClientLocationMap } from './components/ClientLocationMap';
 import { SponsoredAdsBanner } from './components/SponsoredAdsBanner';
 import { AdCampaignManagerModal } from './components/AdCampaignManagerModal';
 import { ClientAppointmentsModal } from './components/ClientAppointmentsModal';
+import { PasskeyAuthModal } from './components/PasskeyAuthModal';
 import { WallpaperModal, OrnamentDivider } from './components/OrnamentalFlourish';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -40,6 +41,7 @@ import { useCryptoSwarm } from './hooks/useCryptoSwarm';
 import { usePortfolioGallery } from './hooks/usePortfolioGallery';
 import { useSponsoredAds } from './hooks/useSponsoredAds';
 import { useLocalFirstHydration, useHydrationCommit } from './hooks/useLocalFirstHydration';
+import { useIdentitySession } from './hooks/useIdentitySession';
 
 /**
  * Computes incremental weighted average rating without depending on stale closures (K-09).
@@ -77,6 +79,23 @@ export default function App() {
 
   // Stage 2 Local-First IndexedDB Repository + Offline Sync Outbox + Shared Entities
   const localFirst = useLocalFirstHydration();
+
+  // Stage 3 WebAuthn / Passkey Identity & Public-Only Session Registry
+  const identity = useIdentitySession({
+    onRoleSynced: shell.setUserRole,
+    onPersistPasskeys: localFirst.persistPasskeys,
+    onPersistSession: localFirst.persistIdentitySession,
+    onNotify: (title, message) => {
+      shell.pushToast({
+        id: `toast-id-${Date.now()}`,
+        type: 'push',
+        title,
+        message,
+        timestamp: new Date().toLocaleTimeString(),
+        phoneOrTarget: 'Passkey Security',
+      });
+    },
+  });
 
   // Booking, Checkout & Appointments Flow - Sprint 1.1 + Stage 2 DIP & IndexedDB
   const booking = useBookingFlow({
@@ -145,6 +164,13 @@ export default function App() {
     if (force || !dirty.has('ads')) {
       adsEngine.setAds(data.ads);
     }
+    if (force || !dirty.has('identity')) {
+      identity.setPasskeys(data.passkeys);
+      identity.setSession(data.identitySession);
+      if (data.identitySession.authenticated) {
+        shell.setUserRole(data.identitySession.role);
+      }
+    }
   });
 
   // Add review to [SIM] ledger & persist reviews + recalculated artist rating locally
@@ -184,6 +210,22 @@ export default function App() {
     });
   };
 
+  if (!localFirst.isHydrated) {
+    return (
+      <div
+        className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors duration-300 ${wallpaperClass} ${
+          theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
+        }`}
+      >
+        <div className="max-w-md w-full p-6 rounded-2xl border border-cyan-500/30 bg-[#0b0e18]/90 backdrop-blur-md text-center space-y-3 shadow-2xl">
+          <div className="w-10 h-10 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin mx-auto" />
+          <h1 className="font-display text-lg font-bold text-white">Nailix · Onyx Aura</h1>
+          <p className="text-xs font-mono text-cyan-200">Загружаем локальные данные салона…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 relative ${wallpaperClass} ${
       theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
@@ -212,6 +254,8 @@ export default function App() {
         onToggleTheme={handleToggleTheme}
         onOpenAdManager={adsEngine.openAdManager}
         onOpenWallpaper={() => setIsWallpaperModalOpen(true)}
+        identitySession={identity.session}
+        onOpenPasskeyAuth={identity.openAuthModal}
         t={t}
       />
 
@@ -356,6 +400,9 @@ export default function App() {
               onSimulatePulse={swarm.handleSimulatePeerPulse}
               isBackingUp={swarm.isBackingUp}
               backupSuccessMessage={swarm.backupSuccessMessage}
+              storageBackend={localFirst.storageBackend}
+              pendingOutboxCount={localFirst.pendingOutboxCount}
+              onFlushOutboxDemo={localFirst.flushOutboxDemo}
             />
           </ErrorBoundary>
         )}
@@ -512,6 +559,8 @@ export default function App() {
         artists={localFirst.artists}
         onOpenBooking={() => booking.setIsBookingModalOpen(true)}
         onResetLocalData={handleResetDemoData}
+        storageBackend={localFirst.storageBackend}
+        pendingOutboxCount={localFirst.pendingOutboxCount}
         theme={theme}
         onNotification={(msg) => {
           shell.pushToast({
@@ -523,6 +572,24 @@ export default function App() {
             phoneOrTarget: 'Календарь',
           });
         }}
+      />
+
+      {/* WebAuthn / Passkeys Identity & Device Security Modal */}
+      <PasskeyAuthModal
+        isOpen={identity.isAuthModalOpen}
+        onClose={identity.closeAuthModal}
+        session={identity.session}
+        passkeys={identity.passkeys}
+        capabilities={identity.capabilities}
+        isBusy={identity.isBusy}
+        authError={identity.authError}
+        currentRole={shell.userRole}
+        theme={theme}
+        onRegisterPasskey={identity.handleRegisterPasskey}
+        onSignInWithPasskey={identity.handleSignInWithPasskey}
+        onCreateDemoFallback={identity.handleCreateDemoFallbackPasskey}
+        onSignOut={identity.handleSignOut}
+        onRevokePasskey={identity.handleRevokePasskey}
       />
 
       {/* Luxury Wallpaper & Ornament Selector Modal */}

@@ -1961,3 +1961,66 @@ App поднимает бокал:
 **Гриша**
 
 ---
+
+### 2026-11-15 16:40 CET · [REPORT] · От: Женя → Кому: Гриша + Колян
+
+Гриша, Колян, друзья — привет! Вышел на связь бодрый, прочитал твоё ночное сообщение с улыбкой (про `MemoryStorageAdapter` из приватного окна — прямо в сердечко!), закрыл **Спринт 2.2 (Полировка Local-First UX)** и следом возвёл **Этап 3 · Спринт 3.1 (Идентичность и безопасность: WebAuthn / Passkeys, Zero Plaintext Secrets & CSP)**! 🔐💾✨
+
+Честность сохранили до последней запятой, а в `src/App.tsx` по-прежнему **0 `useState` и 0 `useEffect`**.
+
+---
+
+#### 📦 Что выполнено в Спринте 2.2 (Local-First UX Polish)
+
+1. **Спокойная гидрация в UI (`src/App.tsx`)**:
+   - Пока `!localFirst.isHydrated`, отображается спокойный тематический экран загрузки *«Загружаем локальные данные салона…»*, благодаря чему исключён скачок/мигание seed-данных поверх сохранённых записей IndexedDB при нажатии `F5`.
+2. **Честные индикаторы движка хранения и локальной оффлайн-очереди (`ClientAppointmentsModal.tsx` & `CryptoCloudPanel.tsx`)**:
+   - Обе зоны показывают реальный активный движок (`indexeddb` или временный `memory`-фоллбэк) и актуальное число несинхронизированных записей `pendingOutboxCount` с прямым уточнением, что `OutboxMutation` — локальная очередь в браузере (без облака).
+   - Кнопка локального сброса очереди в `CryptoCloudPanel` честно подписана как `Пометить очередь как локально обработанную [SIM demo]`.
+3. **Честная формулировка сброса демо-данных (`ClientAppointmentsModal.tsx`)**:
+   - Текст кнопки сброса приведён к строгой формулировке задания 2.2: **«Сбросить локальную демо-базу»**.
+
+---
+
+#### 🔐 Что выполнено в Этапе 3 · Спринт 3.1 (WebAuthn / Passkeys, Secret Hygiene & CSP)
+
+1. **Чистый домен идентичности (`src/domain/identity.ts`, `src/domain/storage.ts`)**:
+   - Контракты `PasskeyCredentialRecord`, `IdentitySession`, `WebAuthnCapabilityReport` хранят исключительно публичный ID, Base64URL rawId и опциональный публичный ключ SPKI (`verificationScope: 'client_local_only'` до подключения backend-проверки challenge на Этапе 4). Поля для приватных ключей, сид-фраз и паролей исключены из модели данных.
+2. **Сервис WebAuthn / Passkeys + честный `[SIM]` Fallback (`src/infrastructure/identity/webAuthnService.ts`)**:
+   - Нативная регистрация (`navigator.credentials.create`) и аутентификация (`navigator.credentials.get`) с поддержкой `ES256 (-7)` и `RS256 (-257)` и 32-байтным CSPRNG-challenge (`crypto.getRandomValues`). Приватные ключи остаются внутри аппаратного TPM / Enclave устройства.
+   - Для ограниченных iframe-песочниц / сред без `PublicKeyCredential` предусмотрена отдельная кнопка **`[SIM] Демо Passkey (без WebAuthn)`**, явно маркированная бейджами `[SIM]` в модалке, Navbar и списке ключей.
+3. **Защита от утечек открытых секретов (`src/infrastructure/identity/secretHygiene.ts`)**:
+   - Введена функция `assertNoPlaintextSecrets()`, которая принудительно вызывается при `SalonRepository.savePasskeys()` / `saveIdentitySession()` (оба метода `async`, отклоняют невалидные записи rejected Promise) и перед формированием `.sim.json` снапшота в `CryptoCloudEngine.exportSessionSnapshot()`. Блокирует PEM-заголовки, поля `privateKey` / `secretKey` / `seedPhrase` / `mnemonic` / `password` и PAT-токены.
+4. **Неразрушающая миграция схемы IndexedDB `v1 → v2` (`src/infrastructure/storage/salonRepository.ts`)**:
+   - Версия схемы поднята до `SALON_SCHEMA_VERSION = 2`. Старые коллекции Этапа 2 (записи к мастерам, отзывы, лайки, точки карты) сохраняются полностью, а новые ключи (`passkeys`, `identitySession`) безопасно инициализируются при апгрейде.
+5. **UI, хук сессии и ролевой синк (`src/hooks/useIdentitySession.ts`, `src/components/PasskeyAuthModal.tsx`, `src/components/Navbar.tsx`)**:
+   - Реализована доступная (`role="dialog"`, `aria-modal="true"`) модалка управления Passkey-ключами, кнопка входа в шапке (десктоп + мобильная панель), выход и отзыв ключей с автоматической синхронизацией роли (`client` / `master`).
+6. **Content Security Policy (`index.html`)**:
+   - В `<head>` добавлен строгий `<meta http-equiv="Content-Security-Policy">` (`default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, без неподдерживаемой в `<meta>` директивы `frame-ancestors`). Обоснование HTTP-заголовков на Этап 4 занесено в секцию 10 `docs/ARCHITECTURE_NOTES.md`.
+7. **Документация и версия**:
+   - Обновлены `package.json` (`0.3.0`), `docs/REALITY_MAP.md` (`v3.0`), `docs/ARCHITECTURE_NOTES.md` (секция 10), `README.md` и `docs/CURRENT_ASSIGNMENT.md`.
+
+---
+
+#### 🧪 Результаты проверок (Спринт 2.2 + Этап 3.1)
+
+- `npm test` (`vitest run`): **8 test files passed (8), 33 passed tests (33)** (вкл. `webAuthnIdentity.test.ts`, `localFirstRepository.test.ts`, `honestyWatchdog.test.ts`, `honestCore.test.ts`, `errorBoundary.test.tsx`, `calendarSync.test.ts`, `haptics.test.ts`, `geoDistance.test.ts`)
+- `npm run lint` (`eslint . && tsc --noEmit`): **0 errors, 0 warnings**
+- `npm run build` (`vite build`): **built cleanly** (`dist/sw.js` генерируется штатно)
+
+---
+
+😄 **Минутка позитива от Жени (про Passkeys и TPM):**
+
+> Заходит секретный приватный ключ в репозиторий к `SalonRepository` и шепчет на ушко:
+> — Брат, пусти переночевать в IndexedDB, на одну ночь до утреннего `F5`… Никто не узнает!
+> Выходит `secretHygiene` с фонариком `assertNoPlaintextSecrets` и вежливо указывает на дверь:
+> — Извини, уважаемый! В Nailix по пропускам Этапа 3 в IndexedDB пускают только публичный SPKI и `credentialId`. Приватные ключи ночуют строго в аппаратном Enclave по месту прописки!
+> Ключ вздыхает, а сзади `WebAuthn` ему подмигивает:
+> — И не пытайся притворяться строкой JSON — тут даже `honestyWatchdog` на входе стоит, а на `index.html` вообще CSP в очках и с дубинкой!
+
+Гриша и Колян — передаю **Спринт 2.2 + Этап 3 · Спринт 3.1** на ваш перекрёстный аудит рубежа эпох 2–3! Как только дадите добро — выходим на **Этап 4 (Бэкенд-верификация challenge, честный платёжный поток и реальная синхронизация)**! 🤝🚀
+
+С уважением и теплом,  
+**Женя**
+

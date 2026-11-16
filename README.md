@@ -28,11 +28,12 @@
 
 ## ✨ Ключевые возможности / Core Highlights
 
-### 1. 📅 Бронирование, Offline-First База и Календарный сервис · 🟢 `REAL`
-- **Local-First IndexedDB**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через чистый `SalonRepository` с идемпотентным сидом и оффлайн-очередью мутаций (`OutboxMutation`).
+### 1. 📅 Бронирование, Offline-First База, Passkeys и Календарный сервис · 🟢 `REAL`
+- **Local-First IndexedDB**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через чистый `SalonRepository` (схема v2) с идемпотентным сидом, loading-экраном гидрации и оффлайн-очередью мутаций (`OutboxMutation`).
+- **WebAuthn / Passkeys & Secret Hygiene (Этап 3)**: Вход по биометрии/Passkey устройства (`navigator.credentials`), хранение только публичных метаданных ключа, строгая проверка `assertNoPlaintextSecrets` и `Content-Security-Policy`. (В изолированных iframe доступен явный `[SIM] Демо Passkey`; серверная верификация подписи — на Этапе 4).
 - **Мгновенная синхронизация в Google Calendar / Microsoft Outlook** через веб-ссылки с предзаполненными параметрами.
 - **Экспорт в Apple Calendar / Outlook** через генерацию файла `.ics` (iCalendar RFC 5545) с напоминаниями `VALARM`.
-- Просмотр записей и сброс демо-БД в модальном окне «Мои записи».
+- Просмотр записей и кнопка **«Сбросить локальную демо-базу»** в модальном окне «Мои записи».
 
 ### 2. 💅 Галерея Высокого Нейл-Арта (Haute Couture Gallery) · 🟢 `REAL`
 - Интерактивный каталог эксклюзивных дизайнов с фильтрами по категориям и Lightbox-просмотром.
@@ -65,7 +66,8 @@
 - **Bundler & Tooling**: [Vite 6](https://vitejs.dev/), [Vitest](https://vitest.dev/), [ESLint 9](https://eslint.org/) (`typescript-eslint`, `react-hooks`, `jsx-a11y`)
 - **Styling & Design System**: [Tailwind CSS v4](https://tailwindcss.com/), Custom Cyber-Gaudí Ornament Engine
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
-- **Local-First Storage**: Native `IndexedDB` via `StorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue (with `MemoryStorageAdapter` fallback)
+- **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials`), Web Crypto CSPRNG challenges, Plaintext Secret Guard, Content Security Policy
+- **Local-First Storage**: Native `IndexedDB` (schema v2) via `StorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue (with `MemoryStorageAdapter` fallback)
 - **PWA & Offline Engine**: [Vite Plugin PWA](https://vite-pwa-org.netlify.app/), Workbox
 - **Calendar Engine**: RFC 5545 iCalendar generator + Google/Outlook Calendar URL builder
 
@@ -80,17 +82,17 @@
 ├── public/                 # Статические ассеты, PWA-иконки, assetlinks.json
 │   └── assets/images/      # Локальные изображения (портфолио, баннеры, аватары)
 ├── src/
-│   ├── __tests__/          # Unit-тесты (Vitest): honestyWatchdog, localFirstRepository, calendarSync, geoDistance, haptics, ErrorBoundary
-│   ├── components/         # UI-компоненты, модалки, ErrorBoundary
+│   ├── __tests__/          # Unit-тесты (Vitest): honestyWatchdog, webAuthnIdentity, localFirstRepository, calendarSync, geoDistance, haptics, ErrorBoundary
+│   ├── components/         # UI-компоненты, модалки (вкл. PasskeyAuthModal), ErrorBoundary
 │   ├── data/               # Начальные seed-фикстуры для SalonRepository
-│   ├── domain/             # Чистые интерфейсы StorageAdapter, OutboxMutation, HydratedSalonData
-│   ├── hooks/              # Доменные хуки + useLocalFirstHydration
+│   ├── domain/             # Чистые контракты StorageAdapter, OutboxMutation, IdentitySession, PasskeyCredentialRecord
+│   ├── hooks/              # Доменные хуки + useLocalFirstHydration + useIdentitySession
 │   ├── i18n/               # Словарь переводов на 10 языков (LTR + RTL)
-│   ├── infrastructure/     # IndexedDBAdapter, MemoryStorageAdapter, SalonRepository + Outbox
+│   ├── infrastructure/     # IndexedDBAdapter, SalonRepository v2, WebAuthnService, SecretHygiene
 │   ├── services/           # geoDistance (REAL) и reminderService ([SIM])
 │   ├── simulation/         # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
 │   ├── utils/              # calendarSync.ts (RFC 5545), haptics.ts
-│   ├── App.tsx             # Чистый оркестратор хуков и ErrorBoundary-секций (0 useState, 0 useEffect)
+│   ├── App.tsx             # Тонкий оркестратор хуков и ErrorBoundary-секций (0 useState, 0 useEffect)
 │   └── main.tsx            # Точка входа React + Root ErrorBoundary
 ├── eslint.config.js        # Strict TS/React/A11y ESLint конфиг
 ├── vite.config.ts          # Конфигурация Vite и PWA Workbox

@@ -14,6 +14,7 @@ import {
   Review,
   SponsoredAd,
 } from '../types';
+import { IdentitySession, PasskeyCredentialRecord } from '../domain/identity';
 import {
   createSeedSnapshot,
   defaultSalonRepository,
@@ -273,6 +274,28 @@ export function useLocalFirstHydration({
     [markDirty, recordOutbox, repository]
   );
 
+  const persistPasskeys = useCallback(
+    async (passkeys: PasskeyCredentialRecord[], action = 'PASSKEY_UPDATED', payload?: unknown) => {
+      markDirty('identity');
+      await repository.savePasskeys(passkeys);
+      await recordOutbox('identity', action, payload ?? { count: passkeys.length });
+    },
+    [markDirty, recordOutbox, repository]
+  );
+
+  const persistIdentitySession = useCallback(
+    async (session: IdentitySession, action = 'IDENTITY_SESSION_UPDATED') => {
+      markDirty('identity');
+      await repository.saveIdentitySession(session);
+      await recordOutbox('identity', action, {
+        authenticated: session.authenticated,
+        role: session.role,
+        authMethod: session.authMethod,
+      });
+    },
+    [markDirty, recordOutbox, repository]
+  );
+
   const resetAllToSeed = useCallback(async () => {
     dirtyEntitiesRef.current.clear();
     const freshData = await repository.resetToSeed();
@@ -322,6 +345,8 @@ export function useLocalFirstHydration({
     updateMasterSalon,
     persistChats,
     persistAds,
+    persistPasskeys,
+    persistIdentitySession,
     resetAllToSeed,
     flushOutboxDemo,
   };

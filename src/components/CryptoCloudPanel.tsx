@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Radio, Shield, Download, RefreshCw, HardDrive, Lock, Cpu, Server } from 'lucide-react';
 import { CryptoCloudState, PeerNode } from '../types';
+import { StorageBackendKind } from '../domain/storage';
 
 interface CryptoCloudPanelProps {
   swarmState: CryptoCloudState;
@@ -9,6 +10,9 @@ interface CryptoCloudPanelProps {
   onSimulatePulse: () => void;
   isBackingUp: boolean;
   backupSuccessMessage?: string | null;
+  storageBackend?: StorageBackendKind;
+  pendingOutboxCount?: number;
+  onFlushOutboxDemo?: () => void;
 }
 
 export const CryptoCloudPanel: React.FC<CryptoCloudPanelProps> = ({
@@ -18,6 +22,9 @@ export const CryptoCloudPanel: React.FC<CryptoCloudPanelProps> = ({
   onSimulatePulse,
   isBackingUp,
   backupSuccessMessage,
+  storageBackend = 'indexeddb',
+  pendingOutboxCount = 0,
+  onFlushOutboxDemo,
 }) => {
   const [autoBackupEnabled, setAutoBackupEnabled] = useState<boolean>(true);
 
@@ -231,11 +238,25 @@ export const CryptoCloudPanel: React.FC<CryptoCloudPanelProps> = ({
             <p className="text-xs text-[#9ca3af] leading-relaxed">
               [SIM] Uses browser `BroadcastChannel` (`onyx_cryptocloud_swarm_v1`) to signal simulated events across tabs on the same device. Multi-device P2P transport is planned for Stage 4–5.
             </p>
-            <div className="p-3 bg-[#15171e] rounded-lg border border-red-500/30 text-xs space-y-1">
-              <span className="text-red-300 font-mono text-[11px]">TRANSPARENCY NOTICE [SIM]</span>
+            <div className="p-3 bg-[#15171e] rounded-lg border border-red-500/30 text-xs space-y-2">
+              <span className="text-red-300 font-mono text-[11px]">TRANSPARENCY & LOCAL OUTBOX</span>
               <p className="text-[#d1d5db]">
-                Public assets are bundled locally in PWA cache. Salon collections persist locally in plaintext IndexedDB (Stage 2); [SIM] snapshots remain unencrypted until Stage 3 Passkeys.
+                Движок хранения:{' '}
+                <span className="font-mono text-emerald-300">
+                  {storageBackend === 'indexeddb' ? 'IndexedDB (локально в браузере)' : 'Memory Fallback (только текущая вкладка)'}
+                </span>
+                . Локальная оффлайн-очередь Outbox:{' '}
+                <span className="font-mono text-amber-300">{pendingOutboxCount} pending_sync</span> (локальный журнал изменений до появления облачного API, не синхронизируется с сервером).
               </p>
+              {onFlushOutboxDemo && pendingOutboxCount > 0 && (
+                <button
+                  type="button"
+                  onClick={onFlushOutboxDemo}
+                  className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-[11px] font-mono text-amber-200 transition-colors cursor-pointer"
+                >
+                  Пометить очередь как локально обработанную [SIM demo]
+                </button>
+              )}
             </div>
           </div>
         </div>

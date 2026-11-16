@@ -31,9 +31,15 @@ import {
   INITIAL_REVIEWS,
 } from '../../data/initialData';
 import { INITIAL_SPONSORED_ADS } from '../../data/advertisements';
+import {
+  DEFAULT_ANONYMOUS_SESSION,
+  IdentitySession,
+  PasskeyCredentialRecord,
+} from '../../domain/identity';
+import { assertNoPlaintextSecrets } from '../identity/secretHygiene';
 import { createDefaultStorageAdapter, MemoryStorageAdapter } from './indexedDbAdapter';
 
-export const SALON_SCHEMA_VERSION = 1;
+export const SALON_SCHEMA_VERSION = 2;
 export const DEFAULT_LIKED_IDS: string[] = ['port-gaudi', 'port-1'];
 export const DEFAULT_SAVED_IDS: string[] = ['port-gaudi', 'port-2'];
 
@@ -55,6 +61,8 @@ export function createSeedSnapshot() {
     anchorPoints: cloneSeed(INITIAL_ANCHOR_POINTS),
     chats: cloneSeed(INITIAL_CHATS),
     ads: cloneSeed(INITIAL_SPONSORED_ADS),
+    passkeys: [] as PasskeyCredentialRecord[],
+    identitySession: { ...DEFAULT_ANONYMOUS_SESSION },
   };
 }
 
@@ -126,6 +134,8 @@ export class SalonRepository {
       existingAnchors,
       existingChats,
       existingAds,
+      existingPasskeys,
+      existingIdentitySession,
       existingOutbox,
     ] = await Promise.all([
       this.safeGet<DataLayerMeta>('schemaMeta'),
@@ -138,6 +148,8 @@ export class SalonRepository {
       this.safeGet<ClientAnchorPoint[]>('anchorPoints'),
       this.safeGet<ChatMessage[]>('chats'),
       this.safeGet<SponsoredAd[]>('ads'),
+      this.safeGet<PasskeyCredentialRecord[]>('passkeys'),
+      this.safeGet<IdentitySession>('identitySession'),
       this.safeGet<OutboxMutation[]>('outbox'),
     ]);
 
@@ -150,14 +162,24 @@ export class SalonRepository {
     const anchorPoints = existingAnchors ?? cloneSeed(INITIAL_ANCHOR_POINTS);
     const chats = existingChats ?? cloneSeed(INITIAL_CHATS);
     const ads = existingAds ?? cloneSeed(INITIAL_SPONSORED_ADS);
+    const passkeys = existingPasskeys ?? [];
+    const identitySession = existingIdentitySession ?? { ...DEFAULT_ANONYMOUS_SESSION };
     const outbox = existingOutbox ?? [];
 
-    const meta: DataLayerMeta = existingMeta ?? {
-      schemaVersion: SALON_SCHEMA_VERSION,
-      seededAt: nowIso,
-      lastModifiedAt: nowIso,
-      backend: this.adapter.backend,
-    };
+    const needsSchemaUpgrade = !existingMeta || existingMeta.schemaVersion < SALON_SCHEMA_VERSION;
+    const meta: DataLayerMeta = existingMeta
+      ? {
+          schemaVersion: Math.max(existingMeta.schemaVersion, SALON_SCHEMA_VERSION),
+          seededAt: existingMeta.seededAt,
+          lastModifiedAt: needsSchemaUpgrade ? nowIso : existingMeta.lastModifiedAt,
+          backend: this.adapter.backend,
+        }
+      : {
+          schemaVersion: SALON_SCHEMA_VERSION,
+          seededAt: nowIso,
+          lastModifiedAt: nowIso,
+          backend: this.adapter.backend,
+        };
 
     const seedWrites: Promise<void>[] = [];
     if (!existingArtists) seedWrites.push(this.safeSet('artists', artists));
@@ -169,8 +191,10 @@ export class SalonRepository {
     if (!existingAnchors) seedWrites.push(this.safeSet('anchorPoints', anchorPoints));
     if (!existingChats) seedWrites.push(this.safeSet('chats', chats));
     if (!existingAds) seedWrites.push(this.safeSet('ads', ads));
+    if (!existingPasskeys) seedWrites.push(this.safeSet('passkeys', passkeys));
+    if (!existingIdentitySession) seedWrites.push(this.safeSet('identitySession', identitySession));
     if (!existingOutbox) seedWrites.push(this.safeSet('outbox', outbox));
-    if (!existingMeta) seedWrites.push(this.safeSet('schemaMeta', meta));
+    if (needsSchemaUpgrade) seedWrites.push(this.safeSet('schemaMeta', meta));
 
     if (seedWrites.length > 0) {
       await Promise.all(seedWrites);
@@ -186,6 +210,8 @@ export class SalonRepository {
       anchorPoints,
       chats,
       ads,
+      passkeys,
+      identitySession,
       outbox,
       meta,
     };
@@ -311,6 +337,22 @@ export class SalonRepository {
   public saveAds(ads: SponsoredAd[]): Promise<void> {
     return this.enqueueWrite(async () => {
       await this.safeSet('ads', ads);
+      await this.touchMeta();
+    });
+  }
+
+  public async savePasskeys(passkeys: PasskeyCredentialRecord[]): Promise<void> {
+    assertNoPlaintextSecrets(passkeys);
+    return this.enqueueWrite(async () => {
+      await this.safeSet('passkeys', passkeys);
+      await this.touchMeta();
+    });
+  }
+
+  public async saveIdentitySession(session: IdentitySession): Promise<void> {
+    assertNoPlaintextSecrets(session);
+    return this.enqueueWrite(async () => {
+      await this.safeSet('identitySession', session);
       await this.touchMeta();
     });
   }

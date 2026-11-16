@@ -4,6 +4,7 @@ import {
   Download, Sparkles
 } from 'lucide-react';
 import { Appointment, Artist } from '../types';
+import { StorageBackendKind } from '../domain/storage';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
 import { downloadAllAppointmentsIcs } from '../utils/calendarSync';
 import { CornerFlourish } from './OrnamentalFlourish';
@@ -16,6 +17,8 @@ interface ClientAppointmentsModalProps {
   artists: Artist[];
   onOpenBooking: () => void;
   onResetLocalData?: () => void;
+  storageBackend?: StorageBackendKind;
+  pendingOutboxCount?: number;
   theme?: 'dark' | 'light';
   onNotification?: (msg: string) => void;
 }
@@ -27,6 +30,8 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
   artists,
   onOpenBooking,
   onResetLocalData,
+  storageBackend = 'indexeddb',
+  pendingOutboxCount = 0,
   theme = 'dark',
   onNotification,
 }) => {
@@ -219,9 +224,15 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
 
         {/* Footer */}
         <div className="p-4 bg-black/40 border-t border-amber-500/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400 font-mono">
-          <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Локальная база IndexedDB (сохраняется оффлайн) · [SIM] Эскроу-демо</span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              {storageBackend === 'indexeddb'
+                ? 'Локальная база IndexedDB (сохраняется оффлайн)'
+                : 'Временный Memory-фоллбэк (IndexedDB недоступна)'}
+              {pendingOutboxCount > 0 ? ` · Локальная очередь мутаций: ${pendingOutboxCount} (без облака)` : ''}
+              {' · [SIM] Эскроу-демо'}
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -239,7 +250,7 @@ export const ClientAppointmentsModal: React.FC<ClientAppointmentsModalProps> = (
                 onClick={onResetLocalData}
                 className="text-xs text-gray-400 hover:text-red-300 underline cursor-pointer"
               >
-                Сбросить демо-БД
+                Сбросить локальную демо-базу
               </button>
             )}
             <button

@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { 
   Sparkles, Radio, MessageSquare, Smartphone, 
   ChevronDown, Check, Users, MapPin, Sun, Moon,
-  Image as ImageIcon, Calendar
+  Image as ImageIcon, Calendar, KeyRound
 } from 'lucide-react';
 import { LANGUAGES, SupportedLanguage, TranslationStrings } from '../i18n/translations';
+import { IdentitySession } from '../domain/identity';
 import { ThemeMode } from '../types';
 
 interface NavbarProps {
@@ -25,6 +26,8 @@ interface NavbarProps {
   onToggleTheme: () => void;
   onOpenAdManager?: () => void;
   onOpenWallpaper?: () => void;
+  identitySession?: IdentitySession;
+  onOpenPasskeyAuth?: () => void;
   t: TranslationStrings;
 }
 
@@ -45,6 +48,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   theme,
   onToggleTheme,
   onOpenWallpaper,
+  identitySession,
+  onOpenPasskeyAuth,
   t,
 }) => {
   const [isLangMenuOpen, setIsLangMenuOpen] = useState<boolean>(false);
@@ -381,7 +386,36 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* Encrypted Chat Button */}
+          {/* WebAuthn / Passkey Identity Button */}
+          {onOpenPasskeyAuth && (
+            <button
+              type="button"
+              onClick={onOpenPasskeyAuth}
+              className={`px-2.5 py-2 rounded-xl border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                identitySession?.authenticated
+                  ? isDark
+                    ? 'bg-emerald-950/50 border-emerald-400/50 text-emerald-300 hover:border-emerald-300'
+                    : 'bg-emerald-50 border-emerald-500/60 text-emerald-800 hover:bg-emerald-100 shadow-sm'
+                  : isDark
+                    ? 'bg-[#0e1220] border-cyan-500/30 text-cyan-300 hover:border-cyan-400'
+                    : 'bg-white border-amber-400/60 text-amber-800 hover:border-amber-600 shadow-sm'
+              }`}
+              title="WebAuthn Passkey вход и управление ключами устройства"
+              aria-label="Passkey вход и ключи устройства"
+            >
+              <KeyRound className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden lg:inline text-[11px] font-mono font-bold max-w-[96px] truncate">
+                {identitySession?.authenticated ? identitySession.displayName : 'Passkey'}
+              </span>
+              {identitySession?.authMethod === 'demo_passkey_sim' && (
+                <span className="hidden lg:inline text-[9px] font-mono px-1 rounded bg-red-900/70 text-red-200 border border-red-500/50">
+                  SIM
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Concierge Chat Button */}
           <button
             onClick={onOpenChat}
             className={`relative p-2 rounded-xl border transition-colors cursor-pointer ${
@@ -436,6 +470,21 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Calendar className={`w-3 h-3 ${isDark ? 'text-amber-400' : 'text-amber-700'}`} />
             <span>Записи ({appointmentsCount})</span>
+          </button>
+        )}
+        {onOpenPasskeyAuth && (
+          <button
+            type="button"
+            onClick={onOpenPasskeyAuth}
+            className={`whitespace-nowrap flex items-center gap-1 font-medium ${
+              identitySession?.authenticated
+                ? isDark ? 'text-emerald-300' : 'text-emerald-800 font-bold'
+                : isDark ? 'text-cyan-300' : 'text-amber-800'
+            }`}
+            title="WebAuthn Passkey профиль"
+          >
+            <KeyRound className="w-3 h-3" />
+            <span>{identitySession?.authenticated ? identitySession.displayName : 'Passkey'}</span>
           </button>
         )}
         <button

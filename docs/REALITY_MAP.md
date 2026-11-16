@@ -1,8 +1,8 @@
 # ✦ NAILIX / ONYX-AURA — КАРТА РЕАЛЬНОСТИ (REALITY MAP) ✦
 
-> **Статус**: Канонический документ честности (актуализирован в Этапе 2 «Данные и Local-First»)  
-> **Версия**: 2.0  
-> **Дата обновления**: 14 ноября 2026 г.  
+> **Статус**: Канонический документ честности (актуализирован в Спринте 2.2 и Этапе 3.1 «Идентичность и безопасность»)  
+> **Версия**: 3.0  
+> **Дата обновления**: 15 ноября 2026 г.  
 > **Исполнитель**: Женя (Сеньор-разработчик)  
 > **Аудиторы**: Гриша (Архитектор эволюции) & Колян (Cross-Model Auditor)  
 > **Основание**: Закон 1, 7, 8 и 10 Канонического Манифеста AI-разработчика (`MANIFEST_CANONICAL_AI_DEVELOPER.md`)
@@ -23,9 +23,10 @@
 
 | Фича / Модуль | Файлы реализации | Статус | Доказательство и технический комментарий |
 | :--- | :--- | :---: | :--- |
-| **Local-First IndexedDB Repository & Offline Outbox** | `src/domain/storage.ts`, `src/infrastructure/storage/indexedDbAdapter.ts`, `src/infrastructure/storage/salonRepository.ts`, `src/hooks/useLocalFirstHydration.ts` | 🟢 **`REAL`** | Чистая абстракция `StorageAdapter` поверх нативного IndexedDB (`nailix_local_first_v1`), идемпотентный seed начальных фикстур, автоматический fallback в `MemoryStorageAdapter` при недоступности IDB и персистентная очередь `OutboxMutation` (готова к будущему синку с сервером). |
+| **Local-First IndexedDB Repository & Offline Outbox** | `src/domain/storage.ts`, `src/infrastructure/storage/indexedDbAdapter.ts`, `src/infrastructure/storage/salonRepository.ts`, `src/hooks/useLocalFirstHydration.ts` | 🟢 **`REAL`** | Чистая абстракция `StorageAdapter` поверх нативного IndexedDB (`nailix_local_first_v1`, схема v2 с неразрушающей миграцией v1→v2), спокойный loading-экран до завершения гидрации, видимый статус движка (`indexeddb` / `memory`) и локальной очереди `OutboxMutation` в UI. |
+| **WebAuthn / Passkeys & Secret Hygiene + CSP** | `src/domain/identity.ts`, `src/infrastructure/identity/webAuthnService.ts`, `src/infrastructure/identity/secretHygiene.ts`, `src/hooks/useIdentitySession.ts`, `src/components/PasskeyAuthModal.tsx`, `index.html` | 🟢 **`REAL`** / 🔴 **`[SIM]` Fallback** | Реальная регистрация и вход через FIDO2 WebAuthn (`navigator.credentials.create`/`.get`, ES256/RS256), хранение только публичного ID и SPKI в IndexedDB, проверка `assertNoPlaintextSecrets` на запись и JSON-экспорты, `Content-Security-Policy` `<meta>`. Верификация пока клиентская (`client_local_only`; серверная проверка challenge — Этап 4). Для сред без FIDO2 предусмотрена явная кнопка `[SIM] Демо Passkey`. |
 | **Haute Manicure Portfolio + Likes/Saves** | `src/components/PortfolioGallery.tsx`, `src/hooks/usePortfolioGallery.ts` | 🟢 **`REAL`** | Каталог с локальными ассетами, фильтрацией, Lightbox и **персистентными** лайками/избранным, сохраняемыми атомарно в IndexedDB без гонок. |
-| **Бронирование и мои записи** | `src/components/BookingModal.tsx`, `src/components/ClientAppointmentsModal.tsx`, `src/hooks/useBookingFlow.ts` | 🟢 **`REAL`** | Реальный поток выбора мастера и будущих дат с **сохранением записей в IndexedDB между перезагрузками**, экспортом `.ics` и кнопкой сброса демо-БД (`resetToSeed`). (Сам этап оплаты/эскроу остаётся `[SIM]`). |
+| **Бронирование и мои записи** | `src/components/BookingModal.tsx`, `src/components/ClientAppointmentsModal.tsx`, `src/hooks/useBookingFlow.ts` | 🟢 **`REAL`** | Реальный поток выбора мастера и будущих дат с **сохранением записей в IndexedDB между перезагрузками**, экспортом `.ics`, индикатором локального движка/outbox и кнопкой «Сбросить локальную демо-базу» (`resetToSeed`). (Сам этап оплаты/эскроу остаётся `[SIM]`). |
 | **Радар студий & Карта локаций (Persistence)** | `src/services/geoDistance.ts`, `src/components/ClientLocationMap.tsx` | 🟢 **`REAL`** | Формула гаверсинусов, нативный `navigator.geolocation` и **сохранение** точек клиента (`anchorPoints`) и адресов мастеров в IndexedDB. |
 | **Рекламная платформа & Кампании** | `src/components/SponsoredAdsBanner.tsx`, `src/components/AdCampaignManagerModal.tsx`, `src/hooks/useSponsoredAds.ts` | 🟢 **`REAL`** | Создание и отображение промо-карточек с сохранением в локальной базе IndexedDB (внешний рекламный биллинг отсутствует — локальное управление кампанией). |
 | **Universal Calendar Sync** | `src/utils/calendarSync.ts`, `src/components/CalendarSyncButtons.tsx` | 🟢 **`REAL`** | Генерация RFC 5545 `.ics` файлов и URL-диплинков в Google Calendar / Outlook без обещаний «on-chain» внутри событий. |
@@ -41,18 +42,18 @@
 | **Reminder Dispatch (Push & SMS)** | `src/services/reminderService.ts` | 🔴 **`SIMULATED`** | **[SIM]** Мгновенный in-app toast + опциональный `new Notification(...)` браузера. Реальный SMS-шлюз и отложенный backend-планировщик не подключены. |
 | **Виртуальная AR-примерка ногтей** | `src/components/AndroidExperienceView.tsx` | 🔴 **`SIMULATED`** | **[SIM]** Видеопоток WebRTC с 2D Canvas сеткой поверх видео без 3D-трекинга пальцев (Этап 6). |
 | **Instagram Social Sync** | `src/components/InstagramSyncSection.tsx` | 🔴 **`SIMULATED`** | **[SIM]** Импортируемые пресеты теперь сохраняются в локальной галерее IndexedDB, но источник — демо-каталог без Meta OAuth API. |
-| **WebAuthn / Passkeys & Encryption** | — | ⚪ **`PLANNED`** | Запланировано на Этапе 3 Плана Эволюции (заменит открытое локальное хранение без авторизации). |
+| **Server Challenge Verification & Honest Payment** | — | ⚪ **`PLANNED`** | Запланировано на Этап 4 (`EVOLUTION_PLAN.md`: backend WebAuthn challenge verification, честная интеграция оплаты/условий). |
 
 ---
 
 ## 📊 Итоговая сводка честности (Summary)
 
-- 🟢 **`REAL`**: **9 модулей** — IndexedDB Repository + Offline Outbox, Портфолио с персистентными лайками/сохранениями, Бронирование и Записи в IndexedDB, Карта локаций + сохранение пинов/адресов, Рекламные кампании, RFC 5545 календарный экспорт, Haptics Web API, PWA/Workbox и скрипт локальной сборки APK.
+- 🟢 **`REAL`**: **10 модулей** — IndexedDB Repository v2 + Offline Outbox + Hydration UX, WebAuthn/Passkeys + Secret Hygiene + CSP, Портфолио с персистентными лайками/сохранениями, Бронирование и Записи в IndexedDB, Карта локаций + сохранение пинов/адресов, Рекламные кампании, RFC 5545 календарный экспорт, Haptics Web API, PWA/Workbox и скрипт локальной сборки APK.
 - 🔵 **`LOCAL_ONLY`**: **1 модуль** — Панель аналитики студий (считает реальные агрегаты по данным IndexedDB без облачного сервера).
-- 🔴 **`SIMULATED`**: **8 модулей** — CryptoCloud, Checkout Preview, Friend Jury, Reputation Ledger (`[SIM]` хэши/баллы при персистентных отзывах), Studio Chat (`[SIM]` автоответчик при персистентной переписке), `reminderService`, AR 2D Overlay и Instagram Demo Sync.
-- ⚪ **`PLANNED`**: **1 ближайшее направление** — WebAuthn / Passkeys и клиентская защита секретов (Этап 3).
+- 🔴 **`SIMULATED`**: **8 модулей** (+ `[SIM] Демо Passkey` fallback в песочницах без FIDO2) — CryptoCloud, Checkout Preview, Friend Jury, Reputation Ledger (`[SIM]` хэши/баллы при персистентных отзывах), Studio Chat (`[SIM]` автоответчик при персистентной переписке), `reminderService`, AR 2D Overlay и Instagram Demo Sync.
+- ⚪ **`PLANNED`**: Server WebAuthn verification & Real Payment Integration (Этап 4), Real Multi-User Network (Этап 5).
 
 ---
 
 *«Честность в коде — честность перед миром.»*  
-*Актуализировано в Этапе 2 («Данные и Local-First»): локальные данные переживают перезагрузку, оффлайн-мутации пишутся в Outbox.*
+*Актуализировано в Спринте 2.2 и Этапе 3.1: Passkeys не хранят приватных ключей в JS, CSP активен, честная загрузка до гидрации.*

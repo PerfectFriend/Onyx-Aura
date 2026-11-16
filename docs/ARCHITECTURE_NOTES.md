@@ -208,4 +208,29 @@
    - *vs `idb`:* Нативный `IndexedDBAdapter` (172 строки) позволил обойтись **без новой npm-зависимости**, дал прямой контроль над пулингом `dbPromise`, обработкой `onversionchange` и мгновенным переключением на `MemoryStorageAdapter` при ошибках приватного режима.
    - *Осознанно остаётся эфемерным (`[SIM]` / UI):* не отправленный черновик в текстовом инпуте `ChatDrawer`, `[SIM]`-голосование жюри (`FriendModerationSection`), временные счётчики пиров (`useCryptoSwarm`) и UI-тосты — симулированный сетевой консенсус и эфемерные черновики не должны засорять локальную БД до появления настоящего сетевого слоя (Этап 4–5).
 
+---
+
+## 🔐 10. Спринт 2.2 (Local-First UX) и Этап 3 · Спринт 3.1 (WebAuthn Passkeys, Secret Hygiene & CSP)
+
+### 10.1. Полировка Local-First UX (Спринт 2.2)
+1. **Спокойное состояние загрузки до гидрации (`App.tsx`):**
+   - Пока `!localFirst.isHydrated`, приложение не рендерит интерактивный дашборд поверх seed-заглушек, а показывает нейтральный тематический экран *«Загружаем локальные данные салона…»*, исключая визуальный скачок `seed → IndexedDB`.
+2. **Честная индикация движка и локального Outbox (`ClientAppointmentsModal`, `CryptoCloudPanel`):**
+   - Пользователь явно видит активный адаптер (`IndexedDB (локально в браузере)` или `Memory Fallback`) и число мутаций со статусом `pending_sync` с прямой пометкой, что это локальная оффлайн-очередь без облачной синхронизации.
+   - Кнопка сброса в `ClientAppointmentsModal` переименована строго в **«Сбросить локальную демо-базу»**.
+
+### 10.2. Идентичность и безопасность (Этап 3 · Спринт 3.1)
+1. **Чистый домен идентичности (`src/domain/identity.ts`):**
+   - Введены типы `PasskeyCredentialRecord`, `IdentitySession`, `WebAuthnCapabilityReport`, `AuthMethod`. В структуре данных **физически отсутствуют** поля для паролей, сид-фраз или приватных ключей.
+2. **Реальный WebAuthn API + честный `[SIM]` Fallback (`src/infrastructure/identity/webAuthnService.ts`):**
+   - `registerWebAuthnPasskey` и `authenticateWebAuthnPasskey` используют `navigator.credentials.create` / `.get` с алгоритмами `ES256 (-7)` и `RS256 (-257)` и криптографически случайным challenge (`crypto.getRandomValues` на 32 байта). Приватные ключи не покидают TPM / Secure Enclave устройства.
+   - Поле `verificationScope: 'client_local_only'` в `IdentitySession` честно фиксирует, что серверная проверка подписи challenge перенесена на Этап 4.
+   - Для окружений без доступа к WebAuthn (например, изолированный iframe-превью или Node SSR) предусмотрен явный opt-in сценарий `createSimulatedDemoPasskey`, маркированный `[SIM]` в реестре, Navbar и модалке.
+3. **Защита от утечек секретов в открытом виде (`src/infrastructure/identity/secretHygiene.ts`):**
+   - `assertNoPlaintextSecrets` проверяет каждую запись `savePasskeys` / `saveIdentitySession` в `SalonRepository` (теперь `async`, чтобы отклонять промисом) и каждый JSON-экспорт в `CryptoCloudEngine.exportSessionSnapshot()` на наличие PEM-заголовков, полей `privateKey` / `secretKey` / `seedPhrase` / `mnemonic` / `password` и PAT-токенов.
+4. **Неразрушающая миграция схемы IndexedDB `v1 → v2` (`src/infrastructure/storage/salonRepository.ts`):**
+   - Версия `SALON_SCHEMA_VERSION` поднята до `2`; существующие ключи Этапа 2 (`appointments`, `artists`, `reviews`, `portfolio`, `likes`, `saves`, `ads`, `anchorPoints`, `chats`) остаются нетронутыми, а новые ключи (`passkeys`, `identitySession`) аккуратно дозасеваются и хранятся отдельно.
+5. **Content Security Policy (`index.html` + заметка на Этап 4):**
+   - В `index.html` добавлен тег `<meta http-equiv="Content-Security-Policy">` (`default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `script-src 'self' 'unsafe-inline'`, шрифты/стили Google Fonts).
+   - Директива `frame-ancestors` сознательно **не включена** в `<meta>`-тег (по спецификации W3C `<meta>` CSP её игнорирует и вызывает предупреждение в консоли), а `'unsafe-inline'` на `script-src` оставлен для совместимости бандла Vite SPA до подключения HTTP-заголовков с per-request nonce на сервере Этапа 4.
 

@@ -7,6 +7,7 @@
 
 import { CryptoCloudState, PeerNode, Appointment, Review, PortfolioItem, ChatMessage } from '../types';
 import { INITIAL_PEERS } from '../data/initialData';
+import { assertNoPlaintextSecrets } from '../infrastructure/identity/secretHygiene';
 
 const SWARM_CHANNEL_NAME = 'onyx_cryptocloud_swarm_v1';
 
@@ -160,6 +161,7 @@ export class CryptoCloudEngine {
     };
 
     const serialized = JSON.stringify(snapshot, null, 2);
+    assertNoPlaintextSecrets(serialized);
     const { hash: checksum, isRealSha256 } = await computeSHA256Detailed(serialized);
     const enriched = JSON.stringify(
       { ...snapshot, integrityChecksum: checksum, isRealSha256 },
