@@ -4,11 +4,13 @@ import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UsePortfolioGalleryOptions {
   initialItems?: PortfolioItem[];
+  initialLikedIds?: string[];
+  initialSavedIds?: string[];
   onSyncPostToSwarm?: (look: PortfolioItem, igPostId: string) => void;
   onNotify?: (title: string, message: string) => void;
-  onPersistPortfolio?: (items: PortfolioItem[], action: string, payload: unknown) => void;
-  onPersistLikes?: (likedIds: string[], items: PortfolioItem[], action: string, payload: unknown) => void;
-  onPersistSaves?: (savedIds: string[], action: string, payload: unknown) => void;
+  onPersistPortfolio?: (items: PortfolioItem[], action: string, payload: unknown) => Promise<void> | void;
+  onPersistLikes?: (likedIds: string[], items: PortfolioItem[], action: string, payload: unknown) => Promise<void> | void;
+  onPersistSaves?: (savedIds: string[], action: string, payload: unknown) => Promise<void> | void;
 }
 
 export interface InstagramImportPayload {
@@ -25,6 +27,8 @@ export interface InstagramImportPayload {
 
 export function usePortfolioGallery({
   initialItems,
+  initialLikedIds,
+  initialSavedIds,
   onSyncPostToSwarm,
   onNotify,
   onPersistPortfolio,
@@ -35,10 +39,10 @@ export function usePortfolioGallery({
     () => initialItems ?? createSeedSnapshot().portfolio
   );
   const [likedIds, setLikedIds] = useState<Set<string>>(
-    () => new Set(createSeedSnapshot().likedIds)
+    () => new Set(initialLikedIds ?? createSeedSnapshot().likedIds)
   );
   const [savedIds, setSavedIds] = useState<Set<string>>(
-    () => new Set(createSeedSnapshot().savedIds)
+    () => new Set(initialSavedIds ?? createSeedSnapshot().savedIds)
   );
   const [selectedLightboxItem, setSelectedLightboxItem] = useState<PortfolioItem | null>(null);
 
@@ -58,7 +62,6 @@ export function usePortfolioGallery({
     savedIdsRef.current = savedIds;
   }, [savedIds]);
 
-  // Atomic, race-free like toggle + persistence (resolves K-14)
   const handleToggleLike = useCallback(
     (id: string) => {
       const nextLiked = new Set(likedIdsRef.current);
@@ -80,12 +83,16 @@ export function usePortfolioGallery({
       setLikedIds(nextLiked);
       setItems(nextItems);
 
-      onPersistLikes?.(
-        Array.from(nextLiked),
-        nextItems,
-        isCurrentlyLiked ? 'LOOK_UNLIKED' : 'LOOK_LIKED',
-        { lookId: id }
-      );
+      void Promise.resolve(
+        onPersistLikes?.(
+          Array.from(nextLiked),
+          nextItems,
+          isCurrentlyLiked ? 'LOOK_UNLIKED' : 'LOOK_LIKED',
+          { lookId: id }
+        )
+      ).catch(err => {
+        console.warn('[Portfolio] Persist likes failed cleanly:', err);
+      });
     },
     [onPersistLikes]
   );
@@ -103,11 +110,15 @@ export function usePortfolioGallery({
       savedIdsRef.current = nextSaved;
       setSavedIds(nextSaved);
 
-      onPersistSaves?.(
-        Array.from(nextSaved),
-        isCurrentlySaved ? 'LOOK_UNSAVED' : 'LOOK_SAVED',
-        { lookId: id }
-      );
+      void Promise.resolve(
+        onPersistSaves?.(
+          Array.from(nextSaved),
+          isCurrentlySaved ? 'LOOK_UNSAVED' : 'LOOK_SAVED',
+          { lookId: id }
+        )
+      ).catch(err => {
+        console.warn('[Portfolio] Persist saves failed cleanly:', err);
+      });
     },
     [onPersistSaves]
   );
@@ -153,22 +164,27 @@ export function usePortfolioGallery({
         priceUSD: post.priceUSD,
         igPostId: `ig_sim_${uniqueSuffix}`,
         contentHash: `0xSIM_IG_${uniqueSuffix}`,
+        origin: 'user',
       };
 
       const nextItems = [newLook, ...itemsRef.current];
       itemsRef.current = nextItems;
       setItems(nextItems);
 
-      onPersistPortfolio?.(nextItems, 'INSTAGRAM_IMPORT_SAVED', {
-        lookId: newLook.id,
-        igPostId: newLook.igPostId,
+      void Promise.resolve(
+        onPersistPortfolio?.(nextItems, 'INSTAGRAM_IMPORT_SAVED', {
+          lookId: newLook.id,
+          igPostId: newLook.igPostId,
+        })
+      ).catch(err => {
+        console.warn('[Portfolio] Persist imported look failed cleanly:', err);
       });
 
       onSyncPostToSwarm?.(newLook, newLook.igPostId || '');
 
       onNotify?.(
         '[SIM] Demo Instagram Set Imported',
-        `Added demo look "${newLook.title}" and saved it to your local IndexedDB gallery.`
+        `Added demo look "${newLook.title}" and saved it to your local storage gallery.`
       );
     },
     [onNotify, onPersistPortfolio, onSyncPostToSwarm]
@@ -176,11 +192,8 @@ export function usePortfolioGallery({
 
   return {
     items,
-    setItems,
     likedIds,
-    setLikedIds,
     savedIds,
-    setSavedIds,
     selectedLightboxItem,
     openLightbox,
     closeLightbox,

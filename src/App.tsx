@@ -1,3 +1,5 @@
+import { useState, useCallback } from 'react';
+import { AlertTriangle, X } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
 import { PortfolioGallery } from './components/PortfolioGallery';
@@ -30,34 +32,30 @@ import {
 } from './data/initialData';
 
 import { ClientAnchorPoint } from './types';
+import { HydratedSalonData } from './domain/storage';
 
 import { blockchainLedger } from './simulation/cryptoLedger';
 import { reminderService } from './services/reminderService';
-import { useAppChrome } from './hooks/useAppChrome';
+import { useAppChrome, UseAppChromeReturn } from './hooks/useAppChrome';
 import { useAppShell } from './hooks/useAppShell';
 import { useBookingFlow } from './hooks/useBookingFlow';
 import { useChatConcierge } from './hooks/useChatConcierge';
 import { useCryptoSwarm } from './hooks/useCryptoSwarm';
 import { usePortfolioGallery } from './hooks/usePortfolioGallery';
 import { useSponsoredAds } from './hooks/useSponsoredAds';
-import { useLocalFirstHydration, useHydrationCommit } from './hooks/useLocalFirstHydration';
+import { useSalonBootstrap } from './hooks/useSalonBootstrap';
 import { useIdentitySession } from './hooks/useIdentitySession';
 
-/**
- * Computes incremental weighted average rating without depending on stale closures (K-09).
- */
-export function computeUpdatedArtistRating(
-  currentRating: number,
-  totalReviews: number,
-  newRating: number
-): number {
-  const safeCount = Math.max(0, totalReviews);
-  const weighted = (currentRating * safeCount + newRating) / (safeCount + 1);
-  return Number(weighted.toFixed(2));
+type SalonBootstrapApi = ReturnType<typeof useSalonBootstrap>;
+
+interface SalonAppProps {
+  initialData: HydratedSalonData;
+  bootstrap: SalonBootstrapApi;
+  chrome: UseAppChromeReturn;
+  onReportError: (msg: string) => void;
 }
 
-export default function App() {
-  // Global UI Chrome (Theme, Language/Locale, Wallpaper) - Sprint 1.1 / 1.4
+function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppProps) {
   const {
     currentLanguage,
     setCurrentLanguage,
@@ -69,22 +67,25 @@ export default function App() {
     isWallpaperModalOpen,
     setIsWallpaperModalOpen,
     handleSelectWallpaper,
-  } = useAppChrome();
+  } = chrome;
 
-  // Application Shell (Tabs, Role, PWA Deep Links, Toast Queue, Reminders) - Sprint 1.4
-  const shell = useAppShell();
+  // Application Shell (Tabs, Role, PWA Deep Links, Toast Queue, Reminders)
+  const shell = useAppShell({
+    initialRole: initialData.identitySession.authenticated
+      ? initialData.identitySession.role
+      : 'client',
+  });
 
-  // CryptoCloud Swarm & P2P State [SIM] - Sprint 1.2
+  // CryptoCloud Swarm & P2P State [SIM]
   const swarm = useCryptoSwarm();
 
-  // Stage 2 Local-First IndexedDB Repository + Offline Sync Outbox + Shared Entities
-  const localFirst = useLocalFirstHydration();
-
-  // Stage 3 WebAuthn / Passkey Identity & Public-Only Session Registry
+  // Stage 3 WebAuthn / Passkey Identity & Public-Only Session Registry (Load-then-Mount)
   const identity = useIdentitySession({
+    initialPasskeys: initialData.passkeys,
+    initialSession: initialData.identitySession,
     onRoleSynced: shell.setUserRole,
-    onPersistPasskeys: localFirst.persistPasskeys,
-    onPersistSession: localFirst.persistIdentitySession,
+    onPersistPasskeys: bootstrap.persistPasskeys,
+    onPersistSession: bootstrap.persistIdentitySession,
     onNotify: (title, message) => {
       shell.pushToast({
         id: `toast-id-${Date.now()}`,
@@ -97,25 +98,30 @@ export default function App() {
     },
   });
 
-  // Booking, Checkout & Appointments Flow - Sprint 1.1 + Stage 2 DIP & IndexedDB
+  // Booking, Checkout & Appointments Flow (Load-then-Mount)
   const booking = useBookingFlow({
-    artists: localFirst.artists,
+    artists: bootstrap.artists,
     initialBookingOpen: shell.deepLinkAction === 'book',
+    initialAppointments: initialData.appointments,
     onNotifyToast: shell.pushToast,
     onBroadcastToSwarm: swarm.broadcastBlock,
-    onPersistAppointments: localFirst.persistAppointments,
+    onPersistAppointments: bootstrap.persistAppointments,
   });
 
-  // Chat & Concierge Drawer - Sprint 1.2 + Stage 2 DIP & IndexedDB
+  // Chat & Concierge Drawer (Load-then-Mount)
   const chat = useChatConcierge({
     userRole: shell.userRole,
-    artists: localFirst.artists,
+    artists: bootstrap.artists,
+    initialMessages: initialData.chats,
     onBroadcastToSwarm: swarm.broadcastBlock,
-    onPersistChats: localFirst.persistChats,
+    onPersistChats: bootstrap.persistChats,
   });
 
-  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import - Sprint 1.3 + Stage 2 K-14
+  // Portfolio Stream, Likes/Saves, Lightbox & Instagram Import (Load-then-Mount)
   const portfolio = usePortfolioGallery({
+    initialItems: initialData.portfolio,
+    initialLikedIds: initialData.likedIds,
+    initialSavedIds: initialData.savedIds,
     onSyncPostToSwarm: (newLook, igPostId) => {
       swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
         lookId: newLook.id,
@@ -133,105 +139,86 @@ export default function App() {
         phoneOrTarget: 'Client Device',
       });
     },
-    onPersistPortfolio: localFirst.persistPortfolio,
-    onPersistLikes: localFirst.persistLikesAndPortfolio,
-    onPersistSaves: localFirst.persistSaves,
+    onPersistPortfolio: bootstrap.persistPortfolio,
+    onPersistLikes: bootstrap.persistLikesAndPortfolio,
+    onPersistSaves: bootstrap.persistSaves,
   });
 
-  // Sponsored Ads Engine & Modal - Sprint 1.3 + Stage 2 IndexedDB
+  // Sponsored Ads Engine & Modal (Load-then-Mount)
   const adsEngine = useSponsoredAds({
+    initialAds: initialData.ads,
     onBroadcastToSwarm: swarm.broadcastBlock,
-    onPersistAds: localFirst.persistAds,
+    onPersistAds: bootstrap.persistAds,
   });
 
-  // Synchronize persisted IndexedDB collections (or reset-to-seed) into domain hooks
-  useHydrationCommit(localFirst.hydrationEvent, (data, dirty, force) => {
-    if (force || !dirty.has('appointments')) {
-      booking.setAppointments(data.appointments);
-    }
-    if (force || !dirty.has('chats')) {
-      chat.setChatMessages(data.chats);
-    }
-    if (force || !dirty.has('portfolio')) {
-      portfolio.setItems(data.portfolio);
-    }
-    if (force || !dirty.has('likes')) {
-      portfolio.setLikedIds(new Set(data.likedIds));
-    }
-    if (force || !dirty.has('saves')) {
-      portfolio.setSavedIds(new Set(data.savedIds));
-    }
-    if (force || !dirty.has('ads')) {
-      adsEngine.setAds(data.ads);
-    }
-    if (force || !dirty.has('identity')) {
-      identity.setPasskeys(data.passkeys);
-      identity.setSession(data.identitySession);
-      if (data.identitySession.authenticated) {
-        shell.setUserRole(data.identitySession.role);
-      }
-    }
-  });
+  // Add review to [SIM] ledger & persist reviews + recalculated artist rating atomically
+  const handleAddReview = async (
+    reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]
+  ) => {
+    try {
+      const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
+      await bootstrap.saveReviewAndUpdateArtistRating(newReview);
 
-  // Add review to [SIM] ledger & persist reviews + recalculated artist rating locally
-  const handleAddReview = async (reviewData: Parameters<typeof blockchainLedger.createVerifiedReviewBlock>[0]) => {
-    const newReview = await blockchainLedger.createVerifiedReviewBlock(reviewData);
-    await localFirst.saveReviewAndUpdateArtistRating(newReview, computeUpdatedArtistRating);
-
-    // [SIM] Broadcast review block to swarm
-    swarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
-      reviewId: newReview.id,
-      artistId: newReview.artistId,
-      blockHash: newReview.blockHash,
-    });
+      swarm.broadcastBlock('NEW_BLOCKCHAIN_REVIEW', {
+        reviewId: newReview.id,
+        artistId: newReview.artistId,
+        blockHash: newReview.blockHash,
+      });
+    } catch (err) {
+      onReportError(err instanceof Error ? err.message : 'Не удалось сохранить отзыв локально.');
+    }
   };
 
   // Client Anchor Point Update Handler (persisted locally in IndexedDB)
   const handleUpdateAnchorPoint = (updatedPoint: ClientAnchorPoint) => {
-    void localFirst.updateAnchorPoint(updatedPoint);
-  };
-
-  // Master Salon Address Registry Handler (persisted locally in IndexedDB)
-  const handleUpdateMasterSalon = (artistId: string, salonName: string, salonAddress: string, lat: number, lng: number) => {
-    void localFirst.updateMasterSalon(artistId, salonName, salonAddress, lat, lng);
-  };
-
-  // Reset Local-First IndexedDB demo database back to clean seed fixtures
-  const handleResetDemoData = () => {
-    void localFirst.resetAllToSeed().then(() => {
-      shell.pushToast({
-        id: `toast-reset-${Date.now()}`,
-        type: 'push',
-        title: 'Локальная база сброшена',
-        message: 'Демо-данные IndexedDB (записи, лайки, отзывы, чат, локации) восстановлены до исходных значений.',
-        timestamp: new Date().toLocaleTimeString(),
-        phoneOrTarget: 'IndexedDB',
-      });
+    void bootstrap.updateAnchorPoint(updatedPoint).catch(err => {
+      onReportError(err instanceof Error ? err.message : 'Не удалось сохранить точку карты.');
     });
   };
 
-  if (!localFirst.isHydrated) {
-    return (
-      <div
-        className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors duration-300 ${wallpaperClass} ${
-          theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
-        }`}
-      >
-        <div className="max-w-md w-full p-6 rounded-2xl border border-cyan-500/30 bg-[#0b0e18]/90 backdrop-blur-md text-center space-y-3 shadow-2xl">
-          <div className="w-10 h-10 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin mx-auto" />
-          <h1 className="font-display text-lg font-bold text-white">Nailix · Onyx Aura</h1>
-          <p className="text-xs font-mono text-cyan-200">Загружаем локальные данные салона…</p>
-        </div>
-      </div>
-    );
-  }
+  // Master Salon Address Registry Handler (persisted locally in IndexedDB)
+  const handleUpdateMasterSalon = (
+    artistId: string,
+    salonName: string,
+    salonAddress: string,
+    lat: number,
+    lng: number
+  ) => {
+    void bootstrap.updateMasterSalon(artistId, salonName, salonAddress, lat, lng).catch(err => {
+      onReportError(err instanceof Error ? err.message : 'Не удалось обновить адрес салона.');
+    });
+  };
+
+  // Reset Local-First IndexedDB demo database back to clean seed fixtures
+  const handleResetDemoData = (options: { preserveIdentity: boolean }) => {
+    void bootstrap
+      .resetAllToSeed(options)
+      .then(() => {
+        shell.pushToast({
+          id: `toast-reset-${Date.now()}`,
+          type: 'push',
+          title: 'Локальная база сброшена',
+          message: options.preserveIdentity
+            ? 'Демо-данные восстановлены до исходных значений. Ключи Passkey сохранены.'
+            : 'Демо-данные и локальные ключи Passkey очищены до исходного состояния.',
+          timestamp: new Date().toLocaleTimeString(),
+          phoneOrTarget: 'IndexedDB',
+        });
+      })
+      .catch(err => {
+        onReportError(err instanceof Error ? err.message : 'Ошибка сброса локальной базы.');
+      });
+  };
+
+  const hasHealthIssue = bootstrap.storageHealth !== 'ok' || bootstrap.storageWarnings.length > 0;
 
   return (
-    <div className={`min-h-screen flex flex-col font-sans transition-colors duration-300 relative ${wallpaperClass} ${
-      theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
-    }`}>
-      
-      {/* Top 3-Zone Navigation with Nailix Rebrand, Theme Toggle, Map & 10 Languages */}
+    <div
+      className={`min-h-screen flex flex-col font-sans transition-colors duration-300 relative ${wallpaperClass} ${
+        theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
+      }`}
+    >
+      {/* Top 3-Zone Navigation */}
       <Navbar
         activeTab={shell.activeTab}
         setActiveTab={shell.setActiveTab}
@@ -259,7 +246,43 @@ export default function App() {
         t={t}
       />
 
-      {/* Main View Router with bottom padding for Android bottom nav */}
+      {/* Quiet Degraded / Recovery / Validation Notice Banner (L-01, L-06) */}
+      {hasHealthIssue && (
+        <div
+          role="status"
+          className="relative z-20 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-3"
+        >
+          <div className="rounded-xl border border-amber-500/40 bg-amber-950/50 backdrop-blur-md px-4 py-2.5 text-xs text-amber-100 flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="font-semibold">
+                  {bootstrap.storageHealth === 'memory_only'
+                    ? 'Хранилище в режиме памяти (без записи на диск)'
+                    : bootstrap.storageHealth === 'degraded'
+                    ? 'Локальное хранилище работает в режиме повышенной осторожности'
+                    : 'Восстановление локальных данных после проверки схемы'}
+                </div>
+                {bootstrap.storageWarnings.slice(0, 3).map((warn, idx) => (
+                  <p key={idx} className="text-[11px] text-amber-200/85">
+                    {warn}
+                  </p>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={bootstrap.dismissWarnings}
+              className="p-1 rounded-md text-amber-300 hover:bg-amber-400/20 cursor-pointer shrink-0"
+              aria-label="Скрыть уведомление хранилища"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main View Router */}
       <main className="flex-1 relative z-10 pb-24 sm:pb-28">
         {shell.activeTab === 'explore' && (
           <>
@@ -281,7 +304,6 @@ export default function App() {
 
             <OrnamentDivider />
 
-            {/* Targeted In-App Sponsored Ads (Salon Deals for Clients, Tools for Masters) */}
             <SponsoredAdsBanner
               ads={adsEngine.ads}
               userRole={shell.userRole}
@@ -311,13 +333,12 @@ export default function App() {
           </>
         )}
 
-        {/* Hyper-Local Map & Distance Proximity View */}
         {shell.activeTab === 'map' && (
           <div className="space-y-6">
             <ErrorBoundary level="section" sectionName="Карта локаций" theme={theme}>
               <ClientLocationMap
-                artists={localFirst.artists}
-                anchorPoints={localFirst.anchorPoints}
+                artists={bootstrap.artists}
+                anchorPoints={bootstrap.anchorPoints}
                 onUpdateAnchorPoint={handleUpdateAnchorPoint}
                 onSelectArtistToBook={booking.handleStartBookingWithArtist}
                 onOpenChatWithArtist={chat.openChat}
@@ -338,7 +359,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Friend Circle Consensus Moderation DAO View [SIM] */}
         {shell.activeTab === 'moderation' && (
           <ErrorBoundary level="section" sectionName="Круг доверия DAO [SIM]" theme={theme}>
             <FriendModerationSection t={t} />
@@ -349,7 +369,7 @@ export default function App() {
           <div className="space-y-8">
             <ErrorBoundary level="section" sectionName="Каталог мастеров" theme={theme}>
               <ArtistsView
-                artists={localFirst.artists}
+                artists={bootstrap.artists}
                 onSelectArtistToBook={booking.handleStartBookingWithArtist}
                 onOpenChatWithArtist={chat.openChat}
               />
@@ -368,9 +388,11 @@ export default function App() {
         {shell.activeTab === 'ledger' && (
           <ErrorBoundary level="section" sectionName="Реестр отзывов [SIM]" theme={theme}>
             <ReputationLedger
-              reviews={localFirst.reviews}
-              artists={localFirst.artists}
-              onAddReview={handleAddReview}
+              reviews={bootstrap.reviews}
+              artists={bootstrap.artists}
+              onAddReview={(rev) => {
+                void handleAddReview(rev);
+              }}
             />
           </ErrorBoundary>
         )}
@@ -378,7 +400,7 @@ export default function App() {
         {shell.activeTab === 'instagram' && (
           <ErrorBoundary level="section" sectionName="Синхронизация Instagram" theme={theme}>
             <InstagramSyncSection
-              artists={localFirst.artists}
+              artists={bootstrap.artists}
               onImportPost={portfolio.handleImportInstagramPost}
             />
           </ErrorBoundary>
@@ -389,20 +411,28 @@ export default function App() {
             <CryptoCloudPanel
               swarmState={swarm.swarmState}
               peers={swarm.peers}
-              onTriggerBackup={() =>
-                swarm.handleExportCryptoCloudBackup({
-                  appointments: booking.appointments,
-                  reviews: localFirst.reviews,
-                  portfolio: portfolio.items,
-                  chats: chat.chatMessages,
-                })
-              }
+              onTriggerBackup={() => {
+                void swarm
+                  .handleExportCryptoCloudBackup({
+                    appointments: booking.appointments,
+                    reviews: bootstrap.reviews,
+                    portfolio: portfolio.items,
+                    chats: chat.chatMessages,
+                  })
+                  .catch(err => {
+                    onReportError(err instanceof Error ? err.message : 'Ошибка экспорта снимка.');
+                  });
+              }}
               onSimulatePulse={swarm.handleSimulatePeerPulse}
               isBackingUp={swarm.isBackingUp}
               backupSuccessMessage={swarm.backupSuccessMessage}
-              storageBackend={localFirst.storageBackend}
-              pendingOutboxCount={localFirst.pendingOutboxCount}
-              onFlushOutboxDemo={localFirst.flushOutboxDemo}
+              storageBackend={bootstrap.storageBackend}
+              pendingOutboxCount={bootstrap.pendingOutboxCount}
+              onFlushOutboxDemo={() => {
+                void bootstrap.flushOutboxDemo().catch(err => {
+                  onReportError(err instanceof Error ? err.message : 'Ошибка обновления Outbox.');
+                });
+              }}
             />
           </ErrorBoundary>
         )}
@@ -411,14 +441,13 @@ export default function App() {
           <ErrorBoundary level="section" sectionName="Аналитика студии" theme={theme}>
             <AdminAnalyticsDashboard
               appointments={booking.appointments}
-              artists={localFirst.artists}
+              artists={bootstrap.artists}
               onReleaseEscrow={booking.handleReleaseEscrow}
               onTriggerReminder={booking.handleTriggerAppointmentReminder}
             />
           </ErrorBoundary>
         )}
 
-        {/* Android Native Suite & AR Fitting View */}
         {shell.activeTab === 'android' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
             <ErrorBoundary level="section" sectionName="AR-примерка и PWA Suite [SIM]" theme={theme}>
@@ -432,7 +461,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Ad Campaign Manager Modal */}
       <AdCampaignManagerModal
         isOpen={adsEngine.isAdManagerOpen}
         onClose={adsEngine.closeAdManager}
@@ -442,7 +470,6 @@ export default function App() {
         t={t}
       />
 
-      {/* Modals & Overlays */}
       <LightboxModal
         item={portfolio.selectedLightboxItem}
         onClose={portfolio.closeLightbox}
@@ -450,15 +477,23 @@ export default function App() {
           portfolio.handleStartBookingWithLookFromLightbox(look, booking.handleStartBookingWithLook)
         }
         onLikeToggle={portfolio.handleToggleLike}
-        isLiked={portfolio.selectedLightboxItem ? portfolio.likedIds.has(portfolio.selectedLightboxItem.id) : false}
+        isLiked={
+          portfolio.selectedLightboxItem
+            ? portfolio.likedIds.has(portfolio.selectedLightboxItem.id)
+            : false
+        }
         onSaveToggle={portfolio.handleToggleSave}
-        isSaved={portfolio.selectedLightboxItem ? portfolio.savedIds.has(portfolio.selectedLightboxItem.id) : false}
+        isSaved={
+          portfolio.selectedLightboxItem
+            ? portfolio.savedIds.has(portfolio.selectedLightboxItem.id)
+            : false
+        }
       />
 
       <BookingModal
         isOpen={booking.isBookingModalOpen}
         onClose={() => booking.setIsBookingModalOpen(false)}
-        artists={localFirst.artists}
+        artists={bootstrap.artists}
         initialArtist={booking.bookingArtistTarget}
         initialLook={booking.bookingLookTarget}
         onProceedToCheckout={booking.handleProceedToCheckout}
@@ -485,7 +520,7 @@ export default function App() {
           });
         }}
         onTestPush={(artistName, serviceName) => {
-          reminderService.requestPushPermission();
+          void reminderService.requestPushPermission();
           reminderService.dispatch2HourReminder({
             id: 'test-push',
             clientName: DEMO_CLIENT_PROFILE.name,
@@ -522,7 +557,7 @@ export default function App() {
           onClose={chat.closeChat}
           messages={chat.chatMessages}
           onSendMessage={chat.handleSendMessage}
-          artists={localFirst.artists}
+          artists={bootstrap.artists}
           userRole={shell.userRole}
           activeThreadId={chat.activeThreadId}
           onSelectThread={chat.setActiveThreadId}
@@ -544,23 +579,22 @@ export default function App() {
         />
       </ErrorBoundary>
 
-      {/* Android Permissions & APK Modal */}
       <AndroidPermissionsModal
         isOpen={shell.isPermissionsModalOpen}
         onClose={() => shell.setIsPermissionsModalOpen(false)}
         t={t}
       />
 
-      {/* Confirmed Appointments & Calendar Sync (.ICS / Google Calendar) Modal */}
       <ClientAppointmentsModal
         isOpen={booking.isAppointmentsModalOpen}
         onClose={() => booking.setIsAppointmentsModalOpen(false)}
         appointments={booking.appointments}
-        artists={localFirst.artists}
+        artists={bootstrap.artists}
         onOpenBooking={() => booking.setIsBookingModalOpen(true)}
         onResetLocalData={handleResetDemoData}
-        storageBackend={localFirst.storageBackend}
-        pendingOutboxCount={localFirst.pendingOutboxCount}
+        storageBackend={bootstrap.storageBackend}
+        storageHealth={bootstrap.storageHealth}
+        pendingOutboxCount={bootstrap.pendingOutboxCount}
         theme={theme}
         onNotification={(msg) => {
           shell.pushToast({
@@ -574,7 +608,6 @@ export default function App() {
         }}
       />
 
-      {/* WebAuthn / Passkeys Identity & Device Security Modal */}
       <PasskeyAuthModal
         isOpen={identity.isAuthModalOpen}
         onClose={identity.closeAuthModal}
@@ -588,11 +621,11 @@ export default function App() {
         onRegisterPasskey={identity.handleRegisterPasskey}
         onSignInWithPasskey={identity.handleSignInWithPasskey}
         onCreateDemoFallback={identity.handleCreateDemoFallbackPasskey}
+        onSignInDemoFallback={identity.handleSignInDemoPasskey}
         onSignOut={identity.handleSignOut}
         onRevokePasskey={identity.handleRevokePasskey}
       />
 
-      {/* Luxury Wallpaper & Ornament Selector Modal */}
       <WallpaperModal
         isOpen={isWallpaperModalOpen}
         onClose={() => setIsWallpaperModalOpen(false)}
@@ -601,17 +634,19 @@ export default function App() {
         theme={theme}
       />
 
-      {/* Real-Time Toast Notifications (SMS, Push, P2P Sync) */}
       <ToastNotification
         notifications={shell.toasts}
         onDismiss={shell.dismissToast}
       />
 
-      {/* Expressive Haute Couture & Ornament Art Footer */}
       <footer className="relative z-10 border-t border-cyan-500/20 bg-[#07080e]/95 backdrop-blur-md py-8 text-xs text-gray-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <img src="/pwa-192x192.png" alt="Nailix" className="w-5 h-5 rounded-md object-cover ring-1 ring-cyan-400/40" />
+            <img
+              src="/pwa-192x192.png"
+              alt="Nailix"
+              className="w-5 h-5 rounded-md object-cover ring-1 ring-cyan-400/40"
+            />
             <span className="font-display font-bold text-white tracking-wider text-sm">Nailix</span>
             <span aria-hidden="true">·</span>
             <span className="text-cyan-300 font-mono text-[11px]">{t.tagline}</span>
@@ -634,7 +669,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Android Floating Action Button (FAB) Speed Dial */}
       <AndroidFAB
         onQuickBook={() => booking.setIsBookingModalOpen(true)}
         onOpenAppointments={() => booking.setIsAppointmentsModalOpen(true)}
@@ -644,7 +678,6 @@ export default function App() {
         theme={theme}
       />
 
-      {/* Android Native Material 3 Bottom Navigation Bar */}
       <AndroidBottomNav
         activeTab={shell.activeTab}
         setActiveTab={shell.setActiveTab}
@@ -653,7 +686,72 @@ export default function App() {
         theme={theme}
         t={t}
       />
-
     </div>
+  );
+}
+
+export default function App() {
+  const chrome = useAppChrome();
+  const [storageBannerError, setStorageBannerError] = useState<string | null>(null);
+
+  const handleStorageError = useCallback((message: string) => {
+    setStorageBannerError(message);
+  }, []);
+
+  const bootstrap = useSalonBootstrap({
+    onStorageError: handleStorageError,
+  });
+
+  if (!bootstrap.isHydrated || !bootstrap.bootstrapData) {
+    return (
+      <div
+        className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans transition-colors duration-300 ${chrome.wallpaperClass} ${
+          chrome.theme === 'dark' ? 'text-[#edeef2]' : 'text-[#1a1e29]'
+        }`}
+      >
+        <div className="max-w-md w-full p-6 rounded-2xl border border-cyan-500/30 bg-[#0b0e18]/90 backdrop-blur-md text-center space-y-3 shadow-2xl">
+          <div className="w-10 h-10 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin mx-auto" />
+          <h1 className="font-display text-lg font-bold text-white">Nailix · Onyx Aura</h1>
+          <p className="text-xs font-mono text-cyan-200">Загружаем локальные данные салона…</p>
+          {storageBannerError && (
+            <p className="text-xs text-red-300 bg-red-950/50 border border-red-500/40 rounded-lg p-2">
+              {storageBannerError}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {storageBannerError && (
+        <div
+          role="alert"
+          className="fixed bottom-20 right-4 z-50 max-w-sm rounded-xl border border-red-500/50 bg-red-950/95 px-4 py-3 text-xs text-red-100 shadow-2xl flex items-start gap-2"
+        >
+          <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+          <div className="flex-1 space-y-0.5">
+            <div className="font-semibold">Предупреждение локального хранилища</div>
+            <p className="text-[11px] text-red-200/90">{storageBannerError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStorageBannerError(null)}
+            className="text-red-200 hover:text-white cursor-pointer"
+            aria-label="Закрыть предупреждение"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      <SalonApp
+        key={bootstrap.resetEpoch}
+        initialData={bootstrap.bootstrapData}
+        bootstrap={bootstrap}
+        chrome={chrome}
+        onReportError={handleStorageError}
+      />
+    </>
   );
 }

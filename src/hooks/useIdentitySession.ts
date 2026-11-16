@@ -1,37 +1,48 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   DEFAULT_ANONYMOUS_SESSION,
   IdentitySession,
+  isIdentitySessionExpired,
   PasskeyCredentialRecord,
   WebAuthnCapabilityReport,
 } from '../domain/identity';
 import { UserRole } from '../types';
 import {
+  authenticateDemoPasskeySim,
   authenticateWebAuthnPasskey,
+  buildSessionExpiryFromNow,
   createSimulatedDemoPasskey,
   detectWebAuthnSupport,
   registerWebAuthnPasskey,
 } from '../infrastructure/identity/webAuthnService';
 
 export interface UseIdentitySessionOptions {
+  initialPasskeys?: PasskeyCredentialRecord[];
+  initialSession?: IdentitySession;
   onRoleSynced?: (role: UserRole) => void;
   onPersistPasskeys?: (
     next: PasskeyCredentialRecord[],
     action: string,
     payload: unknown
-  ) => Promise<void> | void;
-  onPersistSession?: (next: IdentitySession, action: string) => Promise<void> | void;
+  ) => Promise<void>;
+  onPersistSession?: (next: IdentitySession, action: string) => Promise<void>;
   onNotify?: (title: string, message: string) => void;
 }
 
 export function useIdentitySession({
+  initialPasskeys = [],
+  initialSession = DEFAULT_ANONYMOUS_SESSION,
   onRoleSynced,
   onPersistPasskeys,
   onPersistSession,
   onNotify,
 }: UseIdentitySessionOptions = {}) {
-  const [passkeys, setPasskeys] = useState<PasskeyCredentialRecord[]>([]);
-  const [session, setSession] = useState<IdentitySession>(DEFAULT_ANONYMOUS_SESSION);
+  const normalizedInitialSession = isIdentitySessionExpired(initialSession)
+    ? { ...DEFAULT_ANONYMOUS_SESSION }
+    : initialSession;
+
+  const [passkeys, setPasskeys] = useState<PasskeyCredentialRecord[]>(initialPasskeys);
+  const [session, setSession] = useState<IdentitySession>(normalizedInitialSession);
   const [capabilities, setCapabilities] = useState<WebAuthnCapabilityReport>({
     isSupported: false,
     platformAuthenticatorAvailable: false,
@@ -41,28 +52,35 @@ export function useIdentitySession({
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const passkeysRef = useRef<PasskeyCredentialRecord[]>(passkeys);
-  const sessionRef = useRef<IdentitySession>(session);
-
-  useEffect(() => {
-    passkeysRef.current = passkeys;
-  }, [passkeys]);
-
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
-
   useEffect(() => {
     let active = true;
-    detectWebAuthnSupport().then(report => {
-      if (active) {
-        setCapabilities(report);
-      }
-    });
+    detectWebAuthnSupport()
+      .then(report => {
+        if (active) {
+          setCapabilities(report);
+        }
+      })
+      .catch(() => {
+        // Ignore capability probe failures cleanly
+      });
     return () => {
       active = false;
     };
   }, []);
+
+  // Periodic local TTL expiration check (L-04)
+  useEffect(() => {
+    if (!session.authenticated) return;
+    const interval = setInterval(() => {
+      if (isIdentitySessionExpired(session)) {
+        const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
+        setSession(anonymous);
+        onRoleSynced?.('client');
+        void onPersistSession?.(anonymous, 'IDENTITY_SESSION_EXPIRED').catch(() => undefined);
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [onPersistSession, onRoleSynced, session]);
 
   const openAuthModal = useCallback(() => {
     setAuthError(null);
@@ -74,25 +92,27 @@ export function useIdentitySession({
     setIsAuthModalOpen(false);
   }, []);
 
-  const applyAuthenticatedSession = useCallback(
+  const commitSession = useCallback(
     async (cred: PasskeyCredentialRecord, isNewRegistration: boolean) => {
+      const nowIso = new Date().toISOString();
       const nextSession: IdentitySession = {
         authenticated: true,
         credentialId: cred.id,
         displayName: cred.displayName,
         role: cred.role,
         authMethod: cred.isSimulatedFallback ? 'demo_passkey_sim' : 'webauthn_passkey',
-        signedInAt: new Date().toISOString(),
+        signedInAt: nowIso,
+        expiresAt: buildSessionExpiryFromNow(),
         verificationScope: 'client_local_only',
       };
 
-      sessionRef.current = nextSession;
-      setSession(nextSession);
-      onRoleSynced?.(cred.role);
+      // Persist FIRST so failed writes never desync UI from storage (L-12)
       await onPersistSession?.(
         nextSession,
         isNewRegistration ? 'PASSKEY_REGISTERED_SIGNIN' : 'PASSKEY_AUTHENTICATED'
       );
+      setSession(nextSession);
+      onRoleSynced?.(cred.role);
     },
     [onPersistSession, onRoleSynced]
   );
@@ -105,24 +125,22 @@ export function useIdentitySession({
         const created = await registerWebAuthnPasskey({
           displayName,
           role,
-          existingCredentials: passkeysRef.current,
+          existingCredentials: passkeys,
         });
 
-        const nextPasskeys = [created, ...passkeysRef.current];
-        passkeysRef.current = nextPasskeys;
-        setPasskeys(nextPasskeys);
-
+        const nextPasskeys = [created, ...passkeys];
         await onPersistPasskeys?.(nextPasskeys, 'PASSKEY_REGISTERED', {
           credentialId: created.id,
           role: created.role,
           rpId: created.rpId,
         });
+        setPasskeys(nextPasskeys);
 
-        await applyAuthenticatedSession(created, true);
+        await commitSession(created, true);
 
         onNotify?.(
-          'Passkey создан (WebAuthn)',
-          `Ключ для «${created.displayName}» зарегистрирован в устройстве и сохранён в IndexedDB.`
+          'Passkey (WebAuthn)',
+          `Ключ «${created.displayName}» зарегистрирован в устройстве.`
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Не удалось создать Passkey.';
@@ -131,29 +149,36 @@ export function useIdentitySession({
         setIsBusy(false);
       }
     },
-    [applyAuthenticatedSession, onNotify, onPersistPasskeys]
+    [commitSession, onNotify, onPersistPasskeys, passkeys]
   );
 
   const handleSignInWithPasskey = useCallback(async () => {
     setIsBusy(true);
     setAuthError(null);
     try {
-      const matched = await authenticateWebAuthnPasskey(passkeysRef.current);
-      const nextPasskeys = passkeysRef.current.map(c =>
-        c.id === matched.id ? { ...c, lastUsedAt: matched.lastUsedAt } : c
-      );
-      passkeysRef.current = nextPasskeys;
-      setPasskeys(nextPasskeys);
+      const { credential, cryptographicSignatureVerified, discoveredNew } =
+        await authenticateWebAuthnPasskey(passkeys, { allowDiscoverableFallback: true });
+
+      const nextPasskeys = discoveredNew
+        ? [credential, ...passkeys]
+        : passkeys.map(c => (c.id === credential.id ? credential : c));
 
       await onPersistPasskeys?.(nextPasskeys, 'PASSKEY_ASSERTION_USED', {
-        credentialId: matched.id,
+        credentialId: credential.id,
+        cryptographicSignatureVerified,
+        discoveredNew,
       });
+      setPasskeys(nextPasskeys);
 
-      await applyAuthenticatedSession(matched, false);
+      await commitSession(credential, false);
 
       onNotify?.(
-        'Вход по Passkey выполнен',
-        `Добро пожаловать, ${matched.displayName} (локальная проверка WebAuthn).`
+        'Passkey Check [LOCAL_ONLY]',
+        `${credential.displayName}: ${
+          cryptographicSignatureVerified
+            ? 'криптоподпись SPKI проверена локально'
+            : 'присутствие подтверждено локально'
+        } (TTL 8ч).`
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось выполнить вход по Passkey.';
@@ -161,7 +186,7 @@ export function useIdentitySession({
     } finally {
       setIsBusy(false);
     }
-  }, [applyAuthenticatedSession, onNotify, onPersistPasskeys]);
+  }, [commitSession, onNotify, onPersistPasskeys, passkeys]);
 
   const handleCreateDemoFallbackPasskey = useCallback(
     async (displayName: string, role: UserRole) => {
@@ -169,59 +194,104 @@ export function useIdentitySession({
       setAuthError(null);
       try {
         const demoCred = createSimulatedDemoPasskey(displayName, role);
-        const nextPasskeys = [demoCred, ...passkeysRef.current];
-        passkeysRef.current = nextPasskeys;
-        setPasskeys(nextPasskeys);
+        const nextPasskeys = [demoCred, ...passkeys];
 
         await onPersistPasskeys?.(nextPasskeys, 'DEMO_PASSKEY_SIM_CREATED', {
           credentialId: demoCred.id,
           role: demoCred.role,
         });
+        setPasskeys(nextPasskeys);
 
-        await applyAuthenticatedSession(demoCred, true);
+        await commitSession(demoCred, true);
 
         onNotify?.(
           '[SIM] Demo Passkey Preview',
-          `Активирован учебный [SIM] профиль «${demoCred.displayName}» (WebAuthn недоступен в текущей песочнице).`
+          `[SIM] Профиль «${demoCred.displayName}» активирован локально (без WebAuthn).`
         );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Не удалось создать [SIM] ключ.';
+        setAuthError(message);
       } finally {
         setIsBusy(false);
       }
     },
-    [applyAuthenticatedSession, onNotify, onPersistPasskeys]
+    [commitSession, onNotify, onPersistPasskeys, passkeys]
+  );
+
+  const handleSignInDemoPasskey = useCallback(
+    async (preferredId?: string) => {
+      setIsBusy(true);
+      setAuthError(null);
+      try {
+        const demoCred = authenticateDemoPasskeySim(passkeys, preferredId);
+        const nextPasskeys = passkeys.map(c => (c.id === demoCred.id ? demoCred : c));
+
+        await onPersistPasskeys?.(nextPasskeys, 'DEMO_PASSKEY_SIM_SIGNIN', {
+          credentialId: demoCred.id,
+        });
+        setPasskeys(nextPasskeys);
+
+        await commitSession(demoCred, false);
+
+        onNotify?.(
+          '[SIM] Demo Passkey Sign-In',
+          `[SIM] Вход выполнен с сохранённым ключом «${demoCred.displayName}».`
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Не удалось войти с [SIM] ключом.';
+        setAuthError(message);
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [commitSession, onNotify, onPersistPasskeys, passkeys]
   );
 
   const handleSignOut = useCallback(async () => {
-    const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
-    sessionRef.current = anonymous;
-    setSession(anonymous);
-    await onPersistSession?.(anonymous, 'IDENTITY_SIGNED_OUT');
-    onNotify?.('Сеанс завершён', 'Вы вышли из локальной сессии Passkey.');
-  }, [onNotify, onPersistSession]);
+    setIsBusy(true);
+    setAuthError(null);
+    try {
+      const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
+      await onPersistSession?.(anonymous, 'IDENTITY_SIGNED_OUT');
+      setSession(anonymous);
+      onRoleSynced?.('client');
+      onNotify?.('Passkey Session Ended', 'Локальный сеанс завершён.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось завершить сеанс в хранилище.';
+      setAuthError(message);
+    } finally {
+      setIsBusy(false);
+    }
+  }, [onNotify, onPersistSession, onRoleSynced]);
 
   const handleRevokePasskey = useCallback(
     async (credentialId: string) => {
-      const nextPasskeys = passkeysRef.current.filter(c => c.id !== credentialId);
-      passkeysRef.current = nextPasskeys;
-      setPasskeys(nextPasskeys);
+      setIsBusy(true);
+      setAuthError(null);
+      try {
+        const nextPasskeys = passkeys.filter(c => c.id !== credentialId);
+        await onPersistPasskeys?.(nextPasskeys, 'PASSKEY_REVOKED', { credentialId });
+        setPasskeys(nextPasskeys);
 
-      await onPersistPasskeys?.(nextPasskeys, 'PASSKEY_REVOKED', { credentialId });
-
-      if (sessionRef.current.credentialId === credentialId) {
-        const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
-        sessionRef.current = anonymous;
-        setSession(anonymous);
-        await onPersistSession?.(anonymous, 'IDENTITY_SESSION_REVOKED');
+        if (session.credentialId === credentialId) {
+          const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
+          await onPersistSession?.(anonymous, 'IDENTITY_SESSION_REVOKED');
+          setSession(anonymous);
+          onRoleSynced?.('client');
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Не удалось удалить ключ из хранилища.';
+        setAuthError(message);
+      } finally {
+        setIsBusy(false);
       }
     },
-    [onPersistPasskeys, onPersistSession]
+    [onPersistPasskeys, onPersistSession, onRoleSynced, passkeys, session.credentialId]
   );
 
   return {
     passkeys,
-    setPasskeys,
     session,
-    setSession,
     capabilities,
     isAuthModalOpen,
     openAuthModal,
@@ -231,6 +301,7 @@ export function useIdentitySession({
     handleRegisterPasskey,
     handleSignInWithPasskey,
     handleCreateDemoFallbackPasskey,
+    handleSignInDemoPasskey,
     handleSignOut,
     handleRevokePasskey,
   };

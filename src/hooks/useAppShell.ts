@@ -19,6 +19,10 @@ function readInitialUrlParams(): { initialTab: string; deepLinkAction: string | 
   };
 }
 
+export interface UseAppShellOptions {
+  initialRole?: UserRole;
+}
+
 /**
  * Encapsulates application shell infrastructure:
  * - Active tab routing & client/master role toggle
@@ -26,10 +30,10 @@ function readInitialUrlParams(): { initialTab: string; deepLinkAction: string | 
  * - Real-time toast queue & reminderService subscription
  * - PWA deep-link URL parameter parsing (?tab=..., ?action=book|ar)
  */
-export function useAppShell() {
+export function useAppShell({ initialRole = 'client' }: UseAppShellOptions = {}) {
   const [{ initialTab, deepLinkAction }] = useState(readInitialUrlParams);
   const [activeTab, setActiveTab] = useState<string>(initialTab);
-  const [userRole, setUserRole] = useState<UserRole>('client');
+  const [userRole, setUserRole] = useState<UserRole>(initialRole);
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ReminderNotificationEvent[]>([]);
 
@@ -51,7 +55,7 @@ export function useAppShell() {
     });
 
     const requestNotice = () => {
-      reminderService.requestPushPermission();
+      void reminderService.requestPushPermission();
       window.removeEventListener('click', requestNotice);
     };
     window.addEventListener('click', requestNotice);

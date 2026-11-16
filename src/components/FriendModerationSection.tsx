@@ -177,7 +177,7 @@ export const FriendModerationSection: React.FC<FriendModerationSectionProps> = (
             </h2>
             <div className="my-2 p-2.5 bg-red-950/30 border border-red-500/40 rounded text-[11px] text-red-200 flex items-center gap-2">
               <span className="font-mono font-bold bg-red-900/60 px-1.5 py-0.5 rounded text-red-300 text-[10px]">[SIM]</span>
-              <span>Симуляция консенсуса жюри (локальный React State). P2P-синхронизация голосов запланирована на Этапе 5 (Закон 1, 7, 10).</span>
+              <span>[SIM] Симуляция консенсуса жюри (локальный React State). P2P-синхронизация голосов запланирована на Этапе 5 (Закон 1, 7, 10).</span>
             </div>
             <p className="text-xs text-gray-300 mt-1 max-w-2xl leading-relaxed">
               {t.moderationSubtitle}

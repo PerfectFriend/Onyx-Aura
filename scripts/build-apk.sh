@@ -53,18 +53,24 @@ zipalign -f -v 4 nailix-unaligned.apk nailix-aligned.apk > /dev/null
 
 echo "8. Signing APK with release keystore..."
 KEYSTORE_PATH="${NAILIX_KEYSTORE_PATH:-$HOME/.android/nailix-release.keystore}"
-KS_PASS="${NAILIX_KEYSTORE_PASS:?Error: set NAILIX_KEYSTORE_PASS in your environment before signing}"
-KEY_PASS="${NAILIX_KEY_PASS:-$KS_PASS}"
-KEY_ALIAS="${NAILIX_KEY_ALIAS:-nailix}"
+export NAILIX_KEYSTORE_PASS="${NAILIX_KEYSTORE_PASS:?Error: set NAILIX_KEYSTORE_PASS in your environment before signing}"
+export NAILIX_KEY_PASS="${NAILIX_KEY_PASS:-$NAILIX_KEYSTORE_PASS}"
 
 if [ ! -f "$KEYSTORE_PATH" ]; then
-    mkdir -p "$(dirname "$KEYSTORE_PATH")"
-    keytool -genkey -v -keystore "$KEYSTORE_PATH" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$KS_PASS" -keypass "$KEY_PASS" -dname "CN=Nailix, OU=Mobile, O=NailixArt, L=Barcelona, ST=Catalonia, C=ES"
+    echo "Error: Keystore not found at '$KEYSTORE_PATH'." >&2
+    echo "Refusing to auto-generate a throwaway release key silently." >&2
+    echo "Create one explicitly or point NAILIX_KEYSTORE_PATH to your existing release keystore (see docs/KEY_ROTATION_RUNBOOK.md)." >&2
+    exit 1
 fi
 
 APK_OUT_DIR="$ROOT_DIR/dist-apk"
 mkdir -p "$APK_OUT_DIR"
-apksigner sign --ks "$KEYSTORE_PATH" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" --out "$APK_OUT_DIR/nailix.apk" nailix-aligned.apk
+apksigner sign \
+  --ks "$KEYSTORE_PATH" \
+  --ks-pass env:NAILIX_KEYSTORE_PASS \
+  --key-pass env:NAILIX_KEY_PASS \
+  --out "$APK_OUT_DIR/nailix.apk" \
+  nailix-aligned.apk
 
 echo "9. Verifying APK signature..."
 apksigner verify --verbose "$APK_OUT_DIR/nailix.apk"

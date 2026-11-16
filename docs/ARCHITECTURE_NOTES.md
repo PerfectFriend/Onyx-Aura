@@ -234,3 +234,38 @@
    - В `index.html` добавлен тег `<meta http-equiv="Content-Security-Policy">` (`default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `script-src 'self' 'unsafe-inline'`, шрифты/стили Google Fonts).
    - Директива `frame-ancestors` сознательно **не включена** в `<meta>`-тег (по спецификации W3C `<meta>` CSP её игнорирует и вызывает предупреждение в консоли), а `'unsafe-inline'` на `script-src` оставлен для совместимости бандла Vite SPA до подключения HTTP-заголовков с per-request nonce на сервере Этапа 4.
 
+---
+
+## 🛡️ 11. Спринт 3.2 «Закалка перед Этапом 4» (По итогам кросс-аудита `L-01 … L-19`)
+
+После перекрёстного ревью Коляна (`Claude Sonnet 5.5`) архитектура усилена без добавления новых продуктовых фич:
+
+1. **Устойчивый адаптер хранилища (`src/infrastructure/storage/indexedDbAdapter.ts` · `L-01`):**
+   - Введён `ResilientStorageAdapter`: различает временные сбои ввода/вывода (короткий retry + удержание отложенных ключей в `pendingRetryKeys` без переключения движка и потери IndexedDB) и фатальные блокировки движка (`SecurityError` / `IndexedDB unavailable` → переход в `memory_only`).
+   - Выведен публичный метод `retryPendingWrites()` и отчёт `StorageHealthReport` (`health: 'ok' | 'degraded' | 'memory_only'`).
+   - В UI (`App.tsx`) отображается тихий предупреждающий баннер при статусах `degraded` / `memory_only` и в режиме `readOnlyFutureSchema`, а корневой `ErrorBoundary` честно показывает активный движок (`indexeddb` / `memory`) и предоставляет третью кнопку **«Сбросить локальные данные»** (`emergencyDeleteLocalDatabase`).
+2. **Неразрушаемая Outbox-очередь и метка `origin: 'seed' | 'user'` (`L-02`, `L-03`):**
+   - `enqueueOutboxMutation` гарантирует, что мутации со статусом `pending_sync` **никогда** не вытесняются лимитом очереди (вытесняются только завершённые `synced`), а payload ограничивается идентификаторами и версией без дублирования ПДн.
+   - Сущности поддерживают `origin: 'seed' | 'user'`; стартовые данные салона не попадают в outbox и отфильтровываются методом `SalonRepository.filterUserRecords()` при экспорте `.sim.json` в `CryptoCloudEngine`.
+3. **Allowlist-схемы, вторая линия секрет-гигиены и реестр миграций (`src/domain/schemas.ts`, `src/infrastructure/identity/secretHygiene.ts` · `L-05`, `L-06`):**
+   - Основной рубеж — строгие белые списки полей для каждой коллекции (`validateAppointments`, `validatePasskeys`, `validateIdentitySession`, `validateReviews` и т. д.), отклоняющие любые посторонние ключи до записи и при загрузке.
+   - Повреждённая коллекция на диске не роняет весь интерфейс: сбрасывается только повреждённый срез с фиксацией предупреждения.
+   - `assertNoSecretLikeFields` (бывший `assertNoPlaintextSecrets`) честно задокументирован как страховка второго уровня и расширен под `private_key`, JWK `"d"`, `apiKey`, числовой `password`, `Bearer` и `AKIA…`.
+   - При обнаружении `schemaVersion > SALON_SCHEMA_VERSION` репозиторий сохраняет исходную метку на диске и переходит в `read-only` режим, не затирая данные будущей версии приложения.
+   - Для перехода `v1 → v2` реализован явный массив шагов `MIGRATION_REGISTRY`.
+4. **Честная локальная крипто-проверка WebAuthn & TTL (`src/infrastructure/identity/webAuthnService.ts`, `src/domain/identity.ts` · `L-04`, `L-12`):**
+   - `authenticateWebAuthnPasskey` проверяет `clientDataJSON` (`type === 'webauthn.get'`, точный `challenge` и `origin`), SHA-256 `rpIdHash`, биты `UP/UV` в `authData`, монотонный `signCount` и проверяет подпись через Web Crypto `crypto.subtle.verify` по сохранённому SPKI (конвертируя ASN.1 DER-подпись ECDSA P-256 в `r‖s`).
+   - Введён ограниченный срок жизни локальной сессии (`DEFAULT_SESSION_TTL_MS = 8 ч`, поле `expiresAt`).
+   - Реализован discoverable fallback (`allowCredentials: []`) на случай потери локального реестра после сброса БД.
+   - Все операции сохранения Passkey/выхода работают по принципу «сначала персистируем, потом обновляем состояние» и не глушат ошибки.
+5. **Load-then-Mount & Межвкладочная синхронизация (`src/hooks/useSalonBootstrap.ts`, `src/App.tsx` · `L-11`, `L-14`):**
+   - Удалены громоздкие `useLocalFirstHydration.ts` и `useHydrationCommit`: корневой компонент `App` сначала ждёт `useSalonBootstrap()`, а затем монтирует `<SalonApp key={resetEpoch} initialData={...} />`, где доменные хуки (`useBookingFlow`, `usePortfolioGallery`, `useChatConcierge`, `useSponsoredAds`) инициализируются уже готовым срезом и используют атомарный батч `setMany` под защитой Web Locks (`navigator.locks`) и синхронизацией через `BroadcastChannel`.
+   - Формула пересчёта рейтинга перенесена в чистый модуль `src/domain/rating.ts` (добавлено накопление `ratingSum`, чтобы исключить дрейф от повторного округления).
+6. **Build-time CSP, самохостинговые шрифты и строгий ESLint/CI (`src/infrastructure/security/csp.ts`, `vite.config.ts`, `eslint.config.js`, `scripts/ci.workflow.yml` · `L-07`, `L-08`, `L-15`, `L-17`):**
+   - Шрифты встроены через `@fontsource/*` (Workbox кэширует `.woff2`), внешние `<link>` к Google Fonts и запрет зума `user-scalable=no` удалены из `index.html`.
+   - `vite.config.ts` переписывает CSP по режиму (`serve` vs `build`): в `dist/index.html` отсутствует `script-src 'unsafe-inline'`.
+   - `eslint.config.js` переведён на `recommendedTypeChecked` + `@typescript-eslint/no-floating-promises: 'error'` + `jsxA11y.flatConfigs.recommended`; `typescript` зафиксирован на `6.0.3`, унифицирован lockfile (`package-lock.json` для `npm ci`).
+7. **Осознанное решение по `src/types.ts` (`L-18`):**
+   - Контракты хранилища (`domain/storage.ts`), схем (`domain/schemas.ts`), идентичности (`domain/identity.ts`) и расчёта рейтинга (`domain/rating.ts`) размещены в `src/domain/`. Базовые продуктовые DTO (`Appointment`, `Artist`, `Review`, `PortfolioItem`, `ChatMessage`, `SponsoredAd`, `ClientAnchorPoint`) сознательно оставлены в `src/types.ts` до подключения серверных контрактов Этапа 4, чтобы не плодить лишние реэкспорты без изменения моделей.
+
+

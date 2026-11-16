@@ -5,7 +5,7 @@ import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 export interface UseSponsoredAdsOptions {
   initialAds?: SponsoredAd[];
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
-  onPersistAds?: (ads: SponsoredAd[], payload: unknown) => void;
+  onPersistAds?: (ads: SponsoredAd[], payload: unknown) => Promise<void> | void;
 }
 
 export function useSponsoredAds({
@@ -34,21 +34,26 @@ export function useSponsoredAds({
 
   const handleCreateAdCampaign = useCallback(
     (newAd: SponsoredAd) => {
-      const nextAds = [newAd, ...adsRef.current];
+      const taggedAd: SponsoredAd = { ...newAd, origin: 'user' };
+      const nextAds = [taggedAd, ...adsRef.current];
       adsRef.current = nextAds;
       setAds(nextAds);
 
-      onPersistAds?.(nextAds, {
-        adId: newAd.id,
-        title: newAd.title,
-        brandName: newAd.brandName,
+      void Promise.resolve(
+        onPersistAds?.(nextAds, {
+          adId: taggedAd.id,
+          title: taggedAd.title,
+          brandName: taggedAd.brandName,
+        })
+      ).catch(err => {
+        console.warn('[Ads] Persist failed cleanly:', err);
       });
 
       onBroadcastToSwarm?.('NEW_SPONSORED_CAMPAIGN', {
-        adId: newAd.id,
-        title: newAd.title,
-        brandName: newAd.brandName,
-        target: newAd.targetAudience,
+        adId: taggedAd.id,
+        title: taggedAd.title,
+        brandName: taggedAd.brandName,
+        target: taggedAd.targetAudience,
       });
     },
     [onBroadcastToSwarm, onPersistAds]
@@ -56,7 +61,6 @@ export function useSponsoredAds({
 
   return {
     ads,
-    setAds,
     isAdManagerOpen,
     setIsAdManagerOpen,
     openAdManager,

@@ -7,18 +7,20 @@
 
 import { CryptoCloudState, PeerNode, Appointment, Review, PortfolioItem, ChatMessage } from '../types';
 import { INITIAL_PEERS } from '../data/initialData';
-import { assertNoPlaintextSecrets } from '../infrastructure/identity/secretHygiene';
+import { assertNoSecretLikeFields } from '../infrastructure/identity/secretHygiene';
+import { SalonRepository } from '../infrastructure/storage/salonRepository';
 
 const SWARM_CHANNEL_NAME = 'onyx_cryptocloud_swarm_v1';
 
 /**
- * Web Crypto SHA-256 helper with explicit fallback signaling (K-03).
+ * Web Crypto SHA-256 helper with explicit fallback signaling (K-03 / L-15).
  */
 export async function computeSHA256Detailed(message: string): Promise<{ hash: string; isRealSha256: boolean }> {
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj && cryptoObj.subtle) {
     try {
       const msgBuffer = new TextEncoder().encode(message);
-      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashBuffer = await cryptoObj.subtle.digest('SHA-256', msgBuffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       return {
         hash: '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join(''),
@@ -76,7 +78,14 @@ export class CryptoCloudEngine {
       try {
         this.channel = new BroadcastChannel(SWARM_CHANNEL_NAME);
         this.channel.onmessage = (event) => {
-          this.handleIncomingPeerMessage(event.data);
+          const incoming = event.data as { type?: string; payload?: unknown; senderNode?: string } | null;
+          if (incoming && typeof incoming.type === 'string' && typeof incoming.senderNode === 'string') {
+            this.handleIncomingPeerMessage({
+              type: incoming.type,
+              payload: incoming.payload,
+              senderNode: incoming.senderNode,
+            });
+          }
         };
       } catch (err) {
         console.warn('[SIM] BroadcastChannel unavailable, running single-node mode', err);
@@ -148,20 +157,20 @@ export class CryptoCloudEngine {
   }): Promise<{ filename: string; blob: Blob; checksum: string; isRealSha256: boolean }> {
     const snapshot = {
       system: 'Nailix Session Snapshot [SIMULATED]',
-      notice: '[SIM] Plaintext JSON export for demo inspection. Not encrypted.',
+      notice: '[SIM] Plaintext JSON export for demo inspection (user records only, seed fixtures excluded). Not encrypted.',
       generatedAt: new Date().toISOString(),
       nodeId: this.state.localNodeId,
       architecture: 'Hybrid: Open Public Nail Art Gallery + Local Session State Snapshot [SIM]',
       payload: {
-        publicArtGallery: data.portfolio,
-        clientBookings: data.appointments,
-        demoReviews: data.reviews,
-        sessionChatsPlaintext: data.chats,
+        publicArtGallery: SalonRepository.filterUserRecords(data.portfolio),
+        clientBookings: SalonRepository.filterUserRecords(data.appointments),
+        demoReviews: SalonRepository.filterUserRecords(data.reviews),
+        sessionChatsPlaintext: SalonRepository.filterUserRecords(data.chats),
       },
     };
 
     const serialized = JSON.stringify(snapshot, null, 2);
-    assertNoPlaintextSecrets(serialized);
+    assertNoSecretLikeFields(serialized);
     const { hash: checksum, isRealSha256 } = await computeSHA256Detailed(serialized);
     const enriched = JSON.stringify(
       { ...snapshot, integrityChecksum: checksum, isRealSha256 },

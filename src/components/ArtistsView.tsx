@@ -24,7 +24,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({
             <span>ACCREDITED NAIL ARTISANS · WEB-OF-TRUST GUILD</span>
           </div>
           <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
-            Verified Master Sculptors & Technicians
+            Curated Guild Sculptors & Technicians
           </h2>
           <p className="text-xs text-gray-300 mt-1 max-w-2xl leading-relaxed">
             Browse curated salon master profiles, demo Friend Circle consensus scores [SIM], simulated $NAIL stakes [SIM], and session review ratings [SIM].

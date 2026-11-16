@@ -23,12 +23,11 @@ export interface UseBookingFlowProps {
   initialAppointments?: Appointment[];
   onNotifyToast?: (event: ReminderNotificationEvent) => void;
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
-  onPersistAppointments?: (next: Appointment[], action: string, payload: unknown) => void;
+  onPersistAppointments?: (next: Appointment[], action: string, payload: unknown) => Promise<void> | void;
 }
 
 export interface UseBookingFlowReturn {
   appointments: Appointment[];
-  setAppointments: React.Dispatch<React.SetStateAction<Appointment[]>>;
   isBookingModalOpen: boolean;
   setIsBookingModalOpen: (open: boolean) => void;
   isAppointmentsModalOpen: boolean;
@@ -50,12 +49,8 @@ export interface UseBookingFlowReturn {
 }
 
 /**
- * Custom hook encapsulating the entire booking & escrow checkout workflow:
- * - Selected artist & look target
- * - Step 1: BookingModal (date, service, slot selection)
- * - Step 2: CheckoutModal (currency & escrow deposit simulation)
- * - Local-First IndexedDB persistence + Outbox queue delegation via callbacks
- * - Decoupled from CryptoCloud [SIM] implementation (DIP K-15 completed)
+ * Custom hook encapsulating the booking & [SIM] deposit preview checkout workflow.
+ * Initialized once from Load-then-Mount bootstrap data (L-11).
  */
 export function useBookingFlow({
   artists,
@@ -82,13 +77,12 @@ export function useBookingFlow({
   const [isCheckoutOpen, setIsCheckoutOpen] = useState<boolean>(false);
   const [pendingBookingDetails, setPendingBookingDetails] = useState<PendingBookingDetails | null>(null);
 
-  // Launch booking for a specific artwork look
   const handleStartBookingWithLook = useCallback(
     (look: PortfolioItem) => {
       const artist = artists.find(a => a.id === look.artistId) || null;
       if (!artist && onNotifyToast) {
         onNotifyToast({
-          id: `toast-artist-missing-${Date.now()}`,
+          id: `toast-artist-missing-${crypto.randomUUID?.() ?? Date.now()}`,
           type: 'push',
           title: '[SIM] Master Profile Not Matched',
           message: `Please pick a master artist manually for "${look.title}".`,
@@ -103,61 +97,61 @@ export function useBookingFlow({
     [artists, onNotifyToast]
   );
 
-  // Launch booking for a specific artist
   const handleStartBookingWithArtist = useCallback((artist: Artist) => {
     setBookingArtistTarget(artist);
     setBookingLookTarget(null);
     setIsBookingModalOpen(true);
   }, []);
 
-  // Step 1 Completed -> Open Multi-currency Demo Checkout
   const handleProceedToCheckout = useCallback((details: PendingBookingDetails) => {
     setPendingBookingDetails(details);
     setIsBookingModalOpen(false);
     setIsCheckoutOpen(true);
   }, []);
 
-  // Step 2 Completed -> Persisted locally in IndexedDB + queued in Outbox (Stage 2 Local-First)
   const handlePaymentSuccess = useCallback(
     (newAppointment: Appointment) => {
-      const nextAppointments = [newAppointment, ...appointmentsRef.current];
+      const taggedAppointment: Appointment = { ...newAppointment, origin: 'user' };
+      const nextAppointments = [taggedAppointment, ...appointmentsRef.current];
       appointmentsRef.current = nextAppointments;
       setAppointments(nextAppointments);
 
-      onPersistAppointments?.(nextAppointments, 'BOOKING_CREATED', {
-        appointmentId: newAppointment.id,
-        artistId: newAppointment.artistId,
-        date: newAppointment.date,
-        timeSlot: newAppointment.timeSlot,
+      void Promise.resolve(
+        onPersistAppointments?.(nextAppointments, 'BOOKING_CREATED', {
+          appointmentId: taggedAppointment.id,
+          artistId: taggedAppointment.artistId,
+          date: taggedAppointment.date,
+          timeSlot: taggedAppointment.timeSlot,
+        })
+      ).catch(err => {
+        console.warn('[Booking] Persist failed cleanly:', err);
       });
 
       // [SIM] Trigger local simulated 24h & 2h reminder previews
-      reminderService.dispatch24HourReminder(newAppointment);
-      reminderService.dispatch2HourReminder(newAppointment);
+      reminderService.dispatch24HourReminder(taggedAppointment);
+      reminderService.dispatch2HourReminder(taggedAppointment);
 
-      // [SIM] Broadcast appointment block to peer nodes via injected facade
-      onBroadcastToSwarm?.('APPOINTMENT_ESCROW_LOCKED', {
-        appointmentId: newAppointment.id,
-        escrowHash: newAppointment.escrowTxHash || '0xSIM_DEMO_REF',
-        artistId: newAppointment.artistId,
-        currency: newAppointment.currency,
-        price: newAppointment.price,
+      // [SIM] Broadcast appointment event to tab swarm
+      onBroadcastToSwarm?.('APPOINTMENT_DEPOSIT_SIM', {
+        appointmentId: taggedAppointment.id,
+        escrowHash: taggedAppointment.escrowTxHash || '0xSIM_DEMO_REF',
+        artistId: taggedAppointment.artistId,
+        currency: taggedAppointment.currency,
+        price: taggedAppointment.price,
       });
 
-      // Notify user via toast callback
       onNotifyToast?.({
-        id: `toast-${Date.now()}`,
+        id: `toast-${crypto.randomUUID?.() ?? Date.now()}`,
         type: 'push',
-        title: 'Booking Saved Offline (IndexedDB)',
-        message: `Booking recorded in local IndexedDB for ${newAppointment.artistName} on ${newAppointment.date} at ${newAppointment.timeSlot} (escrow deposit preview [SIM]).`,
+        title: 'Запись сохранена локально',
+        message: `${taggedAppointment.artistName} · ${taggedAppointment.date} ${taggedAppointment.timeSlot} (депозит [SIM]).`,
         timestamp: new Date().toLocaleTimeString(),
-        phoneOrTarget: 'Client Device',
+        phoneOrTarget: 'Local Storage',
       });
     },
     [onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
   );
 
-  // Release escrow from Admin Dashboard
   const handleReleaseEscrow = useCallback(
     (appointmentId: string) => {
       const nextAppointments = appointmentsRef.current.map(app =>
@@ -166,13 +160,15 @@ export function useBookingFlow({
       appointmentsRef.current = nextAppointments;
       setAppointments(nextAppointments);
 
-      onPersistAppointments?.(nextAppointments, 'ESCROW_RELEASED', {
-        appointmentId,
-        timestamp: Date.now(),
+      void Promise.resolve(
+        onPersistAppointments?.(nextAppointments, 'DEPOSIT_DEMO_RELEASED', {
+          appointmentId,
+        })
+      ).catch(err => {
+        console.warn('[Booking] Release persist failed cleanly:', err);
       });
 
-      // [SIM] Broadcast payout to artist via injected facade
-      onBroadcastToSwarm?.('ESCROW_RELEASED_TO_ARTIST', {
+      onBroadcastToSwarm?.('DEPOSIT_DEMO_RELEASED', {
         appointmentId,
         timestamp: Date.now(),
       });
@@ -180,7 +176,6 @@ export function useBookingFlow({
     [onBroadcastToSwarm, onPersistAppointments]
   );
 
-  // Manual trigger appointment reminder from dashboard
   const handleTriggerAppointmentReminder = useCallback((appointment: Appointment) => {
     reminderService.dispatch24HourReminder(appointment);
     reminderService.dispatch2HourReminder(appointment);
@@ -188,7 +183,6 @@ export function useBookingFlow({
 
   return {
     appointments,
-    setAppointments,
     isBookingModalOpen,
     setIsBookingModalOpen,
     isAppointmentsModalOpen,

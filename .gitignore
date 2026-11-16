@@ -5,6 +5,7 @@ dist-apk/
 dev-dist/
 android-build/bin/
 android-build/obj/
+android-build/assets/www/
 coverage/
 .DS_Store
 *.log

@@ -31,7 +31,7 @@ export const SponsoredAdsBanner: React.FC<SponsoredAdsBannerProps> = ({
   );
 
   const handleCopyCode = (id: string, code: string) => {
-    navigator.clipboard?.writeText(code);
+    void navigator.clipboard?.writeText(code).catch(() => {});
     setCopiedCodeId(id);
     setTimeout(() => setCopiedCodeId(null), 3000);
   };

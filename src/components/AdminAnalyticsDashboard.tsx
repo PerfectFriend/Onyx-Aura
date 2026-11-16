@@ -44,9 +44,9 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
       'Date',
       'Time',
       'Gross Amount (USD)',
-      'Payment Currency',
-      'Escrow Status',
-      'Escrow Tx Hash',
+      'Payment Currency [SIM]',
+      'Deposit Status [SIM]',
+      'Booking Ref [SIM]',
       'Created Timestamp'
     ];
 
@@ -112,7 +112,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
             <div>$${totalGrossVolume.toLocaleString()} USD</div>
           </div>
           <div>
-            <strong>Active Escrow Deposits:</strong>
+            <strong>Active Deposit Previews [SIM]:</strong>
             <div>${escrowLockedCount} Appointments</div>
           </div>
           <div>
@@ -223,16 +223,16 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
             <p className="font-mono text-2xl font-bold text-white tabular-nums">
               ${totalGrossVolume.toLocaleString()} USD
             </p>
-            <p className="text-[11px] text-[#9ca3af]">Equivalent to ~4.24 ETH / 58.1 SOL</p>
+              <p className="text-[11px] text-[#9ca3af]">Equivalent to ~4.24 ETH / 58.1 SOL [SIM Estimate]</p>
           </div>
 
           <div className="p-5 rounded-xl bg-[#12141a] border border-[#272a33] space-y-2">
             <div className="flex items-center justify-between text-[#9ca3af] text-xs">
               <span className="flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-[#38bdf8]" />
-                <span>Escrow Locked Bookings</span>
+                <span>Deposit Hold [SIM] Bookings</span>
               </span>
-              <span className="font-mono text-[#38bdf8] text-[11px]">Pending Release</span>
+              <span className="font-mono text-[#38bdf8] text-[11px]">Pending Demo Release</span>
             </div>
             <p className="font-mono text-2xl font-bold text-white tabular-nums">
               {escrowLockedCount} Active
@@ -269,7 +269,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
           </div>
         </div>
 
-        {/* Appointment Ledger & Escrow Release Control */}
+        {/* Appointment Ledger & Deposit Preview Control [SIM] */}
         <div className="p-6 rounded-xl bg-[#12141a] border border-[#272a33] space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#1f222b]">
             <h3 className="text-xs font-semibold text-white uppercase tracking-wider flex items-center gap-2">
@@ -312,10 +312,10 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
                   <th className="py-2.5 px-3">MASTER ARTIST</th>
                   <th className="py-2.5 px-3">SERVICE / TECHNIQUE</th>
                   <th className="py-2.5 px-3">SCHEDULED TIME</th>
-                  <th className="py-2.5 px-3">PRICE / ESCROW</th>
+                  <th className="py-2.5 px-3">PRICE / DEPOSIT [SIM]</th>
                   <th className="py-2.5 px-3">CALENDAR SYNC</th>
                   <th className="py-2.5 px-3">REMINDER ACTIONS</th>
-                  <th className="py-2.5 px-3">ESCROW SETTLEMENT</th>
+                  <th className="py-2.5 px-3">DEPOSIT PREVIEW [SIM]</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1f222b] text-white">
@@ -401,7 +401,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
                         </div>
                       </td>
 
-                      {/* Escrow Settlement */}
+                      {/* Deposit Settlement Simulation [SIM] */}
                       <td className="py-3 px-3">
                         {apt.status === 'completed' ? (
                           <span className="text-[#34d399] font-mono text-[11px] flex items-center gap-1">
@@ -413,7 +413,7 @@ export const AdminAnalyticsDashboard: React.FC<AdminAnalyticsDashboardProps> = (
                             onClick={() => onReleaseEscrow(apt.id)}
                             className="px-3 py-1 bg-[#34d399]/20 hover:bg-[#34d399]/30 text-[#34d399] border border-[#34d399]/30 rounded text-[11px] font-mono font-medium transition-colors cursor-pointer whitespace-nowrap"
                           >
-                            Release Escrow Funds
+                            Release Deposit [SIM]
                           </button>
                         )}
                       </td>

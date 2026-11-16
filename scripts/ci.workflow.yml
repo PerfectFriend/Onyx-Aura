@@ -1,0 +1,70 @@
+name: Nailix Quality & Honesty Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Lint, Typecheck, Tests, Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies (deterministic npm lockfile)
+        run: npm ci
+
+      - name: ESLint (type-checked + jsx-a11y)
+        run: npm run lint
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Unit & Resilience Tests with Coverage
+        run: npm run test:coverage
+
+      - name: Production Vite Build
+        run: npm run build
+
+      - name: Verify Production CSP has no script unsafe-inline (L-08)
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const html = fs.readFileSync('dist/index.html', 'utf8');
+            const m = html.match(/http-equiv=\"Content-Security-Policy\"[^>]*content=\"([^\"]+)\"/i);
+            if (!m) throw new Error('Missing CSP meta in dist/index.html');
+            const scriptSrc = m[1].split(';').find(s => s.trim().startsWith('script-src'));
+            if (!scriptSrc || scriptSrc.includes('unsafe-inline')) {
+              throw new Error('Production script-src must not allow unsafe-inline: ' + scriptSrc);
+            }
+            console.log('Verified production script-src:', scriptSrc.trim());
+          "
+
+      - name: Verify release assetlinks.json has no placeholder when tagged
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if grep -q "ROTATE_KEYSTORE_" public/.well-known/assetlinks.json; then
+            echo "Release tag cannot ship ROTATE_KEYSTORE_ placeholder in assetlinks.json"
+            exit 1
+          fi
+
+  secret-scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

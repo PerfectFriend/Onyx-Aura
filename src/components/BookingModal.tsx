@@ -183,8 +183,8 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
 
           {/* Artist Selector */}
           <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Select Master Artist</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <p id="booking-artist-label" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Select Master Artist</p>
+            <div role="group" aria-labelledby="booking-artist-label" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {artists.map(art => {
                 const isSelected = art.id === selectedArtistId;
                 return (
@@ -223,8 +223,8 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
           {/* Service Selector */}
           {currentArtist && (
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Choose Haute Technique Service</label>
-              <div className="space-y-2">
+              <p id="booking-service-label" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Choose Haute Technique Service</p>
+              <div role="group" aria-labelledby="booking-service-label" className="space-y-2">
                 {currentArtist.services.map(srv => {
                   const isSelected = srv.id === selectedServiceId;
                   return (
@@ -258,11 +258,12 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
           {/* Date & Time Slot Picker */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af] flex items-center gap-1.5">
+              <label htmlFor="booking-date" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af] flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-[#d4af37]" />
                 <span>Appointment Date</span>
               </label>
               <input
+                id="booking-date"
                 type="date"
                 value={selectedDate}
                 min={minDateISO}
@@ -273,11 +274,12 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af] flex items-center gap-1.5">
+              <label htmlFor="booking-time-slot" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af] flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#d4af37]" />
                 <span>Available Time Slot (Demo Static Slots)</span>
               </label>
               <select
+                id="booking-time-slot"
                 value={selectedSlot}
                 onChange={e => setSelectedSlot(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-[#12141a] border border-[#272a33] rounded-lg text-white focus:outline-none focus:border-[#d4af37]"
@@ -292,8 +294,9 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
           {/* Client Contact Info */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Your Full Name</label>
+              <label htmlFor="booking-client-name" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Your Full Name</label>
               <input
+                id="booking-client-name"
                 type="text"
                 value={clientName}
                 onChange={e => setClientName(e.target.value)}
@@ -304,8 +307,9 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Mobile Phone</label>
+              <label htmlFor="booking-client-phone" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Mobile Phone</label>
               <input
+                id="booking-client-phone"
                 type="tel"
                 value={clientPhone}
                 onChange={e => setClientPhone(e.target.value)}
@@ -316,8 +320,9 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Email (for Calendar)</label>
+              <label htmlFor="booking-client-email" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Email (for Calendar)</label>
               <input
+                id="booking-client-email"
                 type="email"
                 value={clientEmail}
                 onChange={e => setClientEmail(e.target.value)}
@@ -391,8 +396,9 @@ const BookingModalContent: React.FC<BookingModalContentProps> = ({
 
           {/* Custom Notes */}
           <div className="space-y-2">
-            <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Custom Art Request & Prep Notes</label>
+            <label htmlFor="booking-custom-notes" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">Custom Art Request &amp; Prep Notes</label>
             <textarea
+              id="booking-custom-notes"
               rows={2}
               value={customNotes}
               onChange={e => setCustomNotes(e.target.value)}

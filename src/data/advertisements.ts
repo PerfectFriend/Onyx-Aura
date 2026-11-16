@@ -19,7 +19,7 @@ export const INITIAL_SPONSORED_ADS: SponsoredAd[] = [
     impressions: 4890,
     clicks: 342,
     isActive: true,
-    sponsoredBadge: 'VERIFIED GUILD SUPPLIER',
+    sponsoredBadge: 'DEMO GUILD PARTNER [SIM]',
   },
   {
     id: 'ad-master-2',
@@ -76,7 +76,7 @@ export const INITIAL_SPONSORED_ADS: SponsoredAd[] = [
     impressions: 2940,
     clicks: 195,
     isActive: true,
-    sponsoredBadge: 'VERIFIED HARDWARE',
+    sponsoredBadge: 'STUDIO HARDWARE [SIM]',
   },
 
   // ADS FOR CLIENTS (Beauty salons, luxury SPA, brow/lash studios, beauty lounges)

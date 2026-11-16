@@ -181,7 +181,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
 
         {/* Content */}
         {!completedTx ? (
-          <form onSubmit={handlePay} className="p-6 overflow-y-auto space-y-6">
+          <form onSubmit={(e) => { void handlePay(e); }} className="p-6 overflow-y-auto space-y-6">
             {errorMessage && (
               <div className="p-3 rounded-lg bg-red-950/70 border border-red-500/50 text-xs text-red-200">
                 {errorMessage}
@@ -206,14 +206,14 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
             {/* Currency Selector (Multi-Currency) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">
+                <p id="checkout-currency-label" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">
                   Estimated Display Currency [SIM Rates]
-                </label>
+                </p>
                 {selectedCurrency === 'NAIL' && (
                   <span className="text-[11px] text-[#34d399] font-mono">[SIM] Demo Token Preview</span>
                 )}
               </div>
-              <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+              <div role="group" aria-labelledby="checkout-currency-label" className="grid grid-cols-4 sm:grid-cols-7 gap-2">
                 {(['USDC', 'ETH', 'SOL', 'NAIL', 'USD', 'EUR', 'GBP'] as PaymentCurrency[]).map(curr => {
                   const isSelected = selectedCurrency === curr;
                   return (
@@ -236,10 +236,10 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
 
             {/* Tip Selection */}
             <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">
+              <p id="checkout-tip-label" className="text-xs font-medium uppercase tracking-wider text-[#9ca3af]">
                 Add Master Artist Gratuity
-              </label>
-              <div className="grid grid-cols-4 gap-2">
+              </p>
+              <div role="group" aria-labelledby="checkout-tip-label" className="grid grid-cols-4 gap-2">
                 {[0, 15, 18, 22].map(pct => (
                   <button
                     key={pct}

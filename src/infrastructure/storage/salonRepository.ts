@@ -1,9 +1,6 @@
 // =============================================================================
-// Local-First Salon Repository + Seed Manager + Offline Sync Outbox (Stage 2)
-// Replaces direct consumption of hardcoded arrays in UI/hooks with:
-//   1) Idempotent initial seeding into IndexedDB (never clobbers saved edits)
-//   2) Typed per-collection save helpers
-//   3) Persistent offline-first outbox queue ready for future remote sync
+// Local-First Salon Repository + Seed Origin Separation + Schema Migrations +
+// Outbox Guarantee + Web Locks & BroadcastChannel Sync (Stage 2 -> Sprint 3.2)
 // =============================================================================
 
 import {
@@ -12,6 +9,8 @@ import {
   OutboxEntity,
   OutboxMutation,
   StorageAdapter,
+  StorageEntry,
+  StorageHealthReport,
 } from '../../domain/storage';
 import {
   Appointment,
@@ -34,14 +33,46 @@ import { INITIAL_SPONSORED_ADS } from '../../data/advertisements';
 import {
   DEFAULT_ANONYMOUS_SESSION,
   IdentitySession,
+  isIdentitySessionExpired,
   PasskeyCredentialRecord,
 } from '../../domain/identity';
-import { assertNoPlaintextSecrets } from '../identity/secretHygiene';
-import { createDefaultStorageAdapter, MemoryStorageAdapter } from './indexedDbAdapter';
+import {
+  validateAds,
+  validateAnchorPoints,
+  validateAppointments,
+  validateArtists,
+  validateChats,
+  validateIdentitySession,
+  validateOutbox,
+  validatePasskeys,
+  validatePortfolio,
+  validateReviews,
+  validateSchemaMeta,
+  validateStringArray,
+} from '../../domain/schemas';
+import { assertNoSecretLikeFields } from '../identity/secretHygiene';
+import {
+  createDefaultStorageAdapter,
+  ResilientStorageAdapter,
+  setActiveStorageStatus,
+} from './indexedDbAdapter';
 
 export const SALON_SCHEMA_VERSION = 2;
 export const DEFAULT_LIKED_IDS: string[] = ['port-gaudi', 'port-1'];
 export const DEFAULT_SAVED_IDS: string[] = ['port-gaudi', 'port-2'];
+export const MAX_SYNCED_OUTBOX_HISTORY = 50;
+export const OUTBOX_PENDING_WARNING_THRESHOLD = 100;
+
+const STORAGE_SYNC_CHANNEL_NAME = 'nailix_storage_sync_v1';
+const STORAGE_LOCK_NAME = 'nailix_repository_write_lock';
+
+const SEED_APPOINTMENT_IDS = new Set(INITIAL_APPOINTMENTS.map(a => a.id));
+const SEED_ARTIST_IDS = new Set(INITIAL_ARTISTS.map(a => a.id));
+const SEED_PORTFOLIO_IDS = new Set(INITIAL_PORTFOLIO.map(p => p.id));
+const SEED_REVIEW_IDS = new Set(INITIAL_REVIEWS.map(r => r.id));
+const SEED_ANCHOR_IDS = new Set(INITIAL_ANCHOR_POINTS.map(a => a.id));
+const SEED_CHAT_IDS = new Set(INITIAL_CHATS.map(c => c.id));
+const SEED_AD_IDS = new Set(INITIAL_SPONSORED_ADS.map(a => a.id));
 
 function cloneSeed<T>(value: T): T {
   if (typeof structuredClone === 'function') {
@@ -50,17 +81,21 @@ function cloneSeed<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function withSeedOrigin<T extends { origin?: 'seed' | 'user' }>(items: T[]): T[] {
+  return items.map(item => ({ ...item, origin: 'seed' as const }));
+}
+
 export function createSeedSnapshot() {
   return {
-    artists: cloneSeed(INITIAL_ARTISTS),
-    appointments: cloneSeed(INITIAL_APPOINTMENTS),
-    portfolio: cloneSeed(INITIAL_PORTFOLIO),
+    artists: withSeedOrigin(cloneSeed(INITIAL_ARTISTS)),
+    appointments: withSeedOrigin(cloneSeed(INITIAL_APPOINTMENTS)),
+    portfolio: withSeedOrigin(cloneSeed(INITIAL_PORTFOLIO)),
     likedIds: [...DEFAULT_LIKED_IDS],
     savedIds: [...DEFAULT_SAVED_IDS],
-    reviews: cloneSeed(INITIAL_REVIEWS),
-    anchorPoints: cloneSeed(INITIAL_ANCHOR_POINTS),
-    chats: cloneSeed(INITIAL_CHATS),
-    ads: cloneSeed(INITIAL_SPONSORED_ADS),
+    reviews: withSeedOrigin(cloneSeed(INITIAL_REVIEWS)),
+    anchorPoints: withSeedOrigin(cloneSeed(INITIAL_ANCHOR_POINTS)),
+    chats: withSeedOrigin(cloneSeed(INITIAL_CHATS)),
+    ads: withSeedOrigin(cloneSeed(INITIAL_SPONSORED_ADS)),
     passkeys: [] as PasskeyCredentialRecord[],
     identitySession: { ...DEFAULT_ANONYMOUS_SESSION },
   };
@@ -73,191 +108,466 @@ function nextOutboxId(): string {
   return `outbox-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 }
 
+/**
+ * Strips potentially sensitive contact PII from outbox mutation payloads so offline
+ * queues store entity IDs / action markers rather than duplicate phone/email records (L-02).
+ */
+function sanitizeOutboxPayload(payload: unknown): unknown {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  const src = payload as Record<string, unknown>;
+  const cleaned: Record<string, unknown> = {};
+  const blockedPiiKeys = new Set([
+    'clientPhone',
+    'clientEmail',
+    'clientName',
+    'text',
+    'notes',
+    'customNotes',
+  ]);
+  for (const [k, v] of Object.entries(src)) {
+    if (!blockedPiiKeys.has(k)) {
+      cleaned[k] = v;
+    }
+  }
+  return cleaned;
+}
+
+interface MigrationPayload {
+  artists: Artist[];
+  appointments: Appointment[];
+  portfolio: PortfolioItem[];
+  likedIds: string[];
+  savedIds: string[];
+  reviews: Review[];
+  anchorPoints: ClientAnchorPoint[];
+  chats: ChatMessage[];
+  ads: SponsoredAd[];
+  passkeys: PasskeyCredentialRecord[];
+  identitySession: IdentitySession;
+  outbox: OutboxMutation[];
+}
+
+export interface SchemaMigration {
+  from: number;
+  to: number;
+  description: string;
+  run: (data: MigrationPayload) => MigrationPayload;
+}
+
+function inferOrigin<T extends { id: string; origin?: 'seed' | 'user' }>(
+  items: T[],
+  seedIdSet: ReadonlySet<string>
+): T[] {
+  return items.map(item => ({
+    ...item,
+    origin: item.origin ?? (seedIdSet.has(item.id) ? 'seed' : 'user'),
+  }));
+}
+
+export const SCHEMA_MIGRATIONS: SchemaMigration[] = [
+  {
+    from: 1,
+    to: 2,
+    description:
+      'Add Stage 3 public-only WebAuthn registry & TTL session defaults, and annotate legacy seed vs user origins (L-03/L-06).',
+    run: data => ({
+      ...data,
+      artists: inferOrigin(data.artists, SEED_ARTIST_IDS),
+      appointments: inferOrigin(data.appointments, SEED_APPOINTMENT_IDS),
+      portfolio: inferOrigin(data.portfolio, SEED_PORTFOLIO_IDS),
+      reviews: inferOrigin(data.reviews, SEED_REVIEW_IDS),
+      anchorPoints: inferOrigin(data.anchorPoints, SEED_ANCHOR_IDS),
+      chats: inferOrigin(data.chats, SEED_CHAT_IDS),
+      ads: inferOrigin(data.ads, SEED_AD_IDS),
+      passkeys: data.passkeys ?? [],
+      identitySession: data.identitySession ?? { ...DEFAULT_ANONYMOUS_SESSION },
+    }),
+  },
+];
+
+async function withWebLock<T>(operation: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function') {
+    return navigator.locks.request(STORAGE_LOCK_NAME, operation);
+  }
+  return operation();
+}
+
 export class SalonRepository {
-  private adapter: StorageAdapter;
+  private readonly resilientAdapter: ResilientStorageAdapter;
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private syncChannel: BroadcastChannel | null = null;
+  private readOnlyFutureSchema = false;
 
   constructor(adapter: StorageAdapter = createDefaultStorageAdapter()) {
-    this.adapter = adapter;
+    this.resilientAdapter =
+      adapter instanceof ResilientStorageAdapter ? adapter : new ResilientStorageAdapter(adapter);
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.syncChannel = new BroadcastChannel(STORAGE_SYNC_CHANNEL_NAME);
+      } catch {
+        this.syncChannel = null;
+      }
+    }
   }
 
   public getBackendKind() {
-    return this.adapter.backend;
+    return this.resilientAdapter.backend;
   }
 
-  /**
-   * Serializes writes cleanly to preserve chronological consistency across async mutations
-   * and transparently degrades to an in-memory adapter if browser IndexedDB rejects at runtime
-   * (e.g. Firefox private mode SecurityError).
-   */
+  public getHealthReport(): StorageHealthReport {
+    return this.resilientAdapter.getHealthReport();
+  }
+
+  public subscribeExternalChanges(onExternalChange: () => void): () => void {
+    if (!this.syncChannel) return () => {};
+    const listener = (event: MessageEvent) => {
+      const payload = event.data as { type?: unknown } | null;
+      if (payload && payload.type === 'STORAGE_UPDATED') {
+        onExternalChange();
+      }
+    };
+    this.syncChannel.addEventListener('message', listener);
+    return () => {
+      this.syncChannel?.removeEventListener('message', listener);
+    };
+  }
+
+  public destroy(): void {
+    if (this.syncChannel) {
+      this.syncChannel.close();
+      this.syncChannel = null;
+    }
+  }
+
+  private notifyOtherTabs(): void {
+    if (this.syncChannel) {
+      try {
+        this.syncChannel.postMessage({ type: 'STORAGE_UPDATED', ts: Date.now() });
+      } catch {
+        // Ignore closed channel
+      }
+    }
+  }
+
+  private updateGlobalStatus(): void {
+    const report = this.resilientAdapter.getHealthReport();
+    setActiveStorageStatus({ backend: report.backend, health: report.health });
+  }
+
   private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.writeQueue.then(operation, operation);
+    const run = this.writeQueue.then(() => withWebLock(operation), () => withWebLock(operation));
     this.writeQueue = run.catch(() => undefined);
     return run;
   }
 
-  private async safeGet<T>(key: Parameters<StorageAdapter['get']>[0]): Promise<T | undefined> {
-    try {
-      return await this.adapter.get<T>(key);
-    } catch (err) {
-      console.warn(`[LocalFirst] Read failed on "${this.adapter.backend}", degrading to memory adapter:`, err);
-      this.adapter = new MemoryStorageAdapter();
-      return undefined;
+  private validateOrFallback<T>(
+    raw: unknown,
+    validator: (val: unknown) => { ok: boolean; value?: T; reason?: string },
+    seedFallback: () => T,
+    collectionName: string,
+    warnings: string[]
+  ): { value: T; needsSeedWrite: boolean } {
+    if (raw === undefined) {
+      return { value: seedFallback(), needsSeedWrite: true };
     }
-  }
-
-  private async safeSet<T>(key: Parameters<StorageAdapter['set']>[0], value: T): Promise<void> {
-    try {
-      await this.adapter.set(key, value);
-    } catch (err) {
-      console.warn(`[LocalFirst] Write failed on "${this.adapter.backend}", degrading to memory adapter:`, err);
-      this.adapter = new MemoryStorageAdapter();
-      await this.adapter.set(key, value);
+    const result = validator(raw);
+    if (!result.ok || result.value === undefined) {
+      warnings.push(
+        `Повреждённая коллекция «${collectionName}» (${result.reason || 'schema error'}) сброшена к исходным значениям.`
+      );
+      return { value: seedFallback(), needsSeedWrite: false };
     }
+    return { value: result.value, needsSeedWrite: false };
   }
 
   /**
-   * Loads persisted collections from storage, seeding any missing collections cleanly
-   * without overwriting previously saved user changes.
+   * Loads persisted collections with schema validation, v1->v2 migration registry,
+   * and future-schema read-only guard (L-06).
    */
   public async ensureSeededAndLoad(): Promise<HydratedSalonData> {
     const nowIso = new Date().toISOString();
+    const warnings: string[] = [];
 
     const [
-      existingMeta,
-      existingArtists,
-      existingAppointments,
-      existingPortfolio,
-      existingLiked,
-      existingSaved,
-      existingReviews,
-      existingAnchors,
-      existingChats,
-      existingAds,
-      existingPasskeys,
-      existingIdentitySession,
-      existingOutbox,
+      rawMeta,
+      rawArtists,
+      rawAppointments,
+      rawPortfolio,
+      rawLiked,
+      rawSaved,
+      rawReviews,
+      rawAnchors,
+      rawChats,
+      rawAds,
+      rawPasskeys,
+      rawIdentitySession,
+      rawOutbox,
     ] = await Promise.all([
-      this.safeGet<DataLayerMeta>('schemaMeta'),
-      this.safeGet<Artist[]>('artists'),
-      this.safeGet<Appointment[]>('appointments'),
-      this.safeGet<PortfolioItem[]>('portfolio'),
-      this.safeGet<string[]>('likedIds'),
-      this.safeGet<string[]>('savedIds'),
-      this.safeGet<Review[]>('reviews'),
-      this.safeGet<ClientAnchorPoint[]>('anchorPoints'),
-      this.safeGet<ChatMessage[]>('chats'),
-      this.safeGet<SponsoredAd[]>('ads'),
-      this.safeGet<PasskeyCredentialRecord[]>('passkeys'),
-      this.safeGet<IdentitySession>('identitySession'),
-      this.safeGet<OutboxMutation[]>('outbox'),
+      this.resilientAdapter.get<unknown>('schemaMeta'),
+      this.resilientAdapter.get<unknown>('artists'),
+      this.resilientAdapter.get<unknown>('appointments'),
+      this.resilientAdapter.get<unknown>('portfolio'),
+      this.resilientAdapter.get<unknown>('likedIds'),
+      this.resilientAdapter.get<unknown>('savedIds'),
+      this.resilientAdapter.get<unknown>('reviews'),
+      this.resilientAdapter.get<unknown>('anchorPoints'),
+      this.resilientAdapter.get<unknown>('chats'),
+      this.resilientAdapter.get<unknown>('ads'),
+      this.resilientAdapter.get<unknown>('passkeys'),
+      this.resilientAdapter.get<unknown>('identitySession'),
+      this.resilientAdapter.get<unknown>('outbox'),
     ]);
 
-    const artists = existingArtists ?? cloneSeed(INITIAL_ARTISTS);
-    const appointments = existingAppointments ?? cloneSeed(INITIAL_APPOINTMENTS);
-    const portfolio = existingPortfolio ?? cloneSeed(INITIAL_PORTFOLIO);
-    const likedIds = existingLiked ?? [...DEFAULT_LIKED_IDS];
-    const savedIds = existingSaved ?? [...DEFAULT_SAVED_IDS];
-    const reviews = existingReviews ?? cloneSeed(INITIAL_REVIEWS);
-    const anchorPoints = existingAnchors ?? cloneSeed(INITIAL_ANCHOR_POINTS);
-    const chats = existingChats ?? cloneSeed(INITIAL_CHATS);
-    const ads = existingAds ?? cloneSeed(INITIAL_SPONSORED_ADS);
-    const passkeys = existingPasskeys ?? [];
-    const identitySession = existingIdentitySession ?? { ...DEFAULT_ANONYMOUS_SESSION };
-    const outbox = existingOutbox ?? [];
+    const parsedMetaResult =
+      rawMeta !== undefined ? validateSchemaMeta(rawMeta) : { ok: false, value: undefined };
+    const storedMeta = parsedMetaResult.ok ? parsedMetaResult.value : undefined;
+    const futureSchemaDetected = Boolean(storedMeta && storedMeta.schemaVersion > SALON_SCHEMA_VERSION);
+    this.readOnlyFutureSchema = futureSchemaDetected;
 
-    const needsSchemaUpgrade = !existingMeta || existingMeta.schemaVersion < SALON_SCHEMA_VERSION;
-    const meta: DataLayerMeta = existingMeta
-      ? {
-          schemaVersion: Math.max(existingMeta.schemaVersion, SALON_SCHEMA_VERSION),
-          seededAt: existingMeta.seededAt,
-          lastModifiedAt: needsSchemaUpgrade ? nowIso : existingMeta.lastModifiedAt,
-          backend: this.adapter.backend,
-        }
-      : {
-          schemaVersion: SALON_SCHEMA_VERSION,
-          seededAt: nowIso,
-          lastModifiedAt: nowIso,
-          backend: this.adapter.backend,
-        };
+    if (futureSchemaDetected && storedMeta) {
+      warnings.push(
+        `База создана более новой версией (схема v${storedMeta.schemaVersion} > текущей v${SALON_SCHEMA_VERSION}). Включён режим только для чтения без перезаписи.`
+      );
+    }
 
-    const seedWrites: Promise<void>[] = [];
-    if (!existingArtists) seedWrites.push(this.safeSet('artists', artists));
-    if (!existingAppointments) seedWrites.push(this.safeSet('appointments', appointments));
-    if (!existingPortfolio) seedWrites.push(this.safeSet('portfolio', portfolio));
-    if (!existingLiked) seedWrites.push(this.safeSet('likedIds', likedIds));
-    if (!existingSaved) seedWrites.push(this.safeSet('savedIds', savedIds));
-    if (!existingReviews) seedWrites.push(this.safeSet('reviews', reviews));
-    if (!existingAnchors) seedWrites.push(this.safeSet('anchorPoints', anchorPoints));
-    if (!existingChats) seedWrites.push(this.safeSet('chats', chats));
-    if (!existingAds) seedWrites.push(this.safeSet('ads', ads));
-    if (!existingPasskeys) seedWrites.push(this.safeSet('passkeys', passkeys));
-    if (!existingIdentitySession) seedWrites.push(this.safeSet('identitySession', identitySession));
-    if (!existingOutbox) seedWrites.push(this.safeSet('outbox', outbox));
-    if (needsSchemaUpgrade) seedWrites.push(this.safeSet('schemaMeta', meta));
+    const artistsRes = this.validateOrFallback(
+      rawArtists,
+      validateArtists,
+      () => withSeedOrigin(cloneSeed(INITIAL_ARTISTS)),
+      'artists',
+      warnings
+    );
+    const appointmentsRes = this.validateOrFallback(
+      rawAppointments,
+      validateAppointments,
+      () => withSeedOrigin(cloneSeed(INITIAL_APPOINTMENTS)),
+      'appointments',
+      warnings
+    );
+    const portfolioRes = this.validateOrFallback(
+      rawPortfolio,
+      validatePortfolio,
+      () => withSeedOrigin(cloneSeed(INITIAL_PORTFOLIO)),
+      'portfolio',
+      warnings
+    );
+    const likedRes = this.validateOrFallback(
+      rawLiked,
+      v => validateStringArray(v, 'likedIds'),
+      () => [...DEFAULT_LIKED_IDS],
+      'likedIds',
+      warnings
+    );
+    const savedRes = this.validateOrFallback(
+      rawSaved,
+      v => validateStringArray(v, 'savedIds'),
+      () => [...DEFAULT_SAVED_IDS],
+      'savedIds',
+      warnings
+    );
+    const reviewsRes = this.validateOrFallback(
+      rawReviews,
+      validateReviews,
+      () => withSeedOrigin(cloneSeed(INITIAL_REVIEWS)),
+      'reviews',
+      warnings
+    );
+    const anchorsRes = this.validateOrFallback(
+      rawAnchors,
+      validateAnchorPoints,
+      () => withSeedOrigin(cloneSeed(INITIAL_ANCHOR_POINTS)),
+      'anchorPoints',
+      warnings
+    );
+    const chatsRes = this.validateOrFallback(
+      rawChats,
+      validateChats,
+      () => withSeedOrigin(cloneSeed(INITIAL_CHATS)),
+      'chats',
+      warnings
+    );
+    const adsRes = this.validateOrFallback(
+      rawAds,
+      validateAds,
+      () => withSeedOrigin(cloneSeed(INITIAL_SPONSORED_ADS)),
+      'ads',
+      warnings
+    );
+    const passkeysRes = this.validateOrFallback(
+      rawPasskeys,
+      validatePasskeys,
+      () => [],
+      'passkeys',
+      warnings
+    );
+    const sessionRes = this.validateOrFallback(
+      rawIdentitySession,
+      validateIdentitySession,
+      () => ({ ...DEFAULT_ANONYMOUS_SESSION }),
+      'identitySession',
+      warnings
+    );
+    const outboxRes = this.validateOrFallback(
+      rawOutbox,
+      validateOutbox,
+      () => [],
+      'outbox',
+      warnings
+    );
 
-    if (seedWrites.length > 0) {
-      await Promise.all(seedWrites);
+    let payload: MigrationPayload = {
+      artists: artistsRes.value,
+      appointments: appointmentsRes.value,
+      portfolio: portfolioRes.value,
+      likedIds: likedRes.value,
+      savedIds: savedRes.value,
+      reviews: reviewsRes.value,
+      anchorPoints: anchorsRes.value,
+      chats: chatsRes.value,
+      ads: adsRes.value,
+      passkeys: passkeysRes.value,
+      identitySession: sessionRes.value,
+      outbox: outboxRes.value,
+    };
+
+    // Enforce bounded TTL on loaded identity sessions (L-04)
+    let sessionExpiredOnLoad = false;
+    if (isIdentitySessionExpired(payload.identitySession)) {
+      payload.identitySession = { ...DEFAULT_ANONYMOUS_SESSION };
+      sessionExpiredOnLoad = true;
+    }
+
+    // Run schema migration chain for versions < SALON_SCHEMA_VERSION (L-06)
+    let currentVersion = storedMeta?.schemaVersion ?? SALON_SCHEMA_VERSION;
+    let migrated = false;
+    if (!futureSchemaDetected) {
+      while (currentVersion < SALON_SCHEMA_VERSION) {
+        const step = SCHEMA_MIGRATIONS.find(m => m.from === currentVersion);
+        if (!step) break;
+        payload = step.run(payload);
+        currentVersion = step.to;
+        migrated = true;
+      }
+      // Ensure any un-tagged pre-3.2 entries carry explicit origin
+      if (migrated || !storedMeta) {
+        payload = SCHEMA_MIGRATIONS[0].run(payload);
+      }
+    }
+
+    const meta: DataLayerMeta = {
+      schemaVersion: SALON_SCHEMA_VERSION,
+      seededAt: storedMeta?.seededAt ?? nowIso,
+      lastModifiedAt: migrated || !storedMeta ? nowIso : storedMeta.lastModifiedAt,
+      backend: this.resilientAdapter.backend,
+      storedFutureVersion: futureSchemaDetected ? storedMeta?.schemaVersion : undefined,
+    };
+
+    if (!futureSchemaDetected) {
+      const seedEntries: StorageEntry[] = [];
+      if (artistsRes.needsSeedWrite || migrated) seedEntries.push(['artists', payload.artists]);
+      if (appointmentsRes.needsSeedWrite || migrated) seedEntries.push(['appointments', payload.appointments]);
+      if (portfolioRes.needsSeedWrite || migrated) seedEntries.push(['portfolio', payload.portfolio]);
+      if (likedRes.needsSeedWrite) seedEntries.push(['likedIds', payload.likedIds]);
+      if (savedRes.needsSeedWrite) seedEntries.push(['savedIds', payload.savedIds]);
+      if (reviewsRes.needsSeedWrite || migrated) seedEntries.push(['reviews', payload.reviews]);
+      if (anchorsRes.needsSeedWrite || migrated) seedEntries.push(['anchorPoints', payload.anchorPoints]);
+      if (chatsRes.needsSeedWrite || migrated) seedEntries.push(['chats', payload.chats]);
+      if (adsRes.needsSeedWrite || migrated) seedEntries.push(['ads', payload.ads]);
+      if (passkeysRes.needsSeedWrite) seedEntries.push(['passkeys', payload.passkeys]);
+      if (sessionRes.needsSeedWrite || sessionExpiredOnLoad) {
+        seedEntries.push(['identitySession', payload.identitySession]);
+      }
+      if (outboxRes.needsSeedWrite) seedEntries.push(['outbox', payload.outbox]);
+      if (!storedMeta || migrated) seedEntries.push(['schemaMeta', meta]);
+
+      if (seedEntries.length > 0) {
+        await this.resilientAdapter.setMany(seedEntries);
+      }
+    }
+
+    const healthReport = this.resilientAdapter.getHealthReport();
+    meta.backend = healthReport.backend;
+    this.updateGlobalStatus();
+
+    const pendingCount = payload.outbox.filter(m => m.status === 'pending_sync').length;
+    if (pendingCount >= OUTBOX_PENDING_WARNING_THRESHOLD) {
+      warnings.push(
+        `В локальной очереди Outbox накопилось ${pendingCount} несинхронизированных изменений.`
+      );
     }
 
     return {
-      artists,
-      appointments,
-      portfolio,
-      likedIds,
-      savedIds,
-      reviews,
-      anchorPoints,
-      chats,
-      ads,
-      passkeys,
-      identitySession,
-      outbox,
+      ...payload,
       meta,
+      health: healthReport.health,
+      warnings: [...healthReport.warnings, ...warnings],
+      readOnlyFutureSchema: futureSchemaDetected,
+      storedFutureVersion: meta.storedFutureVersion,
     };
   }
 
-  private async touchMeta(): Promise<void> {
-    const existing = await this.safeGet<DataLayerMeta>('schemaMeta');
+  private async buildMetaEntry(): Promise<StorageEntry> {
+    const existing = await this.resilientAdapter.get<DataLayerMeta>('schemaMeta');
     const nowIso = new Date().toISOString();
-    await this.safeSet('schemaMeta', {
+    const meta: DataLayerMeta = {
       schemaVersion: SALON_SCHEMA_VERSION,
       seededAt: existing?.seededAt || nowIso,
       lastModifiedAt: nowIso,
-      backend: this.adapter.backend,
-    });
+      backend: this.resilientAdapter.backend,
+    };
+    return ['schemaMeta', meta];
+  }
+
+  private assertWritable(): void {
+    if (this.readOnlyFutureSchema) {
+      throw new Error(
+        'Хранилище открыто в режиме только для чтения (обнаружена более новая схема данных).'
+      );
+    }
   }
 
   /**
    * Appends a local mutation to the persistent Offline-First Outbox Queue.
-   * When a backend endpoint is introduced in Stage 4/5, pending records flush in FIFO order.
+   * L-02 invariant: NEVER drops entries with `status === 'pending_sync'`; only evicts
+   * oldest `synced` entries beyond `MAX_SYNCED_OUTBOX_HISTORY`.
    */
   public async enqueueOutboxMutation(
     entity: OutboxEntity,
     action: string,
     payload: unknown
   ): Promise<OutboxMutation[]> {
+    this.assertWritable();
     return this.enqueueWrite(async () => {
-      const current = (await this.safeGet<OutboxMutation[]>('outbox')) ?? [];
+      const current = (await this.resilientAdapter.get<OutboxMutation[]>('outbox')) ?? [];
       const entry: OutboxMutation = {
         id: nextOutboxId(),
         entity,
         action,
-        payload,
+        payload: sanitizeOutboxPayload(payload),
         createdAt: new Date().toISOString(),
         status: 'pending_sync',
         attempts: 0,
       };
-      // Keep bounded outbox history (up to 100 latest entries)
-      const next = [entry, ...current].slice(0, 100);
-      await this.safeSet('outbox', next);
-      await this.touchMeta();
+
+      const pending = [entry, ...current.filter(m => m.status === 'pending_sync')];
+      const synced = current
+        .filter(m => m.status === 'synced')
+        .slice(0, MAX_SYNCED_OUTBOX_HISTORY);
+      const next = [...pending, ...synced];
+
+      const metaEntry = await this.buildMetaEntry();
+      await this.resilientAdapter.setMany([['outbox', next], metaEntry]);
+      this.updateGlobalStatus();
+      this.notifyOtherTabs();
       return next;
     });
   }
 
   public async getOutbox(): Promise<OutboxMutation[]> {
-    return (await this.safeGet<OutboxMutation[]>('outbox')) ?? [];
+    return (await this.resilientAdapter.get<OutboxMutation[]>('outbox')) ?? [];
   }
 
   /**
@@ -265,105 +575,171 @@ export class SalonRepository {
    * until a real backend server is attached.
    */
   public async flushOutboxLocalDemo(): Promise<OutboxMutation[]> {
+    this.assertWritable();
     return this.enqueueWrite(async () => {
-      const current = (await this.safeGet<OutboxMutation[]>('outbox')) ?? [];
-      const flushed: OutboxMutation[] = current.map(item => ({
-        ...item,
-        status: 'synced',
-        attempts: item.attempts + 1,
-      }));
-      await this.safeSet('outbox', flushed);
-      await this.touchMeta();
+      const current = (await this.resilientAdapter.get<OutboxMutation[]>('outbox')) ?? [];
+      const flushed: OutboxMutation[] = current
+        .map(item => ({
+          ...item,
+          status: 'synced' as const,
+          attempts: item.attempts + 1,
+        }))
+        .slice(0, MAX_SYNCED_OUTBOX_HISTORY);
+      const metaEntry = await this.buildMetaEntry();
+      await this.resilientAdapter.setMany([['outbox', flushed], metaEntry]);
+      this.updateGlobalStatus();
+      this.notifyOtherTabs();
       return flushed;
     });
   }
 
-  public saveArtists(artists: Artist[]): Promise<void> {
+  private async commitValidated<T>(
+    key: StorageEntry[0],
+    value: T,
+    validator: (v: unknown) => { ok: boolean; reason?: string }
+  ): Promise<void> {
+    this.assertWritable();
+    assertNoSecretLikeFields(value);
+    const check = validator(value);
+    if (!check.ok) {
+      throw new Error(`Security policy violation: invalid "${key}" schema (${check.reason}).`);
+    }
     return this.enqueueWrite(async () => {
-      await this.safeSet('artists', artists);
-      await this.touchMeta();
+      const metaEntry = await this.buildMetaEntry();
+      await this.resilientAdapter.setMany([[key, value], metaEntry]);
+      this.updateGlobalStatus();
+      this.notifyOtherTabs();
     });
+  }
+
+  public saveArtists(artists: Artist[]): Promise<void> {
+    return this.commitValidated('artists', artists, validateArtists);
   }
 
   public saveAppointments(appointments: Appointment[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('appointments', appointments);
-      await this.touchMeta();
-    });
+    return this.commitValidated('appointments', appointments, validateAppointments);
   }
 
   public savePortfolio(portfolio: PortfolioItem[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('portfolio', portfolio);
-      await this.touchMeta();
-    });
+    return this.commitValidated('portfolio', portfolio, validatePortfolio);
   }
 
   public saveLikedIds(likedIds: string[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('likedIds', likedIds);
-      await this.touchMeta();
-    });
+    return this.commitValidated('likedIds', likedIds, v => validateStringArray(v, 'likedIds'));
   }
 
-  public saveSavedIds(savedIds: string[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('savedIds', savedIds);
-      await this.touchMeta();
-    });
-  }
+  /**
+   * Truly atomic single-transaction update of likedIds + portfolio counters + meta (L-07, L-11).
+   */
+  public saveLikesAndPortfolioAtomic(likedIds: string[], portfolio: PortfolioItem[]): Promise<void> {
+    this.assertWritable();
+    assertNoSecretLikeFields(likedIds);
+    assertNoSecretLikeFields(portfolio);
+    const likedCheck = validateStringArray(likedIds, 'likedIds');
+    if (!likedCheck.ok) throw new Error(`Invalid likedIds: ${likedCheck.reason}`);
+    const portfolioCheck = validatePortfolio(portfolio);
+    if (!portfolioCheck.ok) throw new Error(`Invalid portfolio: ${portfolioCheck.reason}`);
 
-  public saveReviews(reviews: Review[]): Promise<void> {
     return this.enqueueWrite(async () => {
-      await this.safeSet('reviews', reviews);
-      await this.touchMeta();
-    });
-  }
-
-  public saveAnchorPoints(anchorPoints: ClientAnchorPoint[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('anchorPoints', anchorPoints);
-      await this.touchMeta();
-    });
-  }
-
-  public saveChats(chats: ChatMessage[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('chats', chats);
-      await this.touchMeta();
-    });
-  }
-
-  public saveAds(ads: SponsoredAd[]): Promise<void> {
-    return this.enqueueWrite(async () => {
-      await this.safeSet('ads', ads);
-      await this.touchMeta();
-    });
-  }
-
-  public async savePasskeys(passkeys: PasskeyCredentialRecord[]): Promise<void> {
-    assertNoPlaintextSecrets(passkeys);
-    return this.enqueueWrite(async () => {
-      await this.safeSet('passkeys', passkeys);
-      await this.touchMeta();
-    });
-  }
-
-  public async saveIdentitySession(session: IdentitySession): Promise<void> {
-    assertNoPlaintextSecrets(session);
-    return this.enqueueWrite(async () => {
-      await this.safeSet('identitySession', session);
-      await this.touchMeta();
+      const metaEntry = await this.buildMetaEntry();
+      await this.resilientAdapter.setMany([
+        ['likedIds', likedIds],
+        ['portfolio', portfolio],
+        metaEntry,
+      ]);
+      this.updateGlobalStatus();
+      this.notifyOtherTabs();
     });
   }
 
   /**
-   * Clears all locally persisted state and re-seeds clean initial fixtures.
+   * Truly atomic single-transaction update of reviews + artist ratings + meta (L-11).
    */
-  public async resetToSeed(): Promise<HydratedSalonData> {
+  public saveReviewsAndArtistsAtomic(reviews: Review[], artists: Artist[]): Promise<void> {
+    this.assertWritable();
+    assertNoSecretLikeFields(reviews);
+    assertNoSecretLikeFields(artists);
+    const revCheck = validateReviews(reviews);
+    if (!revCheck.ok) throw new Error(`Invalid reviews: ${revCheck.reason}`);
+    const artCheck = validateArtists(artists);
+    if (!artCheck.ok) throw new Error(`Invalid artists: ${artCheck.reason}`);
+
     return this.enqueueWrite(async () => {
-      await this.adapter.clear();
-      return this.ensureSeededAndLoad();
+      const metaEntry = await this.buildMetaEntry();
+      await this.resilientAdapter.setMany([
+        ['reviews', reviews],
+        ['artists', artists],
+        metaEntry,
+      ]);
+      this.updateGlobalStatus();
+      this.notifyOtherTabs();
+    });
+  }
+
+  public saveSavedIds(savedIds: string[]): Promise<void> {
+    return this.commitValidated('savedIds', savedIds, v => validateStringArray(v, 'savedIds'));
+  }
+
+  public saveReviews(reviews: Review[]): Promise<void> {
+    return this.commitValidated('reviews', reviews, validateReviews);
+  }
+
+  public saveAnchorPoints(anchorPoints: ClientAnchorPoint[]): Promise<void> {
+    return this.commitValidated('anchorPoints', anchorPoints, validateAnchorPoints);
+  }
+
+  public saveChats(chats: ChatMessage[]): Promise<void> {
+    return this.commitValidated('chats', chats, validateChats);
+  }
+
+  public saveAds(ads: SponsoredAd[]): Promise<void> {
+    return this.commitValidated('ads', ads, validateAds);
+  }
+
+  public async savePasskeys(passkeys: PasskeyCredentialRecord[]): Promise<void> {
+    return this.commitValidated('passkeys', passkeys, validatePasskeys);
+  }
+
+  public async saveIdentitySession(session: IdentitySession): Promise<void> {
+    return this.commitValidated('identitySession', session, validateIdentitySession);
+  }
+
+  /**
+   * Returns only user-created records (excluding `origin === 'seed'`) for exports/sync (L-03).
+   */
+  public static filterUserRecords<T extends { origin?: 'seed' | 'user' }>(items: T[]): T[] {
+    return items.filter(item => item.origin === 'user');
+  }
+
+  /**
+   * Clears salon collections cleanly with explicit option to preserve Passkey identity keys (L-13).
+   */
+  public async resetToSeed(
+    options: { preserveIdentity?: boolean } = {}
+  ): Promise<HydratedSalonData> {
+    return this.enqueueWrite(async () => {
+      const preservedPasskeys = options.preserveIdentity
+        ? (await this.resilientAdapter.get<PasskeyCredentialRecord[]>('passkeys')) ?? []
+        : [];
+      const preservedSession = options.preserveIdentity
+        ? (await this.resilientAdapter.get<IdentitySession>('identitySession')) ?? {
+            ...DEFAULT_ANONYMOUS_SESSION,
+          }
+        : { ...DEFAULT_ANONYMOUS_SESSION };
+
+      this.readOnlyFutureSchema = false;
+      await this.resilientAdapter.clear();
+
+      if (options.preserveIdentity) {
+        await this.resilientAdapter.setMany([
+          ['passkeys', preservedPasskeys],
+          ['identitySession', preservedSession],
+        ]);
+      }
+
+      const fresh = await this.ensureSeededAndLoad();
+      this.notifyOtherTabs();
+      return fresh;
     });
   }
 }

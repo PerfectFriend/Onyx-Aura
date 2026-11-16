@@ -54,7 +54,7 @@ export const CalendarSyncButtons: React.FC<CalendarSyncButtonsProps> = ({
 
   const handleCopyDetails = async () => {
     triggerHaptic('light');
-    const details = `💅 Nailix Запись на маникюр\nУслуга: ${appointment.serviceName}\nМастер: ${appointment.artistName}\nДата: ${appointment.date} в ${appointment.timeSlot}\nСтоимость: $${appointment.price} USD (${appointment.currency})\nЭскроу TX: ${appointment.escrowTxHash || 'Secured'}\nАдрес: ${artist?.salonAddress || 'Салон мастера'}\nhttps://nailix.art`;
+    const details = `💅 Nailix Запись на маникюр\nУслуга: ${appointment.serviceName}\nМастер: ${appointment.artistName}\nДата: ${appointment.date} в ${appointment.timeSlot}\nСтоимость: $${appointment.price} USD (${appointment.currency})\nРеференс [SIM]: ${appointment.escrowTxHash || 'Demo'}\nАдрес: ${artist?.salonAddress || 'Салон мастера'}\nhttps://nailix.art`;
     
     try {
       await navigator.clipboard.writeText(details);
@@ -129,7 +129,7 @@ export const CalendarSyncButtons: React.FC<CalendarSyncButtonsProps> = ({
               <button
                 onClick={() => {
                   setIsOpenMenu(false);
-                  handleCopyDetails();
+                  void handleCopyDetails();
                 }}
                 className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-gray-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer border-t border-white/5 pt-1.5"
               >
@@ -228,7 +228,7 @@ export const CalendarSyncButtons: React.FC<CalendarSyncButtonsProps> = ({
       {/* Auxiliary Actions & Info */}
       <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px] font-mono text-gray-400">
         <button
-          onClick={handleCopyDetails}
+          onClick={() => { void handleCopyDetails(); }}
           className="hover:text-amber-300 transition-colors flex items-center gap-1 cursor-pointer"
         >
           {copied ? (

@@ -28,16 +28,16 @@
 
 ## ✨ Ключевые возможности / Core Highlights
 
-### 1. 📅 Бронирование, Offline-First База, Passkeys и Календарный сервис · 🟢 `REAL`
-- **Local-First IndexedDB**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через чистый `SalonRepository` (схема v2) с идемпотентным сидом, loading-экраном гидрации и оффлайн-очередью мутаций (`OutboxMutation`).
-- **WebAuthn / Passkeys & Secret Hygiene (Этап 3)**: Вход по биометрии/Passkey устройства (`navigator.credentials`), хранение только публичных метаданных ключа, строгая проверка `assertNoPlaintextSecrets` и `Content-Security-Policy`. (В изолированных iframe доступен явный `[SIM] Демо Passkey`; серверная верификация подписи — на Этапе 4).
+### 1. 📅 Бронирование, Offline-First База, Passkeys и Календарный сервис · 🟢 `REAL` (Storage) / 🔵 `LOCAL_ONLY` (App Flows)
+- **Local-First IndexedDB v2**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через `SalonRepository` + `ResilientStorageAdapter` (`storageHealth: ok | degraded | memory_only`), строгие allowlist-схемы (`src/domain/schemas.ts`), миграции `v1 → v2`, защиту от более новой схемы (`read-only`), оффлайн-очередь мутаций `OutboxMutation` (без вытеснения `pending_sync`) и паттерн **Load-then-Mount** (`useSalonBootstrap`).
+- **WebAuthn / Passkeys & Secret Hygiene (Этап 3.1 → 3.2)**: Церемония FIDO2 (`navigator.credentials.create`/`.get`) с локальной криптографической проверкой подписи (`crypto.subtle.verify` по SPKI ES256/RS256), `rpIdHash`, флагов UP/UV, монотонного `signCount`, TTL сессии 8 часов, discoverable fallback, проверкой `assertNoSecretLikeFields` и build-time `Content-Security-Policy` без `script-src 'unsafe-inline'` (с самохостингом шрифтов `@fontsource/*`). Авторизация остаётся локальной (`LOCAL_ONLY`, `client_local_only`); серверная верификация challenge — Этап 4. В песочницах доступен явный `[SIM] Демо Passkey`.
 - **Мгновенная синхронизация в Google Calendar / Microsoft Outlook** через веб-ссылки с предзаполненными параметрами.
 - **Экспорт в Apple Calendar / Outlook** через генерацию файла `.ics` (iCalendar RFC 5545) с напоминаниями `VALARM`.
-- Просмотр записей и кнопка **«Сбросить локальную демо-базу»** в модальном окне «Мои записи».
+- Просмотр записей и безопасный диалог **«Сбросить локальную демо-базу»** (с раздельным сбросом данных салона и ключей Passkey) в модальном окне «Мои записи».
 
-### 2. 💅 Галерея Высокого Нейл-Арта (Haute Couture Gallery) · 🟢 `REAL`
+### 2. 💅 Галерея Высокого Нейл-Арта (Haute Couture Gallery) · 🔵 `LOCAL_ONLY`
 - Интерактивный каталог эксклюзивных дизайнов с фильтрами по категориям и Lightbox-просмотром.
-- Локальное хранение ассетов в `public/assets/images/` без привязки к внешним CDN.
+- Локальное хранение ассетов в `public/assets/images/` и самохостинг шрифтов `@fontsource/*` без привязки к внешним CDN.
 
 | Gaudí Trencadís Mosaic | Cyberpunk 3D Chrome | Aurora Glass Prisms | Velvet Noir Cat-Eye |
 |:---:|:---:|:---:|:---:|
@@ -48,26 +48,26 @@
 
 ### 4. 💎 Мультивалютный демо-чекаут & CryptoCloud · 🔴 `[SIM]`
 - Превью удержания депозита в фиатных и токен-валютах.
-- Локальная симуляция `BroadcastChannel` + Web Crypto `SHA-256` (`src/simulation/cryptocloud.ts`) без настоящих блокчейн-транзакций или шифрования снапшотов.
+- [SIM] Локальная имитация межвкладочного обмена (`BroadcastChannel`) + Web Crypto `SHA-256` (`src/simulation/cryptocloud.ts`) — открытый `.sim.json`-снимок пользовательских записей (`origin: 'user'`).
 
-### 5. 📱 PWA & Сборка Android APK · 🟢 `REAL` / 📷 AR 2D Overlay · 🔴 `[SIM]`
-- Offline-кэширование через Workbox (`vite-plugin-pwa`) и нативный виброотклик (`navigator.vibrate`).
+### 5. 📱 PWA & Сборка Android APK · 🟢 `REAL` (PWA & Script) / 🟡 `PROTOTYPE` (WebView Shell) / 🔴 `[SIM]` (AR)
+- Offline-кэширование через Workbox (`vite-plugin-pwa`, включая `.woff2` и локальные изображения) и нативный виброотклик (`navigator.vibrate`).
 - **Виртуальная AR-примерка** в `AndroidExperienceView` работает в режиме 🔴 **`[SIM]`** (WebRTC видеопоток + 2D Canvas сетка; MediaPipe 3D-трекинг запланирован на Этап 6).
-- **Android APK** собирается локально скриптом `scripts/build-apk.sh` в директорию `dist-apk/` (вне `public/` и `.gitignore`) с ключами подписи из переменных окружения — см. [`docs/KEY_ROTATION_RUNBOOK.md`](./docs/KEY_ROTATION_RUNBOOK.md).
+- **Android APK** собирается локально скриптом `scripts/build-apk.sh` в директорию `dist-apk/` (вне `public/` и `.gitignore`) с ключами подписи строго через `env:NAILIX_KEYSTORE_PASS` — см. [`docs/KEY_ROTATION_RUNBOOK.md`](./docs/KEY_ROTATION_RUNBOOK.md).
 
-### 6. 🗺️ Радар мастеров & Интерактивная карта студий · 🟢 `REAL`
+### 6. 🗺️ Радар мастеров & Интерактивная карта студий · 🔵 `LOCAL_ONLY`
 - Поиск студий и расчёт дистанции по формуле гаверсинусов (`src/services/geoDistance.ts`) и `navigator.geolocation`.
 
 ---
 
 ## 🛠️ Стек технологий / Tech Stack
 
-- **Frontend Core**: [React 19](https://react.dev/), [TypeScript 6.0](https://www.typescriptlang.org/)
-- **Bundler & Tooling**: [Vite 6](https://vitejs.dev/), [Vitest](https://vitest.dev/), [ESLint 9](https://eslint.org/) (`typescript-eslint`, `react-hooks`, `jsx-a11y`)
-- **Styling & Design System**: [Tailwind CSS v4](https://tailwindcss.com/), Custom Cyber-Gaudí Ornament Engine
+- **Frontend Core**: [React 19](https://react.dev/), [TypeScript 6.0.3](https://www.typescriptlang.org/) (pinned)
+- **Bundler & Tooling**: [Vite 8](https://vitejs.dev/), [Vitest](https://vitest.dev/) (+ `@vitest/coverage-v8`), [ESLint 9](https://eslint.org/) (`recommendedTypeChecked`, `no-floating-promises`, `react-hooks`, `jsx-a11y/recommended`)
+- **Styling & Typography**: [Tailwind CSS v4](https://tailwindcss.com/), Self-hosted `@fontsource/*` (Plus Jakarta Sans, Syne, JetBrains Mono)
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
-- **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials`), Web Crypto CSPRNG challenges, Plaintext Secret Guard, Content Security Policy
-- **Local-First Storage**: Native `IndexedDB` (schema v2) via `StorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue (with `MemoryStorageAdapter` fallback)
+- **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials` + локальная SPKI-проверка подписи ES256/RS256), Web Crypto CSPRNG challenges, Schema Allowlists + `assertNoSecretLikeFields`, build-time CSP без `script-src 'unsafe-inline'`
+- **Local-First Storage**: Native `IndexedDB` (schema v2 + migration registry) via `ResilientStorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue
 - **PWA & Offline Engine**: [Vite Plugin PWA](https://vite-pwa-org.netlify.app/), Workbox
 - **Calendar Engine**: RFC 5545 iCalendar generator + Google/Outlook Calendar URL builder
 
@@ -76,27 +76,30 @@
 ## 📂 Структура проекта / Project Structure
 
 ```bash
-├── docs/                   # Аудит-журнал, Карта Реальности, Архитектура, Runbook ротации ключа
+├── docs/                    # Аудит-журнал, Карта Реальности v3.1, Архитектура, Runbook ротации ключа
 ├── scripts/
-│   └── build-apk.sh        # Локальная сборка APK в dist-apk/ (через env NAILIX_KEYSTORE_*)
-├── public/                 # Статические ассеты, PWA-иконки, assetlinks.json
-│   └── assets/images/      # Локальные изображения (портфолио, баннеры, аватары)
+│   ├── build-apk.sh         # Локальная сборка APK в dist-apk/ (строго через env:NAILIX_KEYSTORE_PASS)
+│   └── ci.workflow.yml      # Шаблон GitHub Actions CI (копировать в .github/workflows/ci.yml под PAT со scope workflow)
+├── public/                  # Статические ассеты, PWA-иконки, assetlinks.json
+│   └── assets/images/       # Локальные изображения (портфолио, баннеры, аватары)
 ├── src/
-│   ├── __tests__/          # Unit-тесты (Vitest): honestyWatchdog, webAuthnIdentity, localFirstRepository, calendarSync, geoDistance, haptics, ErrorBoundary
-│   ├── components/         # UI-компоненты, модалки (вкл. PasskeyAuthModal), ErrorBoundary
-│   ├── data/               # Начальные seed-фикстуры для SalonRepository
-│   ├── domain/             # Чистые контракты StorageAdapter, OutboxMutation, IdentitySession, PasskeyCredentialRecord
-│   ├── hooks/              # Доменные хуки + useLocalFirstHydration + useIdentitySession
-│   ├── i18n/               # Словарь переводов на 10 языков (LTR + RTL)
-│   ├── infrastructure/     # IndexedDBAdapter, SalonRepository v2, WebAuthnService, SecretHygiene
-│   ├── services/           # geoDistance (REAL) и reminderService ([SIM])
-│   ├── simulation/         # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
-│   ├── utils/              # calendarSync.ts (RFC 5545), haptics.ts
-│   ├── App.tsx             # Тонкий оркестратор хуков и ErrorBoundary-секций (0 useState, 0 useEffect)
-│   └── main.tsx            # Точка входа React + Root ErrorBoundary
-├── eslint.config.js        # Strict TS/React/A11y ESLint конфиг
-├── vite.config.ts          # Конфигурация Vite и PWA Workbox
-└── package.json
+│   ├── __tests__/           # Vitest (honestyWatchdog, localFirstResilience, localFirstRepository, webAuthnIdentity, honestCore, errorBoundary, ...)
+│   ├── components/          # UI-компоненты, модалки (вкл. PasskeyAuthModal), ErrorBoundary (сброс данных)
+│   ├── data/                # Начальные seed-фикстуры (origin: 'seed') для SalonRepository
+│   ├── domain/              # Чистые контракты Storage, Schema Validators, IdentitySession, Rating calculator
+│   ├── hooks/               # Доменные хуки + useSalonBootstrap + useIdentitySession + useAppShell
+│   ├── i18n/                # Словарь переводов на 10 языков (LTR + RTL)
+│   ├── infrastructure/      # IndexedDBAdapter + ResilientStorageAdapter, SalonRepository v2, WebAuthnService, SecretHygiene, CSP builder
+│   ├── services/            # geoDistance (REAL) и reminderService ([SIM])
+│   ├── simulation/          # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
+│   ├── test-utils/          # Экспортируемый сканер честности (honesty.ts) для мета-тестов
+│   ├── utils/               # calendarSync.ts (RFC 5545), haptics.ts
+│   ├── App.tsx              # Load-then-Mount (<App /> → useSalonBootstrap → <SalonApp key={resetEpoch} />)
+│   └── main.tsx             # Точка входа React + самохостинговые шрифты + Root ErrorBoundary
+├── eslint.config.js         # Type-checked TS/React/A11y ESLint конфиг
+├── vite.config.ts           # Конфигурация Vite, CSP-плагин и PWA Workbox
+├── vitest.config.ts         # Настройки Vitest + пороги V8-покрытия
+└── package.json & package-lock.json
 ```
 
 ---
@@ -106,7 +109,7 @@
 ```bash
 git clone https://github.com/PerfectFriend/Onyx-Aura.git
 cd Onyx-Aura
-npm install
+npm ci
 npm run dev
 ```
 
@@ -115,7 +118,7 @@ npm run dev
 ```bash
 npm run lint
 npm run typecheck
-npm test
+npm run test:coverage
 npm run build
 ```
 

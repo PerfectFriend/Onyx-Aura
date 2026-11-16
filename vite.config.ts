@@ -3,10 +3,26 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+import {buildContentSecurityPolicy} from './src/infrastructure/security/csp';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const isProd = mode === 'production';
+  const cspContent = buildContentSecurityPolicy(isProd ? 'production' : 'development');
+
   return {
     plugins: [
+      {
+        name: 'csp-meta-injector',
+        transformIndexHtml(html, ctx) {
+          const targetCsp = ctx.server
+            ? buildContentSecurityPolicy('development')
+            : cspContent;
+          return html.replace(
+            /<meta\s+http-equiv="Content-Security-Policy"\s+content="[^"]*"\s*\/>/i,
+            `<meta http-equiv="Content-Security-Policy" content="${targetCsp}" />`
+          );
+        },
+      },
       {
         name: 'dev-sw-cleanup',
         configureServer(server) {
@@ -41,7 +57,7 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,webmanifest}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff2,webmanifest}'],
           runtimeCaching: [
             {
               urlPattern: ({ request }) => request.destination === 'image',

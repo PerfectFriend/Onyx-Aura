@@ -169,7 +169,7 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
             Nail Masters Sorted by Proximity
           </h2>
           <p className="text-xs opacity-75 mt-1 max-w-2xl leading-relaxed">
-            Choose your anchor location (Home, Work, or Custom Pin). Nailix computes real-time walking and driving distance to each verified master’s salon.
+            Choose your anchor location (Home, Work, or Custom Pin). Nailix computes real-time walking and driving distance to each curated master’s salon.
           </p>
         </div>
 
@@ -266,8 +266,9 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="block text-gray-300 mb-1">Spot Name / Label</label>
+              <label htmlFor="anchor-spot-name" className="block text-gray-300 mb-1">Spot Name / Label</label>
               <input
+                id="anchor-spot-name"
                 type="text"
                 value={editName}
                 onChange={e => setEditName(e.target.value)}
@@ -276,8 +277,9 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
               />
             </div>
             <div>
-              <label className="block text-gray-300 mb-1">Street Address or District</label>
+              <label htmlFor="anchor-street-address" className="block text-gray-300 mb-1">Street Address or District</label>
               <input
+                id="anchor-street-address"
                 type="text"
                 value={editAddress}
                 onChange={e => setEditAddress(e.target.value)}
@@ -321,8 +323,9 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
             <div>
-              <label className="block text-gray-300 mb-1">Master Account</label>
+              <label htmlFor="salon-master-select" className="block text-gray-300 mb-1">Master Account</label>
               <select
+                id="salon-master-select"
                 value={salonMasterId}
                 onChange={e => {
                   setSalonMasterId(e.target.value);
@@ -343,8 +346,9 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
             </div>
 
             <div>
-              <label className="block text-gray-300 mb-1">Salon Name</label>
+              <label htmlFor="salon-name-input" className="block text-gray-300 mb-1">Salon Name</label>
               <input
+                id="salon-name-input"
                 type="text"
                 value={salonNameInput}
                 onChange={e => setSalonNameInput(e.target.value)}
@@ -354,8 +358,9 @@ export const ClientLocationMap: React.FC<ClientLocationMapProps> = ({
             </div>
 
             <div>
-              <label className="block text-gray-300 mb-1">Salon Street Address</label>
+              <label htmlFor="salon-address-input" className="block text-gray-300 mb-1">Salon Street Address</label>
               <input
+                id="salon-address-input"
                 type="text"
                 value={salonAddressInput}
                 onChange={e => setSalonAddressInput(e.target.value)}

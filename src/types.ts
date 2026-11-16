@@ -1,3 +1,5 @@
+export type RecordOrigin = 'seed' | 'user';
+
 export type ServiceCategory = 
   | 'Sculptural 3D Chrome'
   | 'Japanese Glass Aura'
@@ -35,6 +37,7 @@ export interface PortfolioItem {
   igPostId?: string;
   igLikes?: number;
   contentHash: string;
+  origin?: RecordOrigin;
 }
 
 export interface Review {
@@ -57,6 +60,7 @@ export interface Review {
   parentHash: string;
   verifiedBookingTx: string;
   verifiedInPerson: boolean;
+  origin?: RecordOrigin;
 }
 
 export interface Artist {
@@ -70,6 +74,7 @@ export interface Artist {
   reputationScore: number; // 0-100
   totalReviews: number;
   rating: number;
+  ratingSum?: number;
   walletAddress: string;
   stakedNAIL: number;
   igHandle: string;
@@ -82,6 +87,7 @@ export interface Artist {
   salonAddress?: string;
   coordinates?: { lat: number; lng: number };
   workingHours?: string;
+  origin?: RecordOrigin;
 }
 
 export type ThemeMode = 'dark' | 'light';
@@ -93,6 +99,7 @@ export interface ClientAnchorPoint {
   icon: string;
   address: string;
   coordinates: { lat: number; lng: number };
+  origin?: RecordOrigin;
 }
 
 export type AdTargetAudience = 'client' | 'master' | 'all';
@@ -117,6 +124,7 @@ export interface SponsoredAd {
   clicks: number;
   isActive: boolean;
   sponsoredBadge: string;
+  origin?: RecordOrigin;
 }
 
 export type PaymentCurrency = 'USD' | 'EUR' | 'GBP' | 'ETH' | 'SOL' | 'USDC' | 'NAIL';
@@ -145,6 +153,7 @@ export interface Appointment {
   referenceLookImage?: string;
   customNotes?: string;
   createdAt: string;
+  origin?: RecordOrigin;
 }
 
 export type UserRole = 'client' | 'master';
@@ -165,6 +174,7 @@ export interface ChatMessage {
     durationMinutes: number;
   };
   inspirationImg?: string;
+  origin?: RecordOrigin;
 }
 
 export interface PeerNode {

@@ -123,17 +123,21 @@ describe('Stage 2 — Local-First Storage & SalonRepository', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const failingAdapter: StorageAdapter = {
       backend: 'indexeddb',
-      async get<T>(_key: StorageKey): Promise<T | undefined> {
-        throw new Error('SecurityError: IndexedDB disabled in strict sandbox');
+      get<T>(_key: StorageKey): Promise<T | undefined> {
+        return Promise.reject(new Error('SecurityError: IndexedDB disabled in strict sandbox'));
       },
-      async set<T>(_key: StorageKey, _value: T): Promise<void> {
-        throw new Error('QuotaExceededError');
+      set<T>(_key: StorageKey, _value: T): Promise<void> {
+        return Promise.reject(new Error('QuotaExceededError'));
       },
-      async remove(_key: StorageKey): Promise<void> {},
-      async keys(): Promise<string[]> {
-        return [];
+      remove(_key: StorageKey): Promise<void> {
+        return Promise.resolve();
       },
-      async clear(): Promise<void> {},
+      keys(): Promise<string[]> {
+        return Promise.resolve([]);
+      },
+      clear(): Promise<void> {
+        return Promise.resolve();
+      },
     };
 
     const resilientRepo = new SalonRepository(failingAdapter);
@@ -207,7 +211,8 @@ describe('Stage 2 — Local-First Storage & SalonRepository', () => {
       displayName: 'Elena Vasiliev',
       role: 'master',
       authMethod: 'webauthn_passkey',
-      signedInAt: '2026-11-15T10:00:00.000Z',
+      signedInAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 8 * 3600_000).toISOString(),
       verificationScope: 'client_local_only',
     });
 

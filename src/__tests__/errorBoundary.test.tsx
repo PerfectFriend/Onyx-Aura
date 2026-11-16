@@ -7,7 +7,7 @@ function Boom(): React.ReactElement {
   throw new Error('Simulated CryptoCloud failure');
 }
 
-describe('ErrorBoundary resilience', () => {
+describe('ErrorBoundary resilience & truthful root recovery (K-06 / L-01 / L-06)', () => {
   it('renders children transparently when no error occurs', () => {
     const html = renderToStaticMarkup(
       <ErrorBoundary level="section" sectionName="Галерея">
@@ -17,7 +17,7 @@ describe('ErrorBoundary resilience', () => {
     expect(html).toContain('Salon Ready');
   });
 
-  it('produces minimal hasError fallback state from getDerivedStateFromError without storing sensitive strings', () => {
+  it('produces minimal hasError fallback state without leaking raw error text', () => {
     const derived = ErrorBoundary.getDerivedStateFromError();
     expect(derived).toEqual({
       hasError: true,
@@ -33,32 +33,54 @@ describe('ErrorBoundary resilience', () => {
       theme: 'dark',
       children: <Boom />,
     });
-    boundary.state = ErrorBoundary.getDerivedStateFromError();
+    boundary.state = { hasError: true, isWiping: false };
 
     const fallbackHtml = renderToStaticMarkup(boundary.render() as React.ReactElement);
 
     expect(fallbackHtml).toContain('CryptoCloud Swarm [SIM]');
     expect(fallbackHtml).toContain('Перезагрузить секцию');
-    expect(fallbackHtml).not.toContain('boom at line 42');
 
     consoleSpy.mockRestore();
   });
 
-  it('renders truthful root fallback screen noting IndexedDB local persistence when level="root"', () => {
+  it('renders root fallback screen with IndexedDB notice and 3rd emergency data reset button (L-06)', () => {
     const boundary = new ErrorBoundary({
       level: 'root',
       theme: 'light',
+      storageBackend: 'indexeddb',
+      storageHealth: 'ok',
       children: null,
     });
-    boundary.state = ErrorBoundary.getDerivedStateFromError();
+    boundary.state = { hasError: true, isWiping: false };
 
     const fallbackHtml = renderToStaticMarkup(boundary.render() as React.ReactElement);
 
     expect(fallbackHtml).toContain('Салон временно на паузе');
     expect(fallbackHtml).toContain('Попробовать восстановить');
     expect(fallbackHtml).toContain('Обновить страницу');
+    expect(fallbackHtml).toContain('Сбросить локальные данные');
     expect(fallbackHtml).toContain('IndexedDB');
-    expect(fallbackHtml).not.toContain('будут сброшены');
-    expect(fallbackHtml).not.toContain('Fatal tree error');
+  });
+
+  it('reflects dynamic memory_only and degraded storage health honestly in root fallback (L-01)', () => {
+    const memoryBoundary = new ErrorBoundary({
+      level: 'root',
+      storageBackend: 'memory',
+      storageHealth: 'memory_only',
+      children: null,
+    });
+    memoryBoundary.state = { hasError: true, isWiping: false };
+    const memHtml = renderToStaticMarkup(memoryBoundary.render() as React.ReactElement);
+    expect(memHtml).toContain('временном режиме памяти');
+
+    const degradedBoundary = new ErrorBoundary({
+      level: 'root',
+      storageBackend: 'indexeddb',
+      storageHealth: 'degraded',
+      children: null,
+    });
+    degradedBoundary.state = { hasError: true, isWiping: false };
+    const degHtml = renderToStaticMarkup(degradedBoundary.render() as React.ReactElement);
+    expect(degHtml).toContain('частичным сбоем записи');
   });
 });

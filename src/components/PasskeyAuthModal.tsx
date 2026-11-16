@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   KeyRound,
@@ -27,11 +27,12 @@ interface PasskeyAuthModalProps {
   authError: string | null;
   currentRole: UserRole;
   theme?: ThemeMode;
-  onRegisterPasskey: (displayName: string, role: UserRole) => void;
-  onSignInWithPasskey: () => void;
-  onCreateDemoFallback: (displayName: string, role: UserRole) => void;
-  onSignOut: () => void;
-  onRevokePasskey: (credentialId: string) => void;
+  onRegisterPasskey: (displayName: string, role: UserRole) => Promise<void> | void;
+  onSignInWithPasskey: () => Promise<void> | void;
+  onCreateDemoFallback: (displayName: string, role: UserRole) => Promise<void> | void;
+  onSignInDemoFallback?: (credentialId?: string) => Promise<void> | void;
+  onSignOut: () => Promise<void> | void;
+  onRevokePasskey: (credentialId: string) => Promise<void> | void;
 }
 
 const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> = ({
@@ -46,6 +47,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
   onRegisterPasskey,
   onSignInWithPasskey,
   onCreateDemoFallback,
+  onSignInDemoFallback,
   onSignOut,
   onRevokePasskey,
 }) => {
@@ -54,12 +56,22 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
   );
   const [selectedRole, setSelectedRole] = useState<UserRole>(currentRole);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const isDark = theme === 'dark';
-  const hasRealPasskeys = passkeys.some(p => !p.isSimulatedFallback);
+  const simPasskeys = passkeys.filter(p => p.isSimulatedFallback);
 
   const handleSubmitCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    onRegisterPasskey(displayName, selectedRole);
+    void onRegisterPasskey(displayName, selectedRole);
   };
 
   return (
@@ -68,15 +80,19 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
       role="dialog"
       aria-modal="true"
       aria-labelledby="passkey-modal-title"
-      onClick={onClose}
     >
+      <button
+        type="button"
+        aria-label="Закрыть окно Passkey"
+        onClick={onClose}
+        className="absolute inset-0 w-full h-full cursor-default"
+      />
       <div
-        className={`relative w-full max-w-xl rounded-2xl overflow-hidden border-2 shadow-2xl flex flex-col max-h-[92vh] ${
+        className={`relative z-10 w-full max-w-xl rounded-2xl overflow-hidden border-2 shadow-2xl flex flex-col max-h-[92vh] ${
           isDark
             ? 'gaudi-mosaic-card border-cyan-500/40 text-white'
             : 'bg-white border-amber-500/50 text-slate-900'
         }`}
-        onClick={e => e.stopPropagation()}
       >
         <CornerFlourish position="top-left" className="absolute top-2 left-2 z-10" size={32} />
         <CornerFlourish position="top-right" className="absolute top-2 right-2 z-10" size={32} />
@@ -95,10 +111,10 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
             </div>
             <div>
               <h2 id="passkey-modal-title" className="font-display font-bold text-lg">
-                Passkeys & WebAuthn Идентичность
+                Passkeys & WebAuthn [LOCAL_ONLY]
               </h2>
               <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-slate-600'}`}>
-                Без паролей и plaintext-секретов · ключи остаются в TPM / Enclave устройства
+                Без паролей · приватный ключ остаётся в TPM / Enclave устройства
               </p>
             </div>
           </div>
@@ -129,11 +145,11 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                 {capabilities.isSupported
                   ? capabilities.platformAuthenticatorAvailable
                     ? 'WebAuthn поддерживается этим устройством (биометрия / аппаратный ключ готовы).'
-                    : 'WebAuthn API доступен (поддержка внешнего ключа безопасности / системного Passkey).'
+                    : 'WebAuthn API доступен (внешний ключ безопасности / системный Passkey + discoverable lookup).'
                   : `WebAuthn ограничен средой: ${capabilities.reason || 'недоступен в текущей песочнице.'}`}
               </p>
               <p className="text-[11px] opacity-80">
-                Локальная верификация браузера без сервера: в IndexedDB хранится только публичный ID ключа; серверная проверка подписи challenge запланирована на Этап 4.
+                Режим <span className="font-mono font-bold">LOCAL_ONLY</span>: подпись, challenge, rpIdHash и счётчик `signCount` проверяются локально в браузере (SPKI); серверной авторизации и проверки прав пока нет (Этап 4).
               </p>
             </div>
           </div>
@@ -151,9 +167,11 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                 <UserCheck className="w-5 h-5 text-emerald-400 shrink-0" />
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-display font-bold text-sm">{session.displayName}</span>
+                    <span className="font-display font-bold text-sm">
+                      {session.displayName ?? 'Guest'}
+                    </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 uppercase">
-                      {session.role}
+                      Демо-роль: {session.role}
                     </span>
                     {session.authMethod === 'demo_passkey_sim' && (
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-900/70 text-red-200 border border-red-500/50 font-bold">
@@ -162,15 +180,17 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                     )}
                   </div>
                   <p className="text-[11px] font-mono text-gray-400 mt-0.5">
-                    ID: {session.credentialId?.slice(0, 22)}...
+                    ID: {session.credentialId?.slice(0, 18)}... · TTL до:{' '}
+                    {session.expiresAt ? new Date(session.expiresAt).toLocaleTimeString() : '—'}
                   </p>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={onSignOut}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition-colors cursor-pointer self-start sm:self-center"
+                disabled={isBusy}
+                onClick={() => void onSignOut()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium transition-colors cursor-pointer self-start sm:self-center disabled:opacity-50"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Выйти</span>
@@ -190,10 +210,14 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
           <form onSubmit={handleSubmitCreate} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium mb-1 opacity-80">
+                <label
+                  htmlFor="passkey-display-name"
+                  className="block text-xs font-medium mb-1 opacity-80"
+                >
                   Имя профиля (Passkey label)
                 </label>
                 <input
+                  id="passkey-display-name"
                   type="text"
                   value={displayName}
                   onChange={e => setDisplayName(e.target.value)}
@@ -208,8 +232,14 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
               </div>
 
               <div>
-                <label className="block text-xs font-medium mb-1 opacity-80">Роль</label>
+                <label
+                  htmlFor="passkey-demo-role"
+                  className="block text-xs font-medium mb-1 opacity-80"
+                >
+                  Демо-роль (UI)
+                </label>
                 <select
+                  id="passkey-demo-role"
                   value={selectedRole}
                   onChange={e => setSelectedRole(e.target.value as UserRole)}
                   className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none ${
@@ -218,8 +248,8 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                       : 'bg-white border-amber-300 text-slate-900'
                   }`}
                 >
-                  <option value="client">Клиент</option>
-                  <option value="master">Мастер</option>
+                  <option value="client">Клиент (демо)</option>
+                  <option value="master">Мастер (демо)</option>
                 </select>
               </div>
             </div>
@@ -234,11 +264,11 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                 <span>{isBusy ? 'Запрос устройства...' : 'Создать WebAuthn Passkey'}</span>
               </button>
 
-              {hasRealPasskeys && capabilities.isSupported && (
+              {capabilities.isSupported && (
                 <button
                   type="button"
                   disabled={isBusy}
-                  onClick={onSignInWithPasskey}
+                  onClick={() => void onSignInWithPasskey()}
                   className={`px-4 py-2.5 rounded-xl text-xs font-semibold border transition-colors inline-flex items-center gap-2 cursor-pointer ${
                     isDark
                       ? 'bg-cyan-500/15 border-cyan-400/40 text-cyan-200 hover:bg-cyan-500/25'
@@ -246,17 +276,28 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                   }`}
                 >
                   <KeyRound className="w-3.5 h-3.5" />
-                  <span>Войти по Passkey</span>
+                  <span>Проверить Passkey</span>
+                </button>
+              )}
+
+              {simPasskeys.length > 0 && onSignInDemoFallback && (
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => void onSignInDemoFallback(simPasskeys[0].id)}
+                  className="px-3.5 py-2.5 rounded-xl text-xs font-mono border border-amber-500/40 bg-amber-950/30 text-amber-200 hover:bg-amber-950/50 transition-colors cursor-pointer"
+                >
+                  Войти с [SIM] ключом
                 </button>
               )}
 
               <button
                 type="button"
                 disabled={isBusy}
-                onClick={() => onCreateDemoFallback(displayName, selectedRole)}
+                onClick={() => void onCreateDemoFallback(displayName, selectedRole)}
                 className="px-3.5 py-2.5 rounded-xl text-xs font-mono border border-red-500/40 bg-red-950/30 text-red-200 hover:bg-red-950/50 transition-colors cursor-pointer"
               >
-                [SIM] Демо Passkey (без WebAuthn)
+                [SIM] Новый демо-ключ
               </button>
             </div>
           </form>
@@ -264,12 +305,12 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
           {/* Registered Credentials Registry */}
           <div className="space-y-2 pt-2 border-t border-white/10">
             <h3 className="text-xs font-mono uppercase tracking-wider opacity-75">
-              Зарегистрированные ключи на устройстве ({passkeys.length})
+              Публичные ключи в локальном реестре ({passkeys.length})
             </h3>
 
             {passkeys.length === 0 ? (
               <p className="text-xs opacity-65 py-2">
-                Пока нет сохранённых Passkey в локальном реестре IndexedDB.
+                Локальный реестр IndexedDB пуст (для уже созданного аппаратного ключа сработает discoverable lookup).
               </p>
             ) : (
               <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
@@ -286,7 +327,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold truncate">{pk.displayName}</span>
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 uppercase">
-                          {pk.role}
+                          demo:{pk.role}
                         </span>
                         {pk.isSimulatedFallback && (
                           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-950/80 text-red-300 border border-red-500/40">
@@ -295,14 +336,15 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                         )}
                       </div>
                       <p className="text-[10px] font-mono opacity-65 truncate mt-0.5">
-                        Credential: {pk.id.slice(0, 26)}... · RP: {pk.rpId}
+                        Credential: {pk.id.slice(0, 22)}... · RP: {pk.rpId} · Counter: {pk.signCount ?? 0}
                       </p>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => onRevokePasskey(pk.id)}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                      disabled={isBusy}
+                      onClick={() => void onRevokePasskey(pk.id)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
                       title="Удалить ключ из реестра"
                       aria-label={`Удалить ключ ${pk.displayName}`}
                     >

@@ -51,6 +51,8 @@ bash scripts/build-apk.sh
 
 ## 3. Очистка истории Git от старого ключа и APK (владельцу репозитория)
 
+> **Важно про реальную безопасность (L-16):** `git push --force --all` не очищает `refs/pull/*`, существующие форки и кэши GitHub. Главная защита от компрометации — **ротация самого ключа и отпечатка**, а очистка истории остаётся дополнительной гигиеной. Если ранее распространялся APK со старым ключом, добавьте явное уведомление о переходе на новую подпись (переустановка).
+
 Сделайте резервную копию клона перед переписыванием истории (`force-push` требует координации команды и повторного клонирования).
 
 ```bash
@@ -61,17 +63,16 @@ pipx install git-filter-repo   # или brew install git-filter-repo
 git clone --mirror https://github.com/PerfectFriend/Onyx-Aura.git onyx-aura-clean.git
 cd onyx-aura-clean.git
 
-# Полное удаление скомпрометированного keystore, пароля в старых ревизиях и старых APK
-git filter-repo --invert-paths \
+# Однопроходная очистка бинарных артефактов, старого keystore и утекшего пароля
+printf '%s\n' 'nailix123==>REMOVED_COMPROMISED_PASSWORD' > /tmp/nailix-secrets.txt
+git filter-repo \
+  --invert-paths \
   --path android-build/nailix-release.keystore \
   --path public/nailix.apk \
   --path public/nailix.apk.idsig \
   --path android-build/assets/www/nailix.apk \
-  --path android-build/assets/www/nailix.apk.idsig
-
-# Дополнительно замените утекший литерал старого пароля в старых коммитах scripts/build-apk.sh
-printf '%s\n' 'nailix123==>REMOVED_COMPROMISED_PASSWORD' > /tmp/nailix-secrets.txt
-git filter-repo --replace-text /tmp/nailix-secrets.txt
+  --path android-build/assets/www/nailix.apk.idsig \
+  --replace-text /tmp/nailix-secrets.txt
 rm -f /tmp/nailix-secrets.txt
 
 # Отправка очищенной истории
@@ -79,4 +80,9 @@ git push origin --force --all
 git push origin --force --tags
 ```
 
-После `force-push` старый SHA-256 сертификат более никогда не должен использоваться для подписи сборок Nailix.
+### Примечание для Google Play Console (Play App Signing)
+
+Если публикация идёт через Google Play с включённым **Play App Signing**, в `public/.well-known/assetlinks.json` необходимо прописывать SHA-256 отпечаток **ключа подписи приложения (App signing key certificate)** из Play Console, а не локального upload key.
+
+После ротации и обновления `assetlinks.json` старый SHA-256 сертификат более никогда не должен использоваться для подписи релизных сборок Nailix.
+

@@ -111,7 +111,7 @@ export function generateIcsContent(appointment: Appointment, artist?: Artist | n
 
   const salonLocation = artist?.salonAddress 
     ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
-    : 'Nailix Verified Master Atelier';
+    : 'Nailix Demo Studio Atelier';
 
   const location = escapeIcsText(salonLocation);
 
@@ -198,7 +198,7 @@ export function generateGoogleCalendarUrl(appointment: Appointment, artist?: Art
   const title = `Nailix: ${appointment.serviceName} (${appointment.artistName})`;
   const salonLocation = artist?.salonAddress 
     ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
-    : 'Nailix Verified Master Atelier';
+    : 'Nailix Demo Studio Atelier';
 
   const details = [
     `Nailix Haute Manicure Booking`,
@@ -231,7 +231,7 @@ export function generateOutlookCalendarUrl(appointment: Appointment, artist?: Ar
   const title = `Nailix: ${appointment.serviceName} (${appointment.artistName})`;
   const salonLocation = artist?.salonAddress
     ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
-    : 'Nailix Verified Master Atelier';
+    : 'Nailix Demo Studio Atelier';
 
   const body = `Nailix Appointment for ${appointment.serviceName} with ${appointment.artistName}. Quoted Fee: $${appointment.price} USD. Ref [SIM]: ${appointment.escrowTxHash || 'Demo'}.`;
 
@@ -265,7 +265,7 @@ export function downloadAllAppointmentsIcs(appointments: Appointment[], artists?
     const summary = escapeIcsText(`Nailix: ${apt.serviceName} (${apt.artistName})`);
     const salonLocation = artist?.salonAddress
       ? `${artist.salonName ? `${artist.salonName}, ` : ''}${artist.salonAddress}`
-      : 'Nailix Verified Master Atelier';
+      : 'Nailix Demo Studio Atelier';
     const location = escapeIcsText(salonLocation);
     const desc = escapeIcsText(
       `Nailix Manicure with ${apt.artistName}. Quoted Fee: $${apt.price} USD. Booking Ref [SIM]: ${apt.escrowTxHash || 'Demo'}`

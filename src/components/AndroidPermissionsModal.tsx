@@ -96,8 +96,8 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
       const perm = await Notification.requestPermission();
       if (perm === 'granted') {
         setNotifyStatus('granted');
-        new Notification('Nailix Haute Art Alert', {
-          body: 'Android push notification channel verified! You will receive 24h & 2h reminders.',
+        new Notification('Nailix Haute Art Alert [SIM]', {
+          body: '[SIM] Browser notification permission granted. Instant preview reminders use simulated in-app alerts.',
           icon: '/pwa-192x192.png',
         });
       } else {
@@ -143,7 +143,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
   // Grant All
   const handleGrantAll = async () => {
     await handleRequestNotifications();
-    await handleRequestGeo();
+    handleRequestGeo();
     await handleRequestStorage();
     await handleRequestCamera();
   };
@@ -205,7 +205,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
 
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={install}
+              onClick={() => { void install(); }}
               disabled={isInstalled}
               className="btn-vangogh-gold text-xs whitespace-nowrap shrink-0"
             >
@@ -222,7 +222,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
               Hardware & System Access Permissions
             </h3>
             <button
-              onClick={handleGrantAll}
+              onClick={() => { void handleGrantAll(); }}
               className="text-xs font-medium text-amber-300 hover:text-amber-200 underline cursor-pointer"
             >
               {t.grantAll}
@@ -249,7 +249,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
                     <span>{t.permGranted}</span>
                   </span>
                   <button
-                    onClick={isCameraActive ? stopCamera : handleRequestCamera}
+                    onClick={isCameraActive ? stopCamera : () => { void handleRequestCamera(); }}
                     className="p-1.5 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-400/40 text-xs cursor-pointer"
                     title={isCameraActive ? 'Stop preview' : 'Test Camera Preview'}
                   >
@@ -258,7 +258,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
                 </div>
               ) : (
                 <button
-                  onClick={handleRequestCamera}
+                  onClick={() => { void handleRequestCamera(); }}
                   className="btn-starry-neon text-[11px] py-1.5 px-3"
                 >
                   Request Camera
@@ -303,7 +303,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
                 </span>
               ) : (
                 <button
-                  onClick={handleRequestNotifications}
+                  onClick={() => { void handleRequestNotifications(); }}
                   className="btn-starry-neon text-[11px] py-1.5 px-3"
                 >
                   Enable Push
@@ -365,7 +365,7 @@ export const AndroidPermissionsModal: React.FC<AndroidPermissionsModalProps> = (
                 </span>
               ) : (
                 <button
-                  onClick={handleRequestStorage}
+                  onClick={() => { void handleRequestStorage(); }}
                   className="btn-starry-neon text-[11px] py-1.5 px-3"
                 >
                   Enable Cache

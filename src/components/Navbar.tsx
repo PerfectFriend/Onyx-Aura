@@ -339,10 +339,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Smartphone className="w-4 h-4" />
           </button>
 
-          {/* Role Toggle Switch */}
-          <div className={`hidden sm:flex items-center p-1 rounded-xl border ${
-            isDark ? 'bg-[#070913] border-cyan-500/30' : 'bg-amber-100/70 border-amber-400/50'
-          }`}>
+          {/* Role Toggle Switch (UI Demo Preview) */}
+          <div
+            className={`hidden sm:flex items-center p-1 rounded-xl border ${
+              isDark ? 'bg-[#070913] border-cyan-500/30' : 'bg-amber-100/70 border-amber-400/50'
+            }`}
+            title="Переключатель интерфейса клиент/мастер (UI DEMO, не серверный RBAC)"
+          >
+            <span className="hidden 2xl:inline px-1.5 text-[9px] font-mono text-gray-400">
+              DEMO
+            </span>
             <button
               onClick={() => setUserRole('client')}
               className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
@@ -405,7 +411,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <KeyRound className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden lg:inline text-[11px] font-mono font-bold max-w-[96px] truncate">
-                {identitySession?.authenticated ? identitySession.displayName : 'Passkey'}
+                {identitySession?.authenticated ? (identitySession.displayName ?? 'Гость') : 'Passkey'}
               </span>
               {identitySession?.authMethod === 'demo_passkey_sim' && (
                 <span className="hidden lg:inline text-[9px] font-mono px-1 rounded bg-red-900/70 text-red-200 border border-red-500/50">
@@ -484,7 +490,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="WebAuthn Passkey профиль"
           >
             <KeyRound className="w-3 h-3" />
-            <span>{identitySession?.authenticated ? identitySession.displayName : 'Passkey'}</span>
+            <span>{identitySession?.authenticated ? (identitySession.displayName ?? 'Гость') : 'Passkey'}</span>
           </button>
         )}
         <button

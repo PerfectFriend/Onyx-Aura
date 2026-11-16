@@ -276,7 +276,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
         // User cancelled share
       }
     } else {
-      navigator.clipboard?.writeText(window.location.href);
+      void navigator.clipboard?.writeText(window.location.href).catch(() => {});
       setStatusNotice('Link copied to clipboard! (Web Share API active on Android Chrome)');
     }
   };
@@ -447,7 +447,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
             <button
               onClick={() => {
                 triggerHaptic('medium');
-                install();
+                void install();
               }}
               disabled={isInstalled}
               className="btn-vangogh-gold text-xs py-2 px-3 flex items-center gap-1.5 shrink-0"
@@ -495,7 +495,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
           <div className="flex items-center gap-3">
             {!isCameraActive ? (
               <button
-                onClick={startCamera}
+                onClick={() => { void startCamera(); }}
                 className="btn-starry-neon text-xs py-2.5 px-5 flex items-center gap-2 cursor-pointer shadow-lg"
               >
                 <Play className="w-4 h-4 fill-current" />
@@ -512,7 +512,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
             )}
 
             <button
-              onClick={handleNativeShare}
+              onClick={() => { void handleNativeShare(); }}
               className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
                 isDark 
                   ? 'bg-cyan-500/10 border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/20' 
@@ -603,7 +603,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
                     </p>
                   </div>
                   <button
-                    onClick={startCamera}
+                    onClick={() => { void startCamera(); }}
                     className="btn-starry-neon text-xs py-2 px-5 cursor-pointer"
                   >
                     Start Sensor
@@ -925,7 +925,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
 
           <div className="space-y-2 pt-1">
             <button
-              onClick={handleTriggerPushNotification}
+              onClick={() => { void handleTriggerPushNotification(); }}
               className="w-full btn-starry-neon text-xs py-2.5 flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
               <Bell className="w-3.5 h-3.5" />
@@ -1051,7 +1051,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               <button
                 onClick={() => {
                   triggerHaptic('medium');
-                  install();
+                  void install();
                 }}
                 disabled={isInstalled}
                 className="btn-vangogh-gold text-xs py-3 px-5 flex items-center gap-2 cursor-pointer shadow-lg"
@@ -1061,7 +1061,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
               </button>
 
               <button
-                onClick={handlePrecacheGallery}
+                onClick={() => { void handlePrecacheGallery(); }}
                 disabled={isCaching}
                 className={`px-4 py-3 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer ${
                   isDark ? 'bg-cyan-950/40 border-cyan-400/40 text-cyan-300 hover:bg-cyan-950' : 'bg-slate-100 border-slate-300 text-slate-800'

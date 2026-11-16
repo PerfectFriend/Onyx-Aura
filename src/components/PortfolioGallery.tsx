@@ -242,7 +242,7 @@ export const PortfolioGallery: React.FC<PortfolioGalleryProps> = ({
                     </span>
                     <span className="flex items-center gap-1 text-cyan-400">
                       <ShieldCheck className="w-3.5 h-3.5" />
-                      <span>Public P2P</span>
+                      <span>Local Catalog</span>
                     </span>
                   </div>
 

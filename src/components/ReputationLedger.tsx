@@ -335,8 +335,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-xs text-[#9ca3af]">Select Artist</label>
+                <label htmlFor="review-artist-select" className="text-xs text-[#9ca3af]">Select Artist</label>
                 <select
+                  id="review-artist-select"
                   value={formArtistId}
                   onChange={e => setFormArtistId(e.target.value)}
                   className="w-full mt-1 px-3 py-2 text-xs bg-[#15171e] border border-[#272a33] rounded-lg text-white"
@@ -351,8 +352,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-[#9ca3af]">Your Name</label>
+                  <label htmlFor="review-client-name" className="text-xs text-[#9ca3af]">Your Name</label>
                   <input
+                    id="review-client-name"
                     type="text"
                     value={formClientName}
                     onChange={e => setFormClientName(e.target.value)}
@@ -361,8 +363,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-[#9ca3af]">Demo Handle / Ref</label>
+                  <label htmlFor="review-client-ref" className="text-xs text-[#9ca3af]">Demo Handle / Ref</label>
                   <input
+                    id="review-client-ref"
                     type="text"
                     value={formClientAddress}
                     onChange={e => setFormClientAddress(e.target.value)}
@@ -374,8 +377,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
 
               <div className="grid grid-cols-4 gap-2">
                 <div>
-                  <label className="text-[10px] text-[#9ca3af]">Technique</label>
+                  <label htmlFor="review-score-technique" className="text-[10px] text-[#9ca3af]">Technique</label>
                   <input
+                    id="review-score-technique"
                     type="number"
                     min="1"
                     max="5"
@@ -385,8 +389,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-[#9ca3af]">Hygiene</label>
+                  <label htmlFor="review-score-hygiene" className="text-[10px] text-[#9ca3af]">Hygiene</label>
                   <input
+                    id="review-score-hygiene"
                     type="number"
                     min="1"
                     max="5"
@@ -396,8 +401,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-[#9ca3af]">Durability</label>
+                  <label htmlFor="review-score-durability" className="text-[10px] text-[#9ca3af]">Durability</label>
                   <input
+                    id="review-score-durability"
                     type="number"
                     min="1"
                     max="5"
@@ -407,8 +413,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-[#9ca3af]">Precision</label>
+                  <label htmlFor="review-score-precision" className="text-[10px] text-[#9ca3af]">Precision</label>
                   <input
+                    id="review-score-precision"
                     type="number"
                     min="1"
                     max="5"
@@ -420,8 +427,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
               </div>
 
               <div>
-                <label className="text-xs text-[#9ca3af]">Review Commentary</label>
+                <label htmlFor="review-commentary" className="text-xs text-[#9ca3af]">Review Commentary</label>
                 <textarea
+                  id="review-commentary"
                   rows={2}
                   value={formText}
                   onChange={e => setFormText(e.target.value)}
@@ -431,8 +439,9 @@ export const ReputationLedger: React.FC<ReputationLedgerProps> = ({
               </div>
 
               <div>
-                <label className="text-xs text-[#9ca3af]">Demo Booking Ref [SIM] (Unverified)</label>
+                <label htmlFor="review-booking-ref" className="text-xs text-[#9ca3af]">Demo Booking Ref [SIM] (Unverified)</label>
                 <input
+                  id="review-booking-ref"
                   type="text"
                   value={formBookingTx}
                   onChange={e => setFormBookingTx(e.target.value)}

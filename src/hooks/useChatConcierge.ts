@@ -8,7 +8,7 @@ export interface UseChatConciergeOptions {
   artists: Artist[];
   initialMessages?: ChatMessage[];
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
-  onPersistChats?: (next: ChatMessage[], payload: unknown) => void;
+  onPersistChats?: (next: ChatMessage[], payload: unknown) => Promise<void> | void;
 }
 
 export function useChatConcierge({
@@ -64,15 +64,20 @@ export function useChatConcierge({
         text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         quoteAttachment,
+        origin: 'user',
       };
 
       const nextMessages = [...chatMessagesRef.current, newMsg];
       chatMessagesRef.current = nextMessages;
       setChatMessages(nextMessages);
 
-      onPersistChats?.(nextMessages, {
-        threadId,
-        msgId: newMsg.id,
+      void Promise.resolve(
+        onPersistChats?.(nextMessages, {
+          threadId,
+          msgId: newMsg.id,
+        })
+      ).catch(err => {
+        console.warn('[Chat] Persist failed cleanly:', err);
       });
 
       // [SIM] Broadcast chat message event via injected swarm facade (not encrypted)
@@ -86,7 +91,6 @@ export function useChatConcierge({
 
   return {
     chatMessages,
-    setChatMessages,
     isChatOpen,
     setIsChatOpen,
     unreadChatCount,

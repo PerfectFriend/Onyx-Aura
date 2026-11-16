@@ -180,10 +180,10 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
         {activeTab === 'create' ? (
           <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4 text-xs">
             <div>
-              <label className="block text-gray-300 font-semibold mb-1">
+              <p id="ad-audience-label" className="block text-gray-300 font-semibold mb-1">
                 Target Audience Segment <span className="text-rose-400">*</span>
-              </label>
-              <div className="grid grid-cols-2 gap-3">
+              </p>
+              <div role="group" aria-labelledby="ad-audience-label" className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -224,8 +224,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-gray-300 mb-1">Brand or Salon Name</label>
+                <label htmlFor="ad-brand-name" className="block text-gray-300 mb-1">Brand or Salon Name</label>
                 <input
+                  id="ad-brand-name"
                   type="text"
                   required
                   value={brandName}
@@ -236,8 +237,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
               </div>
 
               <div>
-                <label className="block text-gray-300 mb-1">Campaign Headline</label>
+                <label htmlFor="ad-campaign-title" className="block text-gray-300 mb-1">Campaign Headline</label>
                 <input
+                  id="ad-campaign-title"
                   type="text"
                   required
                   value={title}
@@ -249,8 +251,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
             </div>
 
             <div>
-              <label className="block text-gray-300 mb-1">Offer Details & Copy</label>
+              <label htmlFor="ad-offer-desc" className="block text-gray-300 mb-1">Offer Details &amp; Copy</label>
               <textarea
+                id="ad-offer-desc"
                 rows={2}
                 value={description}
                 onChange={e => setDescription(e.target.value)}
@@ -261,8 +264,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-gray-300 mb-1">Promo Code</label>
+                <label htmlFor="ad-promo-code" className="block text-gray-300 mb-1">Promo Code</label>
                 <input
+                  id="ad-promo-code"
                   type="text"
                   value={discountCode}
                   onChange={e => setDiscountCode(e.target.value)}
@@ -271,8 +275,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
                 />
               </div>
               <div>
-                <label className="block text-gray-300 mb-1">Discount (% Off)</label>
+                <label htmlFor="ad-discount-pct" className="block text-gray-300 mb-1">Discount (% Off)</label>
                 <input
+                  id="ad-discount-pct"
                   type="number"
                   min="0"
                   max="90"
@@ -282,8 +287,9 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
                 />
               </div>
               <div>
-                <label className="block text-gray-300 mb-1">Button Call to Action</label>
+                <label htmlFor="ad-cta-text" className="block text-gray-300 mb-1">Button Call to Action</label>
                 <input
+                  id="ad-cta-text"
                   type="text"
                   value={ctaText}
                   onChange={e => setCtaText(e.target.value)}

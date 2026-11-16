@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { computeUpdatedArtistRating } from '../App';
+import {
+  computeExactArtistRatingUpdate,
+  computeUpdatedArtistRating,
+} from '../domain/rating';
 import { computeSHA256Detailed } from '../simulation/cryptocloud';
 import { blockchainLedger } from '../simulation/cryptoLedger';
 import { reminderService } from '../services/reminderService';
@@ -15,25 +18,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('computeUpdatedArtistRating (K-09)', () => {
+describe('computeUpdatedArtistRating & sum-preserving rating updates (K-09 / L-14)', () => {
   it('computes accurate incremental weighted average across existing totalReviews', () => {
-    // 248 reviews averaging 4.98 -> weighted sum = 1235.04; adding a 1-star review -> 1236.04 / 249 = 4.96
     const next = computeUpdatedArtistRating(4.98, 248, 1);
     expect(next).toBe(4.96);
-
-    // Works cleanly from zero reviews
     expect(computeUpdatedArtistRating(0, 0, 5)).toBe(5);
+  });
+
+  it('prevents cumulative rounding drift using sum-preserving updates', () => {
+    const first = computeExactArtistRatingUpdate({
+      currentRating: 5,
+      totalReviews: 1,
+      ratingSum: 5,
+      newRating: 4,
+    });
+    expect(first.ratingSum).toBe(9);
+    expect(first.totalReviews).toBe(2);
+    expect(first.rating).toBe(4.5);
+
+    const second = computeExactArtistRatingUpdate({
+      currentRating: first.rating,
+      totalReviews: first.totalReviews,
+      ratingSum: first.ratingSum,
+      newRating: 5,
+    });
+    expect(second.ratingSum).toBe(14);
+    expect(second.totalReviews).toBe(3);
+    expect(second.rating).toBe(4.67);
   });
 });
 
-describe('Honest Simulation Modules (K-03, K-05)', () => {
-  it('computeSHA256Detailed surfaces whether real Web Crypto or pseudohash fallback was used', async () => {
+describe('Honest Simulation Modules (K-03, K-05, L-15)', () => {
+  it('computeSHA256Detailed executes real Web Crypto SHA-256 via globalThis.crypto in Node/browser', async () => {
     const res = await computeSHA256Detailed('nailix-demo-payload');
-    expect(typeof res.isRealSha256).toBe('boolean');
-    expect(res.hash.startsWith('0x')).toBe(true);
-    if (!res.isRealSha256) {
-      expect(res.hash.startsWith('0xSIM_PSEUDO_')).toBe(true);
-    }
+    expect(res.isRealSha256).toBe(true);
+    expect(res.hash).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
   it('cryptoLedger marks newly submitted user reviews with verifiedInPerson=false', async () => {
