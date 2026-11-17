@@ -7,6 +7,7 @@ export interface UseChatConciergeOptions {
   userRole: UserRole;
   artists: Artist[];
   initialMessages?: ChatMessage[];
+  externalRevision?: number;
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
   onPersistChats?: (next: ChatMessage[], payload: unknown) => Promise<void> | void;
 }
@@ -15,6 +16,7 @@ export function useChatConcierge({
   userRole,
   artists,
   initialMessages,
+  externalRevision = 0,
   onBroadcastToSwarm,
   onPersistChats,
 }: UseChatConciergeOptions) {
@@ -26,6 +28,13 @@ export function useChatConcierge({
   useEffect(() => {
     chatMessagesRef.current = chatMessages;
   }, [chatMessages]);
+
+  useEffect(() => {
+    if (externalRevision > 0 && initialMessages) {
+      chatMessagesRef.current = initialMessages;
+      setChatMessages(initialMessages);
+    }
+  }, [externalRevision, initialMessages]);
 
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(1);

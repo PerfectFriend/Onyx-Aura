@@ -2,9 +2,9 @@
 // Infrastructure storage drivers:
 // 1) IndexedDBAdapter: genuine client-side IndexedDB persistence + atomic setMany (REAL).
 // 2) MemoryStorageAdapter: deterministic in-memory fallback for SSR / Vitest.
-// 3) ResilientStorageAdapter (L-01): retries transient key failures, distinguishes
-//    fatal DB blocks from partial quota/IO glitches without forking storage, and
-//    surfaces `storageHealth: 'ok' | 'degraded' | 'memory_only'`.
+// 3) ResilientStorageAdapter (L-01 / N-01): distinguishes "missing" vs "unreadable",
+//    keeps health degraded until ALL unreadable keys & pending writes clear,
+//    never masks unreadable keys by triggering seed writes.
 // =============================================================================
 
 import {
@@ -14,6 +14,7 @@ import {
   StorageHealth,
   StorageHealthReport,
   StorageKey,
+  StorageReadResult,
 } from '../../domain/storage';
 
 export const DEFAULT_DB_NAME = 'nailix_local_first_v1';
@@ -34,8 +35,6 @@ async function delayMs(ms: number): Promise<void> {
 
 /**
  * In-memory StorageAdapter implementation backed by an optional shared Map.
- * Passing an external Map allows Vitest suites to simulate full page reloads
- * with a fresh SalonRepository instance reading previously persisted keys.
  */
 export class MemoryStorageAdapter implements StorageAdapter {
   public readonly backend: StorageBackendKind = 'memory';
@@ -50,15 +49,17 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return Promise.resolve(structuredCloneSafe(this.store.get(key)) as T);
   }
 
+  public async getDetailed<T>(key: StorageKey): Promise<StorageReadResult<T>> {
+    if (!this.store.has(key)) return { status: 'missing' };
+    const value = await this.get<T>(key);
+    return value === undefined ? { status: 'missing' } : { status: 'ok', value };
+  }
+
   public set<T>(key: StorageKey, value: T): Promise<void> {
     this.store.set(key, structuredCloneSafe(value));
     return Promise.resolve();
   }
 
-  /**
-   * Atomic multi-key write with rollback so partial failures (e.g. FlakyAdapter in tests)
-   * never leave half-written collections.
-   */
   public async setMany(entries: ReadonlyArray<StorageEntry>): Promise<void> {
     const previous = new Map<StorageKey, { existed: boolean; value: unknown }>();
     for (const [key] of entries) {
@@ -162,13 +163,15 @@ export class IndexedDBAdapter implements StorageAdapter {
     });
   }
 
+  public async getDetailed<T>(key: StorageKey): Promise<StorageReadResult<T>> {
+    const value = await this.get<T>(key);
+    return value === undefined ? { status: 'missing' } : { status: 'ok', value };
+  }
+
   public async set<T>(key: StorageKey, value: T): Promise<void> {
     return this.setMany([[key, value]]);
   }
 
-  /**
-   * Single-transaction multi-key write: either ALL keys commit together or the transaction aborts cleanly (L-07/L-11).
-   */
   public async setMany(entries: ReadonlyArray<StorageEntry>): Promise<void> {
     if (entries.length === 0) return;
     const db = await this.openDatabase();
@@ -219,19 +222,18 @@ export class IndexedDBAdapter implements StorageAdapter {
 }
 
 /**
- * Resilient wrapper (L-01):
+ * Resilient wrapper (L-01, N-01, N-06):
+ * - Distinguishes `{ status: 'missing' }` vs `{ status: 'unreadable' }` so a transient
+ *   read glitch NEVER triggers seed overwrite of user data on disk.
  * - Retries transient single-key failures with short backoff.
- * - Never swaps out a healthy primary database mid-session on a single-key glitch
- *   (preserving outbox and earlier collections).
- * - Holds an in-memory shadow buffer for keys whose writes temporarily failed.
- * - Permanently falls back to `memory_only` ONLY on fatal session-wide engine blocks
- *   (e.g. `SecurityError` in strict private mode or unavailable IndexedDB).
+ * - Keeps `health: 'degraded'` until BOTH `pendingRetryKeys` AND `unreadableKeys` are clear.
  */
 export class ResilientStorageAdapter implements StorageAdapter {
   private readonly primary: StorageAdapter;
   private readonly shadow = new Map<string, unknown>();
   private readonly pendingRetryKeys = new Map<StorageKey, unknown>();
-  private health: StorageHealth;
+  private readonly unreadableKeys = new Map<StorageKey, string>();
+  private health: StorageHealth = 'ok';
   private fatalFallback = false;
   private warnings: string[] = [];
   private lastError?: string;
@@ -243,7 +245,6 @@ export class ResilientStorageAdapter implements StorageAdapter {
     options: { retryDelayMs?: number; maxRetries?: number } = {}
   ) {
     this.primary = primary;
-    this.health = primary.backend === 'memory' ? 'ok' : 'ok';
     this.retryDelayMs = options.retryDelayMs ?? 12;
     this.maxRetries = options.maxRetries ?? 2;
   }
@@ -253,18 +254,37 @@ export class ResilientStorageAdapter implements StorageAdapter {
     return this.primary.backend;
   }
 
+  public getPendingWriteCount(): number {
+    return this.pendingRetryKeys.size;
+  }
+
   public getHealthReport(): StorageHealthReport {
     return {
       health: this.health,
       backend: this.backend,
       warnings: [...this.warnings],
       lastError: this.lastError,
+      unreadableKeys: Array.from(this.unreadableKeys.keys()),
+      pendingWriteKeys: Array.from(this.pendingRetryKeys.keys()),
     };
   }
 
   public recordWarning(message: string): void {
     if (!this.warnings.includes(message)) {
       this.warnings.push(message);
+    }
+  }
+
+  private recomputeHealth(): void {
+    if (this.fatalFallback) {
+      this.health = 'memory_only';
+      return;
+    }
+    if (this.pendingRetryKeys.size === 0 && this.unreadableKeys.size === 0) {
+      this.health = 'ok';
+      this.lastError = undefined;
+    } else {
+      this.health = 'degraded';
     }
   }
 
@@ -282,7 +302,7 @@ export class ResilientStorageAdapter implements StorageAdapter {
     this.health = 'degraded';
     this.lastError = reason;
     this.recordWarning(
-      `Частичный сбой записи/чтения (${key}): ${reason}. Изменения временно буферизованы в памяти.`
+      `Сбой чтения/записи (${key}): ${reason}. Данные на диске защищены от перезаписи.`
     );
   }
 
@@ -304,8 +324,9 @@ export class ResilientStorageAdapter implements StorageAdapter {
     throw lastErr;
   }
 
-  public async retryPendingWrites(): Promise<void> {
+  public async retryPendingWrites(): Promise<boolean> {
     await this.flushRetryBuffer();
+    return this.pendingRetryKeys.size === 0;
   }
 
   private async flushRetryBuffer(): Promise<void> {
@@ -314,6 +335,7 @@ export class ResilientStorageAdapter implements StorageAdapter {
       try {
         await this.primary.set(key, val);
         this.pendingRetryKeys.delete(key);
+        this.unreadableKeys.delete(key);
       } catch (err) {
         if (isFatalStorageError(err)) {
           this.transitionToMemoryOnly(err instanceof Error ? err.message : String(err));
@@ -321,37 +343,56 @@ export class ResilientStorageAdapter implements StorageAdapter {
         }
       }
     }
-    if (this.pendingRetryKeys.size === 0 && this.health === 'degraded') {
-      this.health = 'ok';
-      this.lastError = undefined;
-    }
+    this.recomputeHealth();
   }
 
-  public async get<T>(key: StorageKey): Promise<T | undefined> {
+  public async getDetailed<T>(key: StorageKey): Promise<StorageReadResult<T>> {
     if (this.pendingRetryKeys.has(key)) {
-      return structuredCloneSafe(this.pendingRetryKeys.get(key)) as T;
+      return {
+        status: 'ok',
+        value: structuredCloneSafe(this.pendingRetryKeys.get(key)) as T,
+      };
     }
     if (this.fatalFallback) {
-      return this.shadow.has(key) ? (structuredCloneSafe(this.shadow.get(key)) as T) : undefined;
+      if (this.shadow.has(key)) {
+        return { status: 'ok', value: structuredCloneSafe(this.shadow.get(key)) as T };
+      }
+      return { status: 'missing' };
     }
 
     try {
       const value = await this.runWithRetry(() => this.primary.get<T>(key));
-      if (value !== undefined) {
-        this.shadow.set(key, structuredCloneSafe(value));
+      this.unreadableKeys.delete(key);
+      this.recomputeHealth();
+      if (value === undefined) {
+        return { status: 'missing' };
       }
-      return value;
+      this.shadow.set(key, structuredCloneSafe(value));
+      return { status: 'ok', value };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isFatalStorageError(err)) {
         console.warn(`[LocalFirst] Fatal read error on "${this.primary.backend}":`, err);
         this.transitionToMemoryOnly(msg);
-      } else {
-        console.warn(`[LocalFirst] Transient read error on key "${key}", preserving primary store:`, err);
-        this.markDegraded(key, msg);
+        if (this.shadow.has(key)) {
+          return { status: 'ok', value: structuredCloneSafe(this.shadow.get(key)) as T };
+        }
+        return { status: 'missing' };
       }
-      return this.shadow.has(key) ? (structuredCloneSafe(this.shadow.get(key)) as T) : undefined;
+
+      console.warn(`[LocalFirst] Transient read error on key "${key}", preserving primary store:`, err);
+      this.unreadableKeys.set(key, msg);
+      this.markDegraded(key, msg);
+      if (this.shadow.has(key)) {
+        return { status: 'ok', value: structuredCloneSafe(this.shadow.get(key)) as T };
+      }
+      return { status: 'unreadable', error: msg };
     }
+  }
+
+  public async get<T>(key: StorageKey): Promise<T | undefined> {
+    const res = await this.getDetailed<T>(key);
+    return res.status === 'ok' ? res.value : undefined;
   }
 
   public async set<T>(key: StorageKey, value: T): Promise<void> {
@@ -382,11 +423,9 @@ export class ResilientStorageAdapter implements StorageAdapter {
       });
       for (const [key] of entries) {
         this.pendingRetryKeys.delete(key);
+        this.unreadableKeys.delete(key);
       }
-      if (this.pendingRetryKeys.size === 0 && this.health === 'degraded') {
-        this.health = 'ok';
-        this.lastError = undefined;
-      }
+      this.recomputeHealth();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isFatalStorageError(err)) {
@@ -405,9 +444,14 @@ export class ResilientStorageAdapter implements StorageAdapter {
   public async remove(key: StorageKey): Promise<void> {
     this.shadow.delete(key);
     this.pendingRetryKeys.delete(key);
-    if (this.fatalFallback) return;
+    this.unreadableKeys.delete(key);
+    if (this.fatalFallback) {
+      this.recomputeHealth();
+      return;
+    }
     try {
       await this.primary.remove(key);
+      this.recomputeHealth();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isFatalStorageError(err)) {
@@ -434,6 +478,7 @@ export class ResilientStorageAdapter implements StorageAdapter {
   public async clear(): Promise<void> {
     this.shadow.clear();
     this.pendingRetryKeys.clear();
+    this.unreadableKeys.clear();
     if (!this.fatalFallback) {
       try {
         await this.primary.clear();
@@ -470,10 +515,6 @@ export function getActiveStorageStatus(): {
   return activeStorageStatus;
 }
 
-/**
- * Selects IndexedDB in capable browsers and falls back cleanly to MemoryStorageAdapter
- * in Node / SSR / restricted incognito sandboxes.
- */
 export function createDefaultStorageAdapter(): StorageAdapter {
   if (typeof indexedDB !== 'undefined') {
     return new IndexedDBAdapter();
@@ -491,6 +532,26 @@ export async function emergencyDeleteLocalDatabase(
     req.onerror = () => resolve();
     req.onblocked = () => resolve();
   });
+}
+
+/**
+ * Exports all quarantined raw storage entries (if any) from default IndexedDB for user recovery (N-03).
+ */
+export async function exportQuarantinedEntriesFromDefaultDb(): Promise<Record<string, unknown> | null> {
+  if (typeof indexedDB === 'undefined') return null;
+  try {
+    const adapter = new IndexedDBAdapter();
+    const allKeys = await adapter.keys();
+    const qKeys = allKeys.filter(k => k.startsWith('quarantine:'));
+    if (qKeys.length === 0) return null;
+    const dump: Record<string, unknown> = {};
+    for (const qk of qKeys) {
+      dump[qk] = await adapter.get(qk as StorageKey);
+    }
+    return dump;
+  } catch {
+    return null;
+  }
 }
 
 function structuredCloneSafe<T>(value: T): T {

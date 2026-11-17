@@ -2,7 +2,7 @@
 // Stage 3 Security & Secret Hygiene helpers:
 // - Cryptographically random challenges (Web Crypto getRandomValues)
 // - Base64URL encoding/decoding for WebAuthn ArrayBuffers
-// - Second-line stray secret detector (`assertNoSecretLikeFields`, L-05).
+// - Second-line stray secret detector (`assertNoSecretLikeFields`, L-05, N-07).
 //   NOTE: Primary security boundary against unrequested secret fields is
 //   strict allowlist schema validation in `src/domain/schemas.ts`.
 // =============================================================================
@@ -12,8 +12,23 @@ const FORBIDDEN_SECRET_PATTERNS: { label: string; regex: RegExp }[] = [
   { label: 'private_key / privateKey field', regex: /"private_?key"\s*:/i },
   { label: 'secret_key / secretKey field', regex: /"secret_?key"\s*:/i },
   { label: 'JWK private "d" component', regex: /"d"\s*:\s*"[^"]+"/ },
-  { label: 'API key / secret / token field', regex: /"(?:api_?key|api_?secret|access_?token|refresh_?token|auth_?token|secret_?token)"\s*:/i },
-  { label: 'Bearer token', regex: /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/i },
+  {
+    label: 'API key / secret / token field',
+    regex: /"(?:api_?key|api_?secret|access_?token|refresh_?token|auth_?token|secret_?token)"\s*:/i,
+  },
+  {
+    label: 'JWT token',
+    regex: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{3,}(?:\.[A-Za-z0-9_-]+)?/,
+  },
+  {
+    label: 'Authorization Bearer header',
+    regex: /\bAuthorization["']?\s*[:=]\s*["']?Bearer\s+[A-Za-z0-9\-._~+/=]{8,}/i,
+  },
+  {
+    label: 'Bearer token',
+    regex:
+      /\bBearer\s+(?=[A-Za-z0-9\-._~+/=]{20,})(?:[A-Za-z0-9\-._~+/=]+\.[A-Za-z0-9\-._~+/=]+|[A-Za-z0-9\-._~+/=]*[0-9_-][A-Za-z0-9\-._~+/=]*)/i,
+  },
   { label: 'AWS access key ID', regex: /AKIA[0-9A-Z]{16}/ },
   { label: 'seedPhrase / mnemonic field', regex: /"(?:seed_?phrase|mnemonic)"\s*:/i },
   { label: 'password field', regex: /"password"\s*:\s*(?:"[^"]+"|\d+)/i },
@@ -61,11 +76,13 @@ export function generateCryptographicChallenge(byteLength = 32): Uint8Array {
 }
 
 /**
- * Second-line defense scanning serialized payloads for secret-like patterns
- * (private keys, JWK "d", API keys, Bearer tokens, AWS keys, passwords, PATs).
- * Primary defense is strict allowlist schema validation per entity (`src/domain/schemas.ts`).
+ * Second-line defense scanning serialized payloads or objects for secret-like patterns
+ * (private keys, JWK "d", API keys, JWT / Authorization Bearer tokens, AWS keys, passwords, PATs)
+ * without flagging ordinary conversational words such as "bearer" in chat prose (N-07).
  */
-export function detectSecretLikeFields(serialized: string): string[] {
+export function detectSecretLikeFields(input: unknown): string[] {
+  const serialized = typeof input === 'string' ? input : JSON.stringify(input);
+  if (!serialized) return [];
   const hits: string[] = [];
   for (const { label, regex } of FORBIDDEN_SECRET_PATTERNS) {
     if (regex.test(serialized)) {
@@ -79,8 +96,7 @@ export function detectSecretLikeFields(serialized: string): string[] {
  * Rejects any object or string matching second-line secret-like field heuristics.
  */
 export function assertNoSecretLikeFields<T>(value: T): T {
-  const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-  const violations = detectSecretLikeFields(serialized);
+  const violations = detectSecretLikeFields(value);
   if (violations.length > 0) {
     throw new Error(
       `Security policy violation: secret-like material detected (${violations.join(', ')}).`

@@ -182,11 +182,12 @@ describe('Stage 2 — Local-First Storage & SalonRepository', () => {
     const v2Repo = new SalonRepository(new MemoryStorageAdapter(persistentBackingMap));
     const migrated = await v2Repo.ensureSeededAndLoad();
 
-    expect(SALON_SCHEMA_VERSION).toBe(2);
-    expect(migrated.meta.schemaVersion).toBe(2);
+    expect(SALON_SCHEMA_VERSION).toBe(3);
+    expect(migrated.meta.schemaVersion).toBe(3);
     expect(migrated.meta.seededAt).toBe('2026-11-14T10:00:00.000Z');
     expect(migrated.appointments).toHaveLength(1);
     expect(migrated.appointments[0].id).toBe('apt-v1-legacy');
+    expect(migrated.appointments[0].origin).toBe('user');
     expect(migrated.passkeys).toEqual([]);
     expect(migrated.identitySession.authenticated).toBe(false);
 

@@ -13,6 +13,7 @@ import {
   createSimulatedDemoPasskey,
   derEcdsaToP1363,
   detectWebAuthnSupport,
+  extractSpkiFromAttestationObject,
   verifyWebAuthnAssertion,
 } from '../infrastructure/identity/webAuthnService';
 import { SalonRepository } from '../infrastructure/storage/salonRepository';
@@ -153,7 +154,7 @@ describe('Stage 3 / Sprint 3.2 — WebAuthn Identity, Cryptographic Verification
       },
     });
 
-    expect(validResult.verified).toBe(true);
+    expect(validResult.verification).toBe('signature_verified');
     expect(validResult.cryptographicSignatureVerified).toBe(true);
     expect(validResult.signCount).toBe(42);
     expect(validResult.userVerified).toBe(true);
@@ -192,6 +193,110 @@ describe('Stage 3 / Sprint 3.2 — WebAuthn Identity, Cryptographic Verification
         storedCredential: { publicKeySpkiBase64Url: spkiBase64Url, algorithm: -7, signCount: 10 },
       })
     ).rejects.toThrow(/cryptographic signature/i);
+  });
+
+  it('N-05 (W7 / W10 / W11-W12): enforces UV for master, BE flag for synced passkeys, and presence_only when SPKI missing', async () => {
+    const keyPair = await globalThis.crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign', 'verify']
+    );
+    const spkiBase64Url = toBase64Url(
+      await globalThis.crypto.subtle.exportKey('spki', keyPair.publicKey)
+    );
+    const rpId = 'nailix.example';
+    const expectedOrigin = 'https://nailix.example';
+    const expectedChallengeBase64Url = toBase64Url(generateCryptographicChallenge(32));
+    const clientDataBytes = new TextEncoder().encode(
+      JSON.stringify({
+        type: 'webauthn.get',
+        challenge: expectedChallengeBase64Url,
+        origin: expectedOrigin,
+      })
+    );
+    const rpIdHash = new Uint8Array(
+      await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(rpId))
+    );
+    const cHash = new Uint8Array(
+      await globalThis.crypto.subtle.digest('SHA-256', clientDataBytes)
+    );
+
+    const signWithFlags = async (flagsByte: number, counterVal: number) => {
+      const authData = new Uint8Array(37);
+      authData.set(rpIdHash, 0);
+      authData[32] = flagsByte;
+      new DataView(authData.buffer).setUint32(33, counterVal, false);
+      const signedPayload = new Uint8Array(authData.length + cHash.length);
+      signedPayload.set(authData, 0);
+      signedPayload.set(cHash, authData.length);
+      const rawSig = new Uint8Array(
+        await globalThis.crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          keyPair.privateKey,
+          signedPayload
+        )
+      );
+      return { authData, derSig: p1363ToDerEcdsa(rawSig) };
+    };
+
+    // W7: assertion with UP only (0x01, no UV) must be rejected when UV is required for master
+    const upOnly = await signWithFlags(0x01, 20);
+    await expect(
+      verifyWebAuthnAssertion({
+        response: {
+          clientDataJSON: clientDataBytes,
+          authenticatorData: upOnly.authData,
+          signature: upOnly.derSig,
+        },
+        expectedChallengeBase64Url,
+        expectedOrigin,
+        expectedRpId: rpId,
+        requireUserVerification: true,
+        storedCredential: {
+          publicKeySpkiBase64Url: spkiBase64Url,
+          algorithm: -7,
+          signCount: 10,
+          role: 'master',
+        },
+      })
+    ).rejects.toThrow(/User Verification \(UV/i);
+
+    // W10: with BE flag (0x08 | 0x04 | 0x01 = 0x0d), counter rollback is a warning, not a failure
+    const syncedRollback = await signWithFlags(0x0d, 0);
+    const syncedRes = await verifyWebAuthnAssertion({
+      response: {
+        clientDataJSON: clientDataBytes,
+        authenticatorData: syncedRollback.authData,
+        signature: syncedRollback.derSig,
+      },
+      expectedChallengeBase64Url,
+      expectedOrigin,
+      expectedRpId: rpId,
+      storedCredential: {
+        publicKeySpkiBase64Url: spkiBase64Url,
+        algorithm: -7,
+        signCount: 5,
+        role: 'master',
+      },
+    });
+    expect(syncedRes.verification).toBe('signature_verified');
+    expect(syncedRes.backupEligible).toBe(true);
+    expect(syncedRes.warnings.some(w => /non-monotonic signCount/i.test(w))).toBe(true);
+
+    // W11/W12: without stored SPKI public key, result MUST be presence_only (never signature_verified)
+    const noSpkiRes = await verifyWebAuthnAssertion({
+      response: {
+        clientDataJSON: clientDataBytes,
+        authenticatorData: syncedRollback.authData,
+        signature: new Uint8Array([9, 9, 9]),
+      },
+      expectedChallengeBase64Url,
+      expectedOrigin,
+      expectedRpId: rpId,
+      storedCredential: undefined,
+    });
+    expect(noSpkiRes.verification).toBe('presence_only');
+    expect(noSpkiRes.cryptographicSignatureVerified).toBe(false);
   });
 
   it('exercises navigator.credentials.get ceremony end-to-end with mocked browser authenticator (L-15)', async () => {
@@ -409,5 +514,86 @@ describe('Stage 3 / Sprint 3.2 — WebAuthn Identity, Cryptographic Verification
     expect(indexHtml).not.toContain('fonts.googleapis.com');
     expect(indexHtml).not.toContain('user-scalable=no');
     expect(indexHtml).not.toContain('frame-ancestors');
+  });
+
+  it('N-05 (W11/W12): extracts SPKI from CBOR/COSE attestationObject when getPublicKey() is absent (EC2 P-256 & RSA)', async () => {
+    const keyPair = await globalThis.crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign', 'verify']
+    );
+    const jwk = await globalThis.crypto.subtle.exportKey('jwk', keyPair.publicKey);
+    const expectedSpki = toBase64Url(
+      await globalThis.crypto.subtle.exportKey('spki', keyPair.publicKey)
+    );
+    const x = fromBase64Url(jwk.x!);
+    const y = fromBase64Url(jwk.y!);
+
+    // Build minimal CBOR COSE_Key map: { 1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y }
+    const coseBytes = new Uint8Array([
+      0xa5, // map(5)
+      0x01, 0x02, // 1 -> 2
+      0x03, 0x26, // 3 -> -7
+      0x20, 0x01, // -1 -> 1
+      0x21, 0x58, 0x20, ...x, // -2 -> bytes(32)
+      0x22, 0x58, 0x20, ...y, // -3 -> bytes(32)
+    ]);
+
+    const credId = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]);
+    const authData = new Uint8Array(55 + credId.length + coseBytes.length);
+    authData[32] = 0x45; // UP | UV | AT
+    authData[53] = 0x00;
+    authData[54] = credId.length;
+    authData.set(credId, 55);
+    authData.set(coseBytes, 55 + credId.length);
+
+    // CBOR attestationObject: { "fmt": "none", "authData": bstr(authData) }
+    const header = new Uint8Array([
+      0xa2, // map(2)
+      0x63, 0x66, 0x6d, 0x74, // "fmt"
+      0x64, 0x6e, 0x6f, 0x6e, 0x65, // "none"
+      0x68, 0x61, 0x75, 0x74, 0x68, 0x44, 0x61, 0x74, 0x61, // "authData"
+      0x58, authData.length, // bstr(len <= 255)
+    ]);
+    const attestationObject = new Uint8Array(header.length + authData.length);
+    attestationObject.set(header, 0);
+    attestationObject.set(authData, header.length);
+
+    const extracted = extractSpkiFromAttestationObject(attestationObject);
+    expect(extracted).not.toBeNull();
+    expect(extracted?.algorithm).toBe(-7);
+    expect(extracted?.spkiBase64Url).toBe(expectedSpki);
+
+    // Also verify RSA COSE_Key (kty = 3, alg = -257 RS256, -1 = n, -2 = e)
+    const rsaN = new Uint8Array([0xc1, 0x02, 0x03, 0x04]);
+    const rsaE = new Uint8Array([0x01, 0x00, 0x01]);
+    const rsaCose = new Uint8Array([
+      0xa4, // map(4)
+      0x01, 0x03, // 1 -> 3 (RSA)
+      0x03, 0x39, 0x01, 0x00, // 3 -> -257
+      0x20, 0x44, ...rsaN, // -1 -> n
+      0x21, 0x43, ...rsaE, // -2 -> e
+    ]);
+    const rsaAuthData = new Uint8Array(55 + credId.length + rsaCose.length);
+    rsaAuthData[32] = 0x45;
+    rsaAuthData[54] = credId.length;
+    rsaAuthData.set(credId, 55);
+    rsaAuthData.set(rsaCose, 55 + credId.length);
+    const rsaHeader = new Uint8Array([
+      0xa1,
+      0x68, 0x61, 0x75, 0x74, 0x68, 0x44, 0x61, 0x74, 0x61,
+      0x58, rsaAuthData.length,
+    ]);
+    const rsaAtt = new Uint8Array(rsaHeader.length + rsaAuthData.length);
+    rsaAtt.set(rsaHeader, 0);
+    rsaAtt.set(rsaAuthData, rsaHeader.length);
+
+    const extractedRsa = extractSpkiFromAttestationObject(rsaAtt);
+    expect(extractedRsa).not.toBeNull();
+    expect(extractedRsa?.algorithm).toBe(-257);
+    expect(typeof extractedRsa?.spkiBase64Url).toBe('string');
+
+    // Non-map / truncated input fails gracefully with null
+    expect(extractSpkiFromAttestationObject(new Uint8Array([0x01, 0x02]))).toBeNull();
   });
 });

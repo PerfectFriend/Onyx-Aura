@@ -19,6 +19,7 @@ import {
 export interface UseIdentitySessionOptions {
   initialPasskeys?: PasskeyCredentialRecord[];
   initialSession?: IdentitySession;
+  externalRevision?: number;
   onRoleSynced?: (role: UserRole) => void;
   onPersistPasskeys?: (
     next: PasskeyCredentialRecord[],
@@ -32,6 +33,7 @@ export interface UseIdentitySessionOptions {
 export function useIdentitySession({
   initialPasskeys = [],
   initialSession = DEFAULT_ANONYMOUS_SESSION,
+  externalRevision = 0,
   onRoleSynced,
   onPersistPasskeys,
   onPersistSession,
@@ -43,6 +45,17 @@ export function useIdentitySession({
 
   const [passkeys, setPasskeys] = useState<PasskeyCredentialRecord[]>(initialPasskeys);
   const [session, setSession] = useState<IdentitySession>(normalizedInitialSession);
+
+  useEffect(() => {
+    if (externalRevision > 0) {
+      setPasskeys(initialPasskeys);
+      setSession(
+        isIdentitySessionExpired(initialSession)
+          ? { ...DEFAULT_ANONYMOUS_SESSION }
+          : initialSession
+      );
+    }
+  }, [externalRevision, initialPasskeys, initialSession]);
   const [capabilities, setCapabilities] = useState<WebAuthnCapabilityReport>({
     isSupported: false,
     platformAuthenticatorAvailable: false,
@@ -93,14 +106,24 @@ export function useIdentitySession({
   }, []);
 
   const commitSession = useCallback(
-    async (cred: PasskeyCredentialRecord, isNewRegistration: boolean) => {
+    async (
+      cred: PasskeyCredentialRecord,
+      isNewRegistration: boolean,
+      signatureVerified = false
+    ) => {
       const nowIso = new Date().toISOString();
+      const authMethod = cred.isSimulatedFallback
+        ? ('demo_passkey_sim' as const)
+        : signatureVerified || isNewRegistration
+        ? ('webauthn_passkey' as const)
+        : ('webauthn_presence_only' as const);
+
       const nextSession: IdentitySession = {
         authenticated: true,
         credentialId: cred.id,
         displayName: cred.displayName,
         role: cred.role,
-        authMethod: cred.isSimulatedFallback ? 'demo_passkey_sim' : 'webauthn_passkey',
+        authMethod,
         signedInAt: nowIso,
         expiresAt: buildSessionExpiryFromNow(),
         verificationScope: 'client_local_only',
@@ -136,7 +159,7 @@ export function useIdentitySession({
         });
         setPasskeys(nextPasskeys);
 
-        await commitSession(created, true);
+        await commitSession(created, true, Boolean(created.publicKeySpkiBase64Url));
 
         onNotify?.(
           'Passkey (WebAuthn)',
@@ -156,7 +179,7 @@ export function useIdentitySession({
     setIsBusy(true);
     setAuthError(null);
     try {
-      const { credential, cryptographicSignatureVerified, discoveredNew } =
+      const { credential, verification, cryptographicSignatureVerified, discoveredNew } =
         await authenticateWebAuthnPasskey(passkeys, { allowDiscoverableFallback: true });
 
       const nextPasskeys = discoveredNew
@@ -170,14 +193,16 @@ export function useIdentitySession({
       });
       setPasskeys(nextPasskeys);
 
-      await commitSession(credential, false);
+      await commitSession(credential, false, verification === 'signature_verified');
 
       onNotify?.(
-        'Passkey Check [LOCAL_ONLY]',
+        verification === 'signature_verified'
+          ? 'Passkey Signature Confirmed [LOCAL_ONLY]'
+          : 'Passkey Presence Only [LOCAL_ONLY]',
         `${credential.displayName}: ${
-          cryptographicSignatureVerified
+          verification === 'signature_verified'
             ? 'криптоподпись SPKI проверена локально'
-            : 'присутствие подтверждено локально'
+            : 'подтверждено только присутствие (без SPKI ключа)'
         } (TTL 8ч).`
       );
     } catch (err) {

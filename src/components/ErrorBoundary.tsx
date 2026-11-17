@@ -1,9 +1,10 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
-import { RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import { Download, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import { ThemeMode } from '../types';
 import { StorageBackendKind, StorageHealth } from '../domain/storage';
 import {
   emergencyDeleteLocalDatabase,
+  exportQuarantinedEntriesFromDefaultDb,
   getActiveStorageStatus,
 } from '../infrastructure/storage/indexedDbAdapter';
 
@@ -21,13 +22,14 @@ export interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   isWiping: boolean;
+  quarantineStatus?: string;
 }
 
 /**
  * Multi-level React Error Boundary for Onyx-Aura / Nailix.
  * - level="root": Protects the entire tree, dynamically reflects actual storage engine/health
- *   (IndexedDB vs Degraded vs Memory Only, L-01), and offers a 3rd recovery button
- *   «Сбросить локальные данные» to escape poisoned local state across F5 (L-06).
+ *   (IndexedDB vs Degraded vs Memory Only, L-01), offers emergency reset (L-06),
+ *   and allows exporting quarantined raw records before wiping (N-03).
  * - level="section": Isolates [SIM] or heavy sections cleanly.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -63,6 +65,29 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (typeof window !== 'undefined') {
       window.location.reload();
     }
+  };
+
+  private handleExportQuarantine = (): void => {
+    const run = async () => {
+      const dump = await exportQuarantinedEntriesFromDefaultDb();
+      if (!dump || Object.keys(dump).length === 0) {
+        this.setState({ quarantineStatus: 'Записей в карантине не найдено.' });
+        return;
+      }
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nailix-quarantine-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      this.setState({ quarantineStatus: 'Архив карантина выгружен (.json).' });
+    };
+    void run().catch(() => {
+      this.setState({ quarantineStatus: 'Не удалось выгрузить карантин.' });
+    });
   };
 
   private handleEmergencyWipe = (): void => {
@@ -135,6 +160,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               Возникла непредвиденная ошибка интерфейса. {storageNote}
             </p>
 
+            {this.state.quarantineStatus && (
+              <p className="text-xs font-mono text-amber-300 mb-3">
+                {this.state.quarantineStatus}
+              </p>
+            )}
+
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 justify-center">
               <button
                 type="button"
@@ -158,6 +189,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 }`}
               >
                 Обновить страницу
+              </button>
+              <button
+                type="button"
+                onClick={this.handleExportQuarantine}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-amber-500/40 bg-amber-950/30 text-amber-200 hover:bg-amber-950/50 transition-colors cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                Экспорт карантина (.json)
               </button>
               <button
                 type="button"

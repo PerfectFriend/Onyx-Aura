@@ -1,12 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useRef } from 'react';
 import {
   HydratedSalonData,
-  OutboxEntity,
   OutboxMutation,
   StorageBackendKind,
   StorageHealth,
 } from '../domain/storage';
-import { computeExactArtistRatingUpdate } from '../domain/rating';
 import {
   Appointment,
   Artist,
@@ -27,86 +25,151 @@ export interface UseSalonBootstrapOptions {
   onStorageError?: (message: string) => void;
 }
 
+interface BootstrapState {
+  bootstrapData: HydratedSalonData | null;
+  resetEpoch: number;
+  externalRevision: number;
+  storageBackend: StorageBackendKind;
+  storageHealth: StorageHealth;
+  storageWarnings: string[];
+  outbox: OutboxMutation[];
+}
+
+type BootstrapAction =
+  | { type: 'HYDRATE_INITIAL'; data: HydratedSalonData }
+  | { type: 'APPLY_EXTERNAL_SYNC'; data: HydratedSalonData }
+  | { type: 'APPLY_RESET'; data: HydratedSalonData }
+  | {
+      type: 'PATCH_SLICE';
+      patch: Partial<HydratedSalonData>;
+      backend: StorageBackendKind;
+      health: StorageHealth;
+      warnings: string[];
+    }
+  | {
+      type: 'REFRESH_HEALTH';
+      backend: StorageBackendKind;
+      health: StorageHealth;
+      warnings: string[];
+    }
+  | { type: 'DISMISS_WARNINGS' };
+
+function bootstrapReducer(state: BootstrapState, action: BootstrapAction): BootstrapState {
+  switch (action.type) {
+    case 'HYDRATE_INITIAL':
+      return {
+        ...state,
+        bootstrapData: action.data,
+        outbox: action.data.outbox,
+        storageBackend: action.data.meta.backend,
+        storageHealth: action.data.health,
+        storageWarnings: action.data.warnings,
+      };
+    case 'APPLY_EXTERNAL_SYNC':
+      return {
+        ...state,
+        bootstrapData: action.data,
+        externalRevision: state.externalRevision + 1,
+        outbox: action.data.outbox,
+        storageBackend: action.data.meta.backend,
+        storageHealth: action.data.health,
+        storageWarnings: action.data.warnings,
+      };
+    case 'APPLY_RESET':
+      return {
+        ...state,
+        bootstrapData: action.data,
+        resetEpoch: state.resetEpoch + 1,
+        externalRevision: 0,
+        outbox: action.data.outbox,
+        storageBackend: action.data.meta.backend,
+        storageHealth: action.data.health,
+        storageWarnings: action.data.warnings,
+      };
+    case 'PATCH_SLICE':
+      return {
+        ...state,
+        bootstrapData: state.bootstrapData
+          ? { ...state.bootstrapData, ...action.patch }
+          : state.bootstrapData,
+        outbox: action.patch.outbox ?? state.outbox,
+        storageBackend: action.backend,
+        storageHealth: action.health,
+        storageWarnings:
+          action.warnings.length > 0
+            ? Array.from(new Set([...state.storageWarnings, ...action.warnings]))
+            : state.storageWarnings,
+      };
+    case 'REFRESH_HEALTH':
+      return {
+        ...state,
+        storageBackend: action.backend,
+        storageHealth: action.health,
+        storageWarnings:
+          action.warnings.length > 0
+            ? Array.from(new Set([...state.storageWarnings, ...action.warnings]))
+            : state.storageWarnings,
+      };
+    case 'DISMISS_WARNINGS':
+      return {
+        ...state,
+        storageWarnings: [],
+      };
+  }
+}
+
 /**
- * Load-then-Mount Local-First Coordinator (L-11):
- * 1. Hydrates `SalonRepository` cleanly BEFORE mounting `<SalonApp key={resetEpoch} />`,
- *    eliminating `useHydrationCommit`, `dirtyEntitiesRef`, `seq`, ref mirrors, and 7 slice setters.
- * 2. Coordinates atomic single-transaction `setMany` writes (likes+portfolio, reviews+artists).
- * 3. Subscribes to cross-tab `BroadcastChannel` updates for multi-tab consistency.
+ * Load-then-Mount Local-First Coordinator (L-11 / N-04 / N-06 / N-09):
+ * - Single reducer state (`bootstrapData`) without duplicate ref mirrors or sync effects.
+ * - Transactional `*WithOutbox` repository commits (1 transaction per action, zero split-writes).
+ * - Debounced cross-tab updates (`externalRevision`) without remounting `<SalonApp>`.
+ * - Retries deferred writes on `online` / `visibilitychange` / `pagehide` & warns `beforeunload`.
  */
 export function useSalonBootstrap({
   repository = defaultSalonRepository,
   onStorageError,
 }: UseSalonBootstrapOptions = {}) {
-  const [bootstrapData, setBootstrapData] = useState<HydratedSalonData | null>(null);
-  const [resetEpoch, setResetEpoch] = useState<number>(0);
-
-  const [artists, setArtists] = useState<Artist[]>([]);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [anchorPoints, setAnchorPoints] = useState<ClientAnchorPoint[]>([]);
-  const [outbox, setOutbox] = useState<OutboxMutation[]>([]);
-  const [storageBackend, setStorageBackend] = useState<StorageBackendKind>(() =>
-    repository.getBackendKind()
+  const [state, dispatch] = useReducer(
+    bootstrapReducer,
+    undefined,
+    (): BootstrapState => ({
+      bootstrapData: null,
+      resetEpoch: 0,
+      externalRevision: 0,
+      storageBackend: repository.getBackendKind(),
+      storageHealth: 'ok',
+      storageWarnings: [],
+      outbox: [],
+    })
   );
-  const [storageHealth, setStorageHealth] = useState<StorageHealth>('ok');
-  const [storageWarnings, setStorageWarnings] = useState<string[]>([]);
 
-  const artistsRef = useRef<Artist[]>(artists);
-  const reviewsRef = useRef<Review[]>(reviews);
-  const anchorPointsRef = useRef<ClientAnchorPoint[]>(anchorPoints);
   const onStorageErrorRef = useRef(onStorageError);
+  onStorageErrorRef.current = onStorageError;
 
-  useEffect(() => {
-    artistsRef.current = artists;
-  }, [artists]);
-
-  useEffect(() => {
-    reviewsRef.current = reviews;
-  }, [reviews]);
-
-  useEffect(() => {
-    anchorPointsRef.current = anchorPoints;
-  }, [anchorPoints]);
-
-  useEffect(() => {
-    onStorageErrorRef.current = onStorageError;
-  }, [onStorageError]);
-
-  const applyLoadedSnapshot = useCallback((data: HydratedSalonData, bumpEpoch: boolean) => {
-    artistsRef.current = data.artists;
-    reviewsRef.current = data.reviews;
-    anchorPointsRef.current = data.anchorPoints;
-
-    setArtists(data.artists);
-    setReviews(data.reviews);
-    setAnchorPoints(data.anchorPoints);
-    setOutbox(data.outbox);
-    setStorageBackend(repository.getBackendKind());
-    setStorageHealth(data.health);
-    setStorageWarnings(data.warnings);
-    setBootstrapData(data);
-    if (bumpEpoch) {
-      setResetEpoch(prev => prev + 1);
-    }
-  }, [repository]);
-
-  const refreshHealthFromRepo = useCallback(() => {
-    const report = repository.getHealthReport();
-    setStorageBackend(report.backend);
-    setStorageHealth(report.health);
-    if (report.warnings.length > 0) {
-      setStorageWarnings(prev => Array.from(new Set([...prev, ...report.warnings])));
-    }
-  }, [repository]);
+  const refreshHealthFromRepo = useCallback(
+    (patch: Partial<HydratedSalonData> = {}) => {
+      const report = repository.getHealthReport();
+      dispatch({
+        type: 'PATCH_SLICE',
+        patch,
+        backend: report.backend,
+        health: report.health,
+        warnings: report.warnings,
+      });
+    },
+    [repository]
+  );
 
   useEffect(() => {
     let active = true;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     repository
       .ensureSeededAndLoad()
       .then(data => {
-        if (!active) return;
-        applyLoadedSnapshot(data, false);
+        if (active) {
+          dispatch({ type: 'HYDRATE_INITIAL', data });
+        }
       })
       .catch(err => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -117,36 +180,83 @@ export function useSalonBootstrap({
       });
 
     const unsubTabs = repository.subscribeExternalChanges(() => {
-      repository
-        .ensureSeededAndLoad()
-        .then(data => {
-          if (active) {
-            applyLoadedSnapshot(data, true);
-          }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        repository
+          .ensureSeededAndLoad()
+          .then(data => {
+            if (active) {
+              dispatch({ type: 'APPLY_EXTERNAL_SYNC', data });
+            }
+          })
+          .catch(() => undefined);
+      }, 150);
+    });
+
+    const triggerRetry = () => {
+      if (repository.getPendingWriteCount() === 0) return;
+      void repository
+        .retryPendingWrites()
+        .then(() => {
+          if (!active) return;
+          const report = repository.getHealthReport();
+          dispatch({
+            type: 'REFRESH_HEALTH',
+            backend: report.backend,
+            health: report.health,
+            warnings: report.warnings,
+          });
         })
         .catch(() => undefined);
-    });
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden' || document.visibilityState === 'visible') {
+        triggerRetry();
+      }
+    };
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (repository.getPendingWriteCount() > 0) {
+        triggerRetry();
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', triggerRetry);
+      window.addEventListener('pagehide', triggerRetry);
+      window.addEventListener('beforeunload', handleBeforeUnload);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
 
     return () => {
       active = false;
+      if (debounceTimer) clearTimeout(debounceTimer);
       unsubTabs();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', triggerRetry);
+        window.removeEventListener('pagehide', triggerRetry);
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
     };
-  }, [applyLoadedSnapshot, repository]);
-
-  const recordOutbox = useCallback(
-    async (entity: OutboxEntity, action: string, payload: unknown) => {
-      const nextOutbox = await repository.enqueueOutboxMutation(entity, action, payload);
-      setOutbox(nextOutbox);
-      refreshHealthFromRepo();
-    },
-    [refreshHealthFromRepo, repository]
-  );
+  }, [repository]);
 
   const persistAppointments = useCallback(
     async (appointments: Appointment[], action = 'APPOINTMENTS_UPDATED', payload?: unknown) => {
       try {
-        await repository.saveAppointments(appointments);
-        await recordOutbox('appointments', action, payload ?? { count: appointments.length });
+        const nextOutbox = await repository.saveAppointmentsWithOutbox(appointments, {
+          entity: 'appointments',
+          action,
+          payload: payload ?? { count: appointments.length },
+        });
+        refreshHealthFromRepo({ appointments, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         const msg = err instanceof Error ? err.message : String(err);
@@ -154,21 +264,25 @@ export function useSalonBootstrap({
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistPortfolio = useCallback(
     async (portfolio: PortfolioItem[], action = 'PORTFOLIO_UPDATED', payload?: unknown) => {
       try {
-        await repository.savePortfolio(portfolio);
-        await recordOutbox('portfolio', action, payload ?? { count: portfolio.length });
+        const nextOutbox = await repository.savePortfolioWithOutbox(portfolio, {
+          entity: 'portfolio',
+          action,
+          payload: payload ?? { count: portfolio.length },
+        });
+        refreshHealthFromRepo({ portfolio, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistLikesAndPortfolio = useCallback(
@@ -179,186 +293,195 @@ export function useSalonBootstrap({
       payload?: unknown
     ) => {
       try {
-        await repository.saveLikesAndPortfolioAtomic(likedIds, portfolio);
-        await recordOutbox('likes', action, payload ?? { totalLiked: likedIds.length });
+        const nextOutbox =
+          (await repository.saveLikesAndPortfolioAtomic(likedIds, portfolio, {
+            entity: 'likes',
+            action,
+            payload: payload ?? { totalLiked: likedIds.length },
+          })) ?? [];
+        refreshHealthFromRepo({ likedIds, portfolio, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistSaves = useCallback(
     async (savedIds: string[], action = 'LOOK_SAVE_TOGGLED', payload?: unknown) => {
       try {
-        await repository.saveSavedIds(savedIds);
-        await recordOutbox('saves', action, payload ?? { totalSaved: savedIds.length });
+        const nextOutbox = await repository.saveSavedIdsWithOutbox(savedIds, {
+          entity: 'saves',
+          action,
+          payload: payload ?? { totalSaved: savedIds.length },
+        });
+        refreshHealthFromRepo({ savedIds, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const saveReviewAndUpdateArtistRating = useCallback(
     async (newReview: Review) => {
-      const taggedReview: Review = { ...newReview, origin: 'user' };
-      const nextReviews = [taggedReview, ...reviewsRef.current];
-      const nextArtists = artistsRef.current.map(art => {
-        if (art.id !== taggedReview.artistId) return art;
-        const updated = computeExactArtistRatingUpdate({
-          currentRating: art.rating,
-          totalReviews: art.totalReviews,
-          ratingSum: art.ratingSum,
-          newRating: taggedReview.rating,
-        });
-        return {
-          ...art,
-          rating: updated.rating,
-          totalReviews: updated.totalReviews,
-          ratingSum: updated.ratingSum,
-        };
-      });
-
-      await repository.saveReviewsAndArtistsAtomic(nextReviews, nextArtists);
-      reviewsRef.current = nextReviews;
-      artistsRef.current = nextArtists;
-      setReviews(nextReviews);
-      setArtists(nextArtists);
-
-      await recordOutbox('reviews', 'REVIEW_SUBMITTED', {
-        reviewId: taggedReview.id,
-        artistId: taggedReview.artistId,
-        rating: taggedReview.rating,
-      });
+      try {
+        const updated = await repository.addReviewAndUpdateArtistWithOutbox(newReview);
+        refreshHealthFromRepo(updated);
+      } catch (err) {
+        refreshHealthFromRepo();
+        onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     },
-    [recordOutbox, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const updateAnchorPoint = useCallback(
     async (updatedPoint: ClientAnchorPoint) => {
-      const tagged: ClientAnchorPoint = { ...updatedPoint, origin: 'user' };
-      const nextAnchors = anchorPointsRef.current.map(p => (p.id === tagged.id ? tagged : p));
-      await repository.saveAnchorPoints(nextAnchors);
-      anchorPointsRef.current = nextAnchors;
-      setAnchorPoints(nextAnchors);
-      await recordOutbox('anchorPoints', 'ANCHOR_POINT_UPDATED', {
-        anchorId: tagged.id,
-        label: tagged.label,
-      });
+      try {
+        const updated = await repository.updateAnchorPointWithOutbox(updatedPoint);
+        refreshHealthFromRepo(updated);
+      } catch (err) {
+        refreshHealthFromRepo();
+        onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     },
-    [recordOutbox, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const updateMasterSalon = useCallback(
     async (artistId: string, salonName: string, salonAddress: string, lat: number, lng: number) => {
-      const nextArtists = artistsRef.current.map(art =>
-        art.id === artistId
-          ? {
-              ...art,
-              salonName,
-              salonAddress,
-              coordinates: { lat, lng },
-            }
-          : art
-      );
-      await repository.saveArtists(nextArtists);
-      artistsRef.current = nextArtists;
-      setArtists(nextArtists);
-      await recordOutbox('artists', 'MASTER_SALON_UPDATED', {
-        artistId,
-        salonName,
-      });
+      try {
+        const updated = await repository.updateMasterSalonWithOutbox(
+          artistId,
+          salonName,
+          salonAddress,
+          lat,
+          lng
+        );
+        refreshHealthFromRepo(updated);
+      } catch (err) {
+        refreshHealthFromRepo();
+        onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     },
-    [recordOutbox, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistChats = useCallback(
     async (chats: ChatMessage[], payload?: unknown) => {
       try {
-        await repository.saveChats(chats);
-        await recordOutbox('chats', 'CHAT_MESSAGE_SAVED', payload ?? { count: chats.length });
+        const nextOutbox = await repository.saveChatsWithOutbox(chats, {
+          entity: 'chats',
+          action: 'CHAT_MESSAGE_SAVED',
+          payload: payload ?? { count: chats.length },
+        });
+        refreshHealthFromRepo({ chats, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistAds = useCallback(
     async (ads: SponsoredAd[], payload?: unknown) => {
       try {
-        await repository.saveAds(ads);
-        await recordOutbox('ads', 'AD_CAMPAIGN_CREATED', payload ?? { count: ads.length });
+        const nextOutbox = await repository.saveAdsWithOutbox(ads, {
+          entity: 'ads',
+          action: 'AD_CAMPAIGN_CREATED',
+          payload: payload ?? { count: ads.length },
+        });
+        refreshHealthFromRepo({ ads, outbox: nextOutbox });
       } catch (err) {
         refreshHealthFromRepo();
         onStorageErrorRef.current?.(err instanceof Error ? err.message : String(err));
         throw err;
       }
     },
-    [recordOutbox, refreshHealthFromRepo, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistPasskeys = useCallback(
     async (passkeys: PasskeyCredentialRecord[], action = 'PASSKEY_UPDATED', payload?: unknown) => {
-      await repository.savePasskeys(passkeys);
-      await recordOutbox('identity', action, payload ?? { count: passkeys.length });
+      const nextOutbox = await repository.savePasskeysWithOutbox(passkeys, {
+        entity: 'identity',
+        action,
+        payload: payload ?? { count: passkeys.length },
+      });
+      refreshHealthFromRepo({ passkeys, outbox: nextOutbox });
     },
-    [recordOutbox, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const persistIdentitySession = useCallback(
     async (session: IdentitySession, action = 'IDENTITY_SESSION_UPDATED') => {
-      await repository.saveIdentitySession(session);
-      await recordOutbox('identity', action, {
-        authenticated: session.authenticated,
-        role: session.role,
-        authMethod: session.authMethod,
+      const nextOutbox = await repository.saveIdentitySessionWithOutbox(session, {
+        entity: 'identity',
+        action,
+        payload: {
+          authenticated: session.authenticated,
+          role: session.role,
+          authMethod: session.authMethod,
+        },
       });
+      refreshHealthFromRepo({ identitySession: session, outbox: nextOutbox });
     },
-    [recordOutbox, repository]
+    [refreshHealthFromRepo, repository]
   );
 
   const resetAllToSeed = useCallback(
     async (options: { preserveIdentity?: boolean } = {}) => {
       const freshData = await repository.resetToSeed(options);
-      applyLoadedSnapshot(freshData, true);
+      dispatch({ type: 'APPLY_RESET', data: freshData });
       return freshData;
     },
-    [applyLoadedSnapshot, repository]
+    [repository]
   );
 
   const flushOutboxDemo = useCallback(async () => {
     const flushed = await repository.flushOutboxLocalDemo();
-    setOutbox(flushed);
-    refreshHealthFromRepo();
+    refreshHealthFromRepo({ outbox: flushed });
     return flushed;
   }, [refreshHealthFromRepo, repository]);
 
+  const exportQuarantinedJson = useCallback(async () => {
+    return repository.exportQuarantinedData();
+  }, [repository]);
+
   const dismissWarnings = useCallback(() => {
-    setStorageWarnings([]);
+    dispatch({ type: 'DISMISS_WARNINGS' });
   }, []);
 
-  const pendingOutboxCount = outbox.filter(entry => entry.status === 'pending_sync').length;
+  const artists: Artist[] = state.bootstrapData?.artists ?? [];
+  const reviews: Review[] = state.bootstrapData?.reviews ?? [];
+  const anchorPoints: ClientAnchorPoint[] = state.bootstrapData?.anchorPoints ?? [];
+  const quarantineKeys: string[] = state.bootstrapData?.quarantineKeys ?? [];
+  const pendingOutboxCount = state.outbox.filter(entry => entry.status === 'pending_sync').length;
 
   return {
-    bootstrapData,
-    resetEpoch,
-    isHydrated: bootstrapData !== null,
+    bootstrapData: state.bootstrapData,
+    resetEpoch: state.resetEpoch,
+    externalRevision: state.externalRevision,
+    isHydrated: state.bootstrapData !== null,
     artists,
     reviews,
     anchorPoints,
-    storageBackend,
-    storageHealth,
-    storageWarnings,
+    quarantineKeys,
+    storageBackend: state.storageBackend,
+    storageHealth: state.storageHealth,
+    storageWarnings: state.storageWarnings,
     dismissWarnings,
-    outbox,
+    outbox: state.outbox,
     pendingOutboxCount,
     persistAppointments,
     persistPortfolio,
@@ -373,5 +496,6 @@ export function useSalonBootstrap({
     persistIdentitySession,
     resetAllToSeed,
     flushOutboxDemo,
+    exportQuarantinedJson,
   };
 }

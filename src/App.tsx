@@ -83,6 +83,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
   const identity = useIdentitySession({
     initialPasskeys: initialData.passkeys,
     initialSession: initialData.identitySession,
+    externalRevision: bootstrap.externalRevision,
     onRoleSynced: shell.setUserRole,
     onPersistPasskeys: bootstrap.persistPasskeys,
     onPersistSession: bootstrap.persistIdentitySession,
@@ -103,6 +104,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     artists: bootstrap.artists,
     initialBookingOpen: shell.deepLinkAction === 'book',
     initialAppointments: initialData.appointments,
+    externalRevision: bootstrap.externalRevision,
     onNotifyToast: shell.pushToast,
     onBroadcastToSwarm: swarm.broadcastBlock,
     onPersistAppointments: bootstrap.persistAppointments,
@@ -113,6 +115,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     userRole: shell.userRole,
     artists: bootstrap.artists,
     initialMessages: initialData.chats,
+    externalRevision: bootstrap.externalRevision,
     onBroadcastToSwarm: swarm.broadcastBlock,
     onPersistChats: bootstrap.persistChats,
   });
@@ -122,6 +125,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     initialItems: initialData.portfolio,
     initialLikedIds: initialData.likedIds,
     initialSavedIds: initialData.savedIds,
+    externalRevision: bootstrap.externalRevision,
     onSyncPostToSwarm: (newLook, igPostId) => {
       swarm.broadcastBlock('INSTAGRAM_PORTFOLIO_SYNC', {
         lookId: newLook.id,
@@ -147,6 +151,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
   // Sponsored Ads Engine & Modal (Load-then-Mount)
   const adsEngine = useSponsoredAds({
     initialAds: initialData.ads,
+    externalRevision: bootstrap.externalRevision,
     onBroadcastToSwarm: swarm.broadcastBlock,
     onPersistAds: bootstrap.persistAds,
   });
@@ -246,7 +251,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
         t={t}
       />
 
-      {/* Quiet Degraded / Recovery / Validation Notice Banner (L-01, L-06) */}
+      {/* Quiet Degraded / Recovery / Validation Notice Banner (L-01, L-06, N-01, N-03) */}
       {hasHealthIssue && (
         <div
           role="status"
@@ -255,7 +260,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
           <div className="rounded-xl border border-amber-500/40 bg-amber-950/50 backdrop-blur-md px-4 py-2.5 text-xs text-amber-100 flex items-start justify-between gap-3">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 <div className="font-semibold">
                   {bootstrap.storageHealth === 'memory_only'
                     ? 'Хранилище в режиме памяти (без записи на диск)'
@@ -268,6 +273,32 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
                     {warn}
                   </p>
                 ))}
+                {bootstrap.quarantineKeys.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void bootstrap
+                        .exportQuarantinedJson()
+                        .then(dump => {
+                          const blob = new Blob([JSON.stringify(dump, null, 2)], {
+                            type: 'application/json',
+                          });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `nailix-quarantine-${Date.now()}.json`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        })
+                        .catch(() => undefined);
+                    }}
+                    className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded border border-amber-400/50 bg-amber-500/15 hover:bg-amber-500/25 text-[11px] font-mono text-amber-200 cursor-pointer"
+                  >
+                    Скачать архив карантина (.JSON)
+                  </button>
+                )}
               </div>
             </div>
             <button

@@ -29,8 +29,8 @@
 ## ✨ Ключевые возможности / Core Highlights
 
 ### 1. 📅 Бронирование, Offline-First База, Passkeys и Календарный сервис · 🟢 `REAL` (Storage) / 🔵 `LOCAL_ONLY` (App Flows)
-- **Local-First IndexedDB v2**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через `SalonRepository` + `ResilientStorageAdapter` (`storageHealth: ok | degraded | memory_only`), строгие allowlist-схемы (`src/domain/schemas.ts`), миграции `v1 → v2`, защиту от более новой схемы (`read-only`), оффлайн-очередь мутаций `OutboxMutation` (без вытеснения `pending_sync`) и паттерн **Load-then-Mount** (`useSalonBootstrap`).
-- **WebAuthn / Passkeys & Secret Hygiene (Этап 3.1 → 3.2)**: Церемония FIDO2 (`navigator.credentials.create`/`.get`) с локальной криптографической проверкой подписи (`crypto.subtle.verify` по SPKI ES256/RS256), `rpIdHash`, флагов UP/UV, монотонного `signCount`, TTL сессии 8 часов, discoverable fallback, проверкой `assertNoSecretLikeFields` и build-time `Content-Security-Policy` без `script-src 'unsafe-inline'` (с самохостингом шрифтов `@fontsource/*`). Авторизация остаётся локальной (`LOCAL_ONLY`, `client_local_only`); серверная верификация challenge — Этап 4. В песочницах доступен явный `[SIM] Демо Passkey`.
+- **Local-First IndexedDB v3**: Записи к мастерам, лайки/избранное, отзывы, чат и пины карты сохраняются локально в браузере через `SalonRepository` + `ResilientStorageAdapter` (`getDetailed`: `ok | missing | unreadable`, изоляция сбоев чтения, поэлементный карантин `quarantine:` с экспортом `.json`, non-secret passthrough), миграции `v1 → v2 → v3`, защита от более новой схемы (`read-only`), единотранзакционная очередь `OutboxMutation` (`*WithOutbox` + strict allowlist без вытеснения `pending_sync`) и debounced кросс-вкладочный sync без remount открытых модалок.
+- **WebAuthn / Passkeys & Secret Hygiene (Этап 3.1 → 3.3)**: Церемония FIDO2 (`navigator.credentials.create`/`.get`) с честным разделением `signature_verified` vs `presence_only`, извлечением SPKI из CBOR/COSE `attestationObject`, локальной проверкой подписи (`crypto.subtle.verify` ES256/RS256), `rpIdHash`, обязательным `UV` для роли мастера, поддержкой флага `BE` (0x08) синхронизируемых ключей, TTL сессии 8 часов, discoverable fallback, узкой проверкой секретов `assertNoSecretLikeFields` (JWT / `Authorization: Bearer`) и build-time `Content-Security-Policy` без `script-src 'unsafe-inline'` (самохостинг `@fontsource/*`). Авторизация локальная (`LOCAL_ONLY`); серверная верификация — Этап 4. В песочницах доступен `[SIM] Демо Passkey`.
 - **Мгновенная синхронизация в Google Calendar / Microsoft Outlook** через веб-ссылки с предзаполненными параметрами.
 - **Экспорт в Apple Calendar / Outlook** через генерацию файла `.ics` (iCalendar RFC 5545) с напоминаниями `VALARM`.
 - Просмотр записей и безопасный диалог **«Сбросить локальную демо-базу»** (с раздельным сбросом данных салона и ключей Passkey) в модальном окне «Мои записи».
@@ -67,7 +67,7 @@
 - **Styling & Typography**: [Tailwind CSS v4](https://tailwindcss.com/), Self-hosted `@fontsource/*` (Plus Jakarta Sans, Syne, JetBrains Mono)
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
 - **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials` + локальная SPKI-проверка подписи ES256/RS256), Web Crypto CSPRNG challenges, Schema Allowlists + `assertNoSecretLikeFields`, build-time CSP без `script-src 'unsafe-inline'`
-- **Local-First Storage**: Native `IndexedDB` (schema v2 + migration registry) via `ResilientStorageAdapter` + `SalonRepository` + Offline `OutboxMutation` Queue
+- **Local-First Storage**: Native `IndexedDB` (schema v3 + `v1 → v2 → v3` migration registry + quarantine export) via `ResilientStorageAdapter` + `SalonRepository` + Transactional Offline `OutboxMutation` Queue
 - **PWA & Offline Engine**: [Vite Plugin PWA](https://vite-pwa-org.netlify.app/), Workbox
 - **Calendar Engine**: RFC 5545 iCalendar generator + Google/Outlook Calendar URL builder
 
@@ -76,7 +76,7 @@
 ## 📂 Структура проекта / Project Structure
 
 ```bash
-├── docs/                    # Аудит-журнал, Карта Реальности v3.1, Архитектура, Runbook ротации ключа
+├── docs/                    # Аудит-журнал, Карта Реальности v3.2, Архитектура, Runbook ротации ключа
 ├── scripts/
 │   ├── build-apk.sh         # Локальная сборка APK в dist-apk/ (строго через env:NAILIX_KEYSTORE_PASS)
 │   └── ci.workflow.yml      # Шаблон GitHub Actions CI (копировать в .github/workflows/ci.yml под PAT со scope workflow)
@@ -89,7 +89,7 @@
 │   ├── domain/              # Чистые контракты Storage, Schema Validators, IdentitySession, Rating calculator
 │   ├── hooks/               # Доменные хуки + useSalonBootstrap + useIdentitySession + useAppShell
 │   ├── i18n/                # Словарь переводов на 10 языков (LTR + RTL)
-│   ├── infrastructure/      # IndexedDBAdapter + ResilientStorageAdapter, SalonRepository v2, WebAuthnService, SecretHygiene, CSP builder
+│   ├── infrastructure/      # IndexedDBAdapter + ResilientStorageAdapter, SalonRepository v3, WebAuthnService, SecretHygiene, CSP builder
 │   ├── services/            # geoDistance (REAL) и reminderService ([SIM])
 │   ├── simulation/          # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
 │   ├── test-utils/          # Экспортируемый сканер честности (honesty.ts) для мета-тестов
@@ -121,6 +121,8 @@ npm run typecheck
 npm run test:coverage
 npm run build
 ```
+
+> **Примечание по покрытию (`vitest.config.ts`)**: `npm run test:coverage` рассчитывает V8-метрики строго по доменному, инфраструктурному слоям и утилитам (`src/domain/**/*.ts`, `src/infrastructure/**/*.ts`, `src/utils/**/*.ts`), не включая UI-компоненты, React-хуки и `[SIM]`-модули.
 
 Локальная сборка APK выполняется по инструкции в [`docs/KEY_ROTATION_RUNBOOK.md`](./docs/KEY_ROTATION_RUNBOOK.md).
 

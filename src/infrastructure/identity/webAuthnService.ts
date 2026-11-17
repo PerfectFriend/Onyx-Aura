@@ -1,14 +1,12 @@
 // =============================================================================
-// Stage 3 / Sprint 3.2 — WebAuthn / Passkeys Identity Service
-// - Genuine browser FIDO2 / WebAuthn registration & assertion when available
-// - Real client-side cryptographic verification (L-04):
-//     * clientDataJSON (type, challenge, origin)
-//     * authenticatorData (rpIdHash SHA-256, UP/UV flags, monotonic signCount)
-//     * ES256 (DER -> IEEE P1363 r||s) & RS256 signature verification vs stored SPKI
-//     * Discoverable credential fallback (allowCredentials: []) if IDB was reset
-// - Private keys never leave hardware TPM / Secure Enclave; zero plaintext secrets
-// - Explicit [SIM] demo fallback + re-login inside non-WebAuthn sandboxes (L-12)
-// - Client-local verification scope only until Stage 4 backend challenge server
+// Stage 3 / Sprint 3.3 — WebAuthn / Passkeys Identity Service (N-05)
+// - Honest verification states: `verification: 'signature_verified' | 'presence_only'`
+//   (never marks assertion signature_verified without an authentic SPKI public key)
+// - Enforces `UV` (User Verification) flag for `master` role assertions (W7)
+// - Handles synced passkey `BE` (Backup Eligible, 0x08) flag on signCount (W10)
+// - Extracts SPKI from `attestationObject` CBOR/COSE when `getPublicKey()` is absent
+// - ES256 (DER -> IEEE P1363 r||s) & RS256 cryptographic verification via Web Crypto
+// - Discoverable credential fallback (`allowCredentials: []`)
 // =============================================================================
 
 import {
@@ -49,6 +47,209 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
+ * Minimal deterministic CBOR decoder supporting uint, nint, bstr, tstr, array, and map
+ * needed to extract `authData` and COSE public keys from WebAuthn `attestationObject`.
+ */
+function decodeCborValue(
+  bytes: Uint8Array,
+  offset = 0
+): { value: unknown; nextOffset: number } {
+  if (offset >= bytes.length) {
+    throw new Error('Unexpected end of CBOR buffer.');
+  }
+  const initial = bytes[offset];
+  const major = initial >> 5;
+  const additional = initial & 0x1f;
+  let cursor = offset + 1;
+
+  const readUint = (info: number): number => {
+    if (info < 24) return info;
+    if (info === 24) {
+      if (cursor >= bytes.length) throw new Error('Truncated CBOR uint8');
+      return bytes[cursor++];
+    }
+    if (info === 25) {
+      if (cursor + 2 > bytes.length) throw new Error('Truncated CBOR uint16');
+      const v = (bytes[cursor] << 8) | bytes[cursor + 1];
+      cursor += 2;
+      return v;
+    }
+    if (info === 26) {
+      if (cursor + 4 > bytes.length) throw new Error('Truncated CBOR uint32');
+      const v =
+        ((bytes[cursor] << 24) >>> 0) +
+        (bytes[cursor + 1] << 16) +
+        (bytes[cursor + 2] << 8) +
+        bytes[cursor + 3];
+      cursor += 4;
+      return v;
+    }
+    throw new Error(`Unsupported CBOR length info ${info}`);
+  };
+
+  if (major === 0) {
+    return { value: readUint(additional), nextOffset: cursor };
+  }
+  if (major === 1) {
+    return { value: -1 - readUint(additional), nextOffset: cursor };
+  }
+  if (major === 2) {
+    const len = readUint(additional);
+    const slice = bytes.slice(cursor, cursor + len);
+    return { value: slice, nextOffset: cursor + len };
+  }
+  if (major === 3) {
+    const len = readUint(additional);
+    const slice = bytes.slice(cursor, cursor + len);
+    return { value: new TextDecoder().decode(slice), nextOffset: cursor + len };
+  }
+  if (major === 4) {
+    const len = readUint(additional);
+    const arr: unknown[] = [];
+    for (let i = 0; i < len; i++) {
+      const item = decodeCborValue(bytes, cursor);
+      arr.push(item.value);
+      cursor = item.nextOffset;
+    }
+    return { value: arr, nextOffset: cursor };
+  }
+  if (major === 5) {
+    const len = readUint(additional);
+    const map = new Map<unknown, unknown>();
+    for (let i = 0; i < len; i++) {
+      const key = decodeCborValue(bytes, cursor);
+      const val = decodeCborValue(bytes, key.nextOffset);
+      map.set(key.value, val.value);
+      cursor = val.nextOffset;
+    }
+    return { value: map, nextOffset: cursor };
+  }
+  if (major === 7) {
+    if (additional === 20) return { value: false, nextOffset: cursor };
+    if (additional === 21) return { value: true, nextOffset: cursor };
+    if (additional === 22) return { value: null, nextOffset: cursor };
+    return { value: undefined, nextOffset: cursor };
+  }
+
+  throw new Error(`Unsupported CBOR major type ${major}`);
+}
+
+function encodeDerLength(len: number): Uint8Array {
+  if (len < 0x80) return new Uint8Array([len]);
+  if (len <= 0xff) return new Uint8Array([0x81, len]);
+  return new Uint8Array([0x82, (len >> 8) & 0xff, len & 0xff]);
+}
+
+function encodeDerSequence(contents: Uint8Array): Uint8Array {
+  const lenBytes = encodeDerLength(contents.length);
+  const out = new Uint8Array(1 + lenBytes.length + contents.length);
+  out[0] = 0x30;
+  out.set(lenBytes, 1);
+  out.set(contents, 1 + lenBytes.length);
+  return out;
+}
+
+function encodeDerUnsignedInteger(raw: Uint8Array): Uint8Array {
+  let start = 0;
+  while (start < raw.length - 1 && raw[start] === 0) start++;
+  let trimmed = raw.slice(start);
+  if ((trimmed[0] & 0x80) !== 0) {
+    const prefixed = new Uint8Array(trimmed.length + 1);
+    prefixed[0] = 0x00;
+    prefixed.set(trimmed, 1);
+    trimmed = prefixed;
+  }
+  const lenBytes = encodeDerLength(trimmed.length);
+  const out = new Uint8Array(1 + lenBytes.length + trimmed.length);
+  out[0] = 0x02;
+  out.set(lenBytes, 1);
+  out.set(trimmed, 1 + lenBytes.length);
+  return out;
+}
+
+function encodeDerBitString(bytes: Uint8Array): Uint8Array {
+  const lenBytes = encodeDerLength(bytes.length + 1);
+  const out = new Uint8Array(1 + lenBytes.length + 1 + bytes.length);
+  out[0] = 0x03;
+  out.set(lenBytes, 1);
+  out[1 + lenBytes.length] = 0x00; // unused bits
+  out.set(bytes, 1 + lenBytes.length + 1);
+  return out;
+}
+
+/**
+ * Extracts a Base64URL SPKI public key + COSE algorithm from a raw WebAuthn
+ * `attestationObject` if `AuthenticatorAttestationResponse.getPublicKey()` is unavailable (N-05).
+ */
+export function extractSpkiFromAttestationObject(
+  attestationObject: ArrayBuffer | Uint8Array
+): { spkiBase64Url: string; algorithm: number } | null {
+  try {
+    const raw =
+      attestationObject instanceof Uint8Array
+        ? attestationObject
+        : new Uint8Array(attestationObject);
+    const decoded = decodeCborValue(raw, 0);
+    if (!(decoded.value instanceof Map)) return null;
+    const attestationMap = decoded.value as ReadonlyMap<unknown, unknown>;
+    const authData = attestationMap.get('authData');
+    if (!(authData instanceof Uint8Array) || authData.length < 55) return null;
+
+    const flags = authData[32];
+    const hasAttestedCredentialData = (flags & 0x40) !== 0;
+    if (!hasAttestedCredentialData) return null;
+
+    // 32 (rpIdHash) + 1 (flags) + 4 (signCount) + 16 (aaguid) = offset 53
+    const credIdLen = (authData[53] << 8) | authData[54];
+    const coseOffset = 55 + credIdLen;
+    if (coseOffset >= authData.length) return null;
+
+    const cose = decodeCborValue(authData, coseOffset);
+    if (!(cose.value instanceof Map)) return null;
+    const coseMap = cose.value as ReadonlyMap<unknown, unknown>;
+
+    const kty = coseMap.get(1);
+    const rawAlg = coseMap.get(3);
+    const alg = typeof rawAlg === 'number' ? rawAlg : -7;
+
+    // EC2 (kty = 2), P-256 (crv = 1)
+    if (kty === 2) {
+      const crv = coseMap.get(-1);
+      const x = coseMap.get(-2);
+      const y = coseMap.get(-3);
+      if (crv === 1 && x instanceof Uint8Array && y instanceof Uint8Array && x.length === 32 && y.length === 32) {
+        const spkiPrefix = new Uint8Array([
+          0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+          0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
+        ]);
+        const spki = concatBytes(spkiPrefix, concatBytes(x, y));
+        return { spkiBase64Url: toBase64Url(spki), algorithm: alg };
+      }
+    }
+
+    // RSA (kty = 3, RS256)
+    if (kty === 3) {
+      const n = coseMap.get(-1);
+      const e = coseMap.get(-2);
+      if (n instanceof Uint8Array && e instanceof Uint8Array) {
+        const rsaAlgId = new Uint8Array([
+          0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+        ]);
+        const pubKeySeq = encodeDerSequence(
+          concatBytes(encodeDerUnsignedInteger(n), encodeDerUnsignedInteger(e))
+        );
+        const spki = encodeDerSequence(concatBytes(rsaAlgId, encodeDerBitString(pubKeySeq)));
+        return { spkiBase64Url: toBase64Url(spki), algorithm: alg };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Converts an ASN.1 DER-encoded ECDSA signature (`30 len 02 rLen r 02 sLen s`)
  * into raw 64-byte IEEE P1363 `(r || s)` required by Web Crypto `SubtleCrypto.verify`.
  */
@@ -58,7 +259,6 @@ export function derEcdsaToP1363(der: Uint8Array, coordinateSize = 32): Uint8Arra
   }
 
   let offset = 2;
-  // Handle long-form DER length if present
   if ((der[1] & 0x80) !== 0) {
     const lenBytes = der[1] & 0x7f;
     offset = 2 + lenBytes;
@@ -114,27 +314,39 @@ export interface VerifyAssertionParams {
   expectedChallengeBase64Url: string;
   expectedOrigin: string;
   expectedRpId: string;
-  storedCredential?: Pick<PasskeyCredentialRecord, 'publicKeySpkiBase64Url' | 'algorithm' | 'signCount'>;
+  /** Enforces User Verification (UV) flag (mandatory when role === 'master', N-05 / W7). */
+  requireUserVerification?: boolean;
+  storedCredential?: Pick<
+    PasskeyCredentialRecord,
+    'publicKeySpkiBase64Url' | 'algorithm' | 'signCount'
+  > & { role?: UserRole };
 }
 
+export type AssertionVerificationLevel = 'signature_verified' | 'presence_only';
+
 export interface VerifyAssertionResult {
-  verified: boolean;
+  verification: AssertionVerificationLevel;
   cryptographicSignatureVerified: boolean;
   userPresent: boolean;
   userVerified: boolean;
+  backupEligible: boolean;
+  backupState: boolean;
   signCount: number;
+  warnings: string[];
 }
 
 /**
- * Verifies a WebAuthn assertion response locally against WebAuthn L2 steps (L-04):
- * clientDataJSON type/challenge/origin, rpIdHash, UP/UV flags, monotonic signCount,
- * and SPKI signature (ES256 / RS256) when the stored credential holds an SPKI key.
+ * Verifies a WebAuthn assertion response locally against WebAuthn L2 steps (L-04 / N-05):
+ * - clientDataJSON (type, challenge, origin)
+ * - authenticatorData (rpIdHash SHA-256, UP, UV for master, BE for synced passkeys, monotonic signCount)
+ * - SPKI signature (ES256 / RS256). Without an SPKI public key, honestly reports `presence_only`.
  */
 export async function verifyWebAuthnAssertion({
   response,
   expectedChallengeBase64Url,
   expectedOrigin,
   expectedRpId,
+  requireUserVerification,
   storedCredential,
 }: VerifyAssertionParams): Promise<VerifyAssertionResult> {
   const clientDataBytes =
@@ -149,6 +361,8 @@ export async function verifyWebAuthnAssertion({
     response.signature instanceof Uint8Array
       ? response.signature
       : new Uint8Array(response.signature);
+
+  const warnings: string[] = [];
 
   // 1. Validate clientDataJSON
   let clientData: { type?: string; challenge?: string; origin?: string };
@@ -193,8 +407,18 @@ export async function verifyWebAuthnAssertion({
   const flags = authDataBytes[32];
   const userPresent = (flags & 0x01) !== 0;
   const userVerified = (flags & 0x04) !== 0;
+  const backupEligible = (flags & 0x08) !== 0;
+  const backupState = (flags & 0x10) !== 0;
+
   if (!userPresent) {
     throw new Error('WebAuthn assertion rejected: User Present (UP) flag is not set.');
+  }
+
+  const mustVerifyUser = requireUserVerification ?? storedCredential?.role === 'master';
+  if (mustVerifyUser && !userVerified) {
+    throw new Error(
+      'WebAuthn assertion rejected: User Verification (UV / biometrics or PIN) is required for master access.'
+    );
   }
 
   const signCount =
@@ -205,9 +429,15 @@ export async function verifyWebAuthnAssertion({
 
   const prevSignCount = storedCredential?.signCount ?? 0;
   if ((prevSignCount > 0 || signCount > 0) && signCount <= prevSignCount) {
-    throw new Error(
-      `Authenticator signCount did not advance (${signCount} <= ${prevSignCount}); possible cloned credential.`
-    );
+    if (backupEligible) {
+      warnings.push(
+        `Multi-device synced Passkey (BE=1) returned non-monotonic signCount (${signCount} <= ${prevSignCount}).`
+      );
+    } else {
+      throw new Error(
+        `Authenticator signCount did not advance (${signCount} <= ${prevSignCount}); possible cloned credential.`
+      );
+    }
   }
 
   // 3. Cryptographic signature verification against stored SPKI public key
@@ -260,14 +490,21 @@ export async function verifyWebAuthnAssertion({
     } else {
       throw new Error(`Unsupported WebAuthn algorithm (${alg}) for client verification.`);
     }
+  } else {
+    warnings.push(
+      'SPKI public key unavailable in local registry; assertion checked at presence_only level.'
+    );
   }
 
   return {
-    verified: true,
+    verification: cryptographicSignatureVerified ? 'signature_verified' : 'presence_only',
     cryptographicSignatureVerified,
     userPresent,
     userVerified,
+    backupEligible,
+    backupState,
     signCount,
+    warnings,
   };
 }
 
@@ -365,7 +602,7 @@ export async function registerWebAuthnPasskey({
     ],
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: 'preferred',
+      userVerification: role === 'master' ? 'required' : 'preferred',
     },
     timeout: 60000,
     attestation: 'none',
@@ -389,15 +626,24 @@ export async function registerWebAuthnPasskey({
     typeof attestationResponse.getTransports === 'function'
       ? attestationResponse.getTransports()
       : [];
-  const alg =
+  let alg =
     typeof attestationResponse.getPublicKeyAlgorithm === 'function'
       ? attestationResponse.getPublicKeyAlgorithm()
       : -7;
 
+  let publicKeySpkiBase64Url = publicKeyBuf ? toBase64Url(publicKeyBuf) : undefined;
+  if (!publicKeySpkiBase64Url && attestationResponse.attestationObject) {
+    const extracted = extractSpkiFromAttestationObject(attestationResponse.attestationObject);
+    if (extracted) {
+      publicKeySpkiBase64Url = extracted.spkiBase64Url;
+      alg = extracted.algorithm;
+    }
+  }
+
   const record: PasskeyCredentialRecord = {
     id: credential.id,
     rawIdBase64Url: toBase64Url(credential.rawId),
-    publicKeySpkiBase64Url: publicKeyBuf ? toBase64Url(publicKeyBuf) : undefined,
+    publicKeySpkiBase64Url,
     displayName: cleanName,
     role,
     rpId,
@@ -414,16 +660,18 @@ export async function registerWebAuthnPasskey({
 
 /**
  * Prompts browser WebAuthn assertion for registered Passkeys OR discoverable
- * resident credentials (`allowCredentials: []`), then verifies clientDataJSON,
- * rpIdHash, UP flag, signCount, and cryptographic signature locally (L-04).
+ * resident credentials (`allowCredentials: []`), enforcing UV for `master`,
+ * `BE` synced passkey handling, and honest `signature_verified` vs `presence_only` levels (N-05).
  */
 export async function authenticateWebAuthnPasskey(
   credentials: PasskeyCredentialRecord[],
   options: { allowDiscoverableFallback?: boolean } = { allowDiscoverableFallback: true }
 ): Promise<{
   credential: PasskeyCredentialRecord;
+  verification: AssertionVerificationLevel;
   cryptographicSignatureVerified: boolean;
   discoveredNew: boolean;
+  warnings: string[];
 }> {
   const realCredentials = credentials.filter(c => !c.isSimulatedFallback);
   if (realCredentials.length === 0 && !options.allowDiscoverableFallback) {
@@ -446,12 +694,13 @@ export async function authenticateWebAuthnPasskey(
     transports: c.transports as AuthenticatorTransport[] | undefined,
   }));
 
+  const hasMasterCandidate = realCredentials.some(c => c.role === 'master');
+
   const publicKeyRequest: PublicKeyCredentialRequestOptions = {
     challenge: challenge as unknown as BufferSource,
     rpId,
-    userVerification: 'preferred',
+    userVerification: hasMasterCandidate ? 'required' : 'preferred',
     timeout: 60000,
-    // Empty allowCredentials enables discoverable / resident keys if local IDB was cleared (L-04)
     allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
   };
 
@@ -477,6 +726,7 @@ export async function authenticateWebAuthnPasskey(
     expectedChallengeBase64Url,
     expectedOrigin,
     expectedRpId: rpId,
+    requireUserVerification: matched?.role === 'master',
     storedCredential: matched,
   });
 
@@ -489,12 +739,14 @@ export async function authenticateWebAuthnPasskey(
         lastUsedAt: nowIso,
         signCount: verifyResult.signCount,
       },
+      verification: verifyResult.verification,
       cryptographicSignatureVerified: verifyResult.cryptographicSignatureVerified,
       discoveredNew: false,
+      warnings: verifyResult.warnings,
     };
   }
 
-  // Recovered via discoverable credential (never self-escalates to 'master')
+  // Recovered via discoverable credential (never self-escalates to 'master', honest presence_only)
   const recovered: PasskeyCredentialRecord = assertNoSecretLikeFields({
     id: assertion.id,
     rawIdBase64Url: toBase64Url(assertion.rawId),
@@ -511,14 +763,15 @@ export async function authenticateWebAuthnPasskey(
 
   return {
     credential: recovered,
+    verification: verifyResult.verification,
     cryptographicSignatureVerified: false,
     discoveredNew: true,
+    warnings: verifyResult.warnings,
   };
 }
 
 /**
- * [SIM] Explicit simulated Passkey enrollment for environments where WebAuthn is blocked
- * (e.g., restricted iframe sandbox without publickey-credentials-create permission).
+ * [SIM] Explicit simulated Passkey enrollment for environments where WebAuthn is blocked.
  */
 export function createSimulatedDemoPasskey(
   displayName: string,
@@ -545,8 +798,7 @@ export function createSimulatedDemoPasskey(
 }
 
 /**
- * [SIM] Re-authenticates an already enrolled simulated demo Passkey so [SIM] users can
- * sign out and back in without minting duplicate records (L-12).
+ * [SIM] Re-authenticates an already enrolled simulated demo Passkey.
  */
 export function authenticateDemoPasskeySim(
   credentials: PasskeyCredentialRecord[],

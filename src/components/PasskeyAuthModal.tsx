@@ -160,6 +160,8 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
               className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                 session.authMethod === 'demo_passkey_sim'
                   ? 'bg-red-950/30 border-red-500/40'
+                  : session.authMethod === 'webauthn_presence_only'
+                  ? 'bg-amber-950/30 border-amber-500/40'
                   : 'bg-emerald-950/30 border-emerald-500/40'
               }`}
             >
@@ -176,6 +178,11 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                     {session.authMethod === 'demo_passkey_sim' && (
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-900/70 text-red-200 border border-red-500/50 font-bold">
                         [SIM] DEMO PREVIEW
+                      </span>
+                    )}
+                    {session.authMethod === 'webauthn_presence_only' && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-900/70 text-amber-200 border border-amber-500/50 font-bold">
+                        PRESENCE ONLY · NO SPKI
                       </span>
                     )}
                   </div>

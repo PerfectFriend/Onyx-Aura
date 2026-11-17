@@ -21,6 +21,7 @@ export interface UseBookingFlowProps {
   artists: Artist[];
   initialBookingOpen?: boolean;
   initialAppointments?: Appointment[];
+  externalRevision?: number;
   onNotifyToast?: (event: ReminderNotificationEvent) => void;
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
   onPersistAppointments?: (next: Appointment[], action: string, payload: unknown) => Promise<void> | void;
@@ -50,12 +51,13 @@ export interface UseBookingFlowReturn {
 
 /**
  * Custom hook encapsulating the booking & [SIM] deposit preview checkout workflow.
- * Initialized once from Load-then-Mount bootstrap data (L-11).
+ * Initialized once from Load-then-Mount bootstrap data and updates cleanly on cross-tab sync (N-04).
  */
 export function useBookingFlow({
   artists,
   initialBookingOpen = false,
   initialAppointments,
+  externalRevision = 0,
   onNotifyToast,
   onBroadcastToSwarm,
   onPersistAppointments,
@@ -68,6 +70,13 @@ export function useBookingFlow({
   useEffect(() => {
     appointmentsRef.current = appointments;
   }, [appointments]);
+
+  useEffect(() => {
+    if (externalRevision > 0 && initialAppointments) {
+      appointmentsRef.current = initialAppointments;
+      setAppointments(initialAppointments);
+    }
+  }, [externalRevision, initialAppointments]);
 
   const [isBookingModalOpen, setIsBookingModalOpen] = useState<boolean>(initialBookingOpen);
   const [isAppointmentsModalOpen, setIsAppointmentsModalOpen] = useState<boolean>(false);

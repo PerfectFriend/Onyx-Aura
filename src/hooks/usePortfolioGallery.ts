@@ -6,6 +6,7 @@ export interface UsePortfolioGalleryOptions {
   initialItems?: PortfolioItem[];
   initialLikedIds?: string[];
   initialSavedIds?: string[];
+  externalRevision?: number;
   onSyncPostToSwarm?: (look: PortfolioItem, igPostId: string) => void;
   onNotify?: (title: string, message: string) => void;
   onPersistPortfolio?: (items: PortfolioItem[], action: string, payload: unknown) => Promise<void> | void;
@@ -29,6 +30,7 @@ export function usePortfolioGallery({
   initialItems,
   initialLikedIds,
   initialSavedIds,
+  externalRevision = 0,
   onSyncPostToSwarm,
   onNotify,
   onPersistPortfolio,
@@ -61,6 +63,25 @@ export function usePortfolioGallery({
   useEffect(() => {
     savedIdsRef.current = savedIds;
   }, [savedIds]);
+
+  useEffect(() => {
+    if (externalRevision > 0) {
+      if (initialItems) {
+        itemsRef.current = initialItems;
+        setItems(initialItems);
+      }
+      if (initialLikedIds) {
+        const nextL = new Set(initialLikedIds);
+        likedIdsRef.current = nextL;
+        setLikedIds(nextL);
+      }
+      if (initialSavedIds) {
+        const nextS = new Set(initialSavedIds);
+        savedIdsRef.current = nextS;
+        setSavedIds(nextS);
+      }
+    }
+  }, [externalRevision, initialItems, initialLikedIds, initialSavedIds]);
 
   const handleToggleLike = useCallback(
     (id: string) => {

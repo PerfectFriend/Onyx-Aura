@@ -4,12 +4,14 @@ import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UseSponsoredAdsOptions {
   initialAds?: SponsoredAd[];
+  externalRevision?: number;
   onBroadcastToSwarm?: (type: string, payload: unknown) => void;
   onPersistAds?: (ads: SponsoredAd[], payload: unknown) => Promise<void> | void;
 }
 
 export function useSponsoredAds({
   initialAds,
+  externalRevision = 0,
   onBroadcastToSwarm,
   onPersistAds,
 }: UseSponsoredAdsOptions = {}) {
@@ -21,6 +23,13 @@ export function useSponsoredAds({
   useEffect(() => {
     adsRef.current = ads;
   }, [ads]);
+
+  useEffect(() => {
+    if (externalRevision > 0 && initialAds) {
+      adsRef.current = initialAds;
+      setAds(initialAds);
+    }
+  }, [externalRevision, initialAds]);
 
   const [isAdManagerOpen, setIsAdManagerOpen] = useState<boolean>(false);
 

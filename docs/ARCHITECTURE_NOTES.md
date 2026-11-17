@@ -230,9 +230,9 @@
    - `assertNoPlaintextSecrets` проверяет каждую запись `savePasskeys` / `saveIdentitySession` в `SalonRepository` (теперь `async`, чтобы отклонять промисом) и каждый JSON-экспорт в `CryptoCloudEngine.exportSessionSnapshot()` на наличие PEM-заголовков, полей `privateKey` / `secretKey` / `seedPhrase` / `mnemonic` / `password` и PAT-токенов.
 4. **Неразрушающая миграция схемы IndexedDB `v1 → v2` (`src/infrastructure/storage/salonRepository.ts`):**
    - Версия `SALON_SCHEMA_VERSION` поднята до `2`; существующие ключи Этапа 2 (`appointments`, `artists`, `reviews`, `portfolio`, `likes`, `saves`, `ads`, `anchorPoints`, `chats`) остаются нетронутыми, а новые ключи (`passkeys`, `identitySession`) аккуратно дозасеваются и хранятся отдельно.
-5. **Content Security Policy (`index.html` + заметка на Этап 4):**
-   - В `index.html` добавлен тег `<meta http-equiv="Content-Security-Policy">` (`default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `script-src 'self' 'unsafe-inline'`, шрифты/стили Google Fonts).
-   - Директива `frame-ancestors` сознательно **не включена** в `<meta>`-тег (по спецификации W3C `<meta>` CSP её игнорирует и вызывает предупреждение в консоли), а `'unsafe-inline'` на `script-src` оставлен для совместимости бандла Vite SPA до подключения HTTP-заголовков с per-request nonce на сервере Этапа 4.
+5. **Content Security Policy (`index.html` + обновление Спринта 3.2):**
+   - В `index.html` был добавлен базовый тег `<meta http-equiv="Content-Security-Policy">`. *(Обновлено в 3.2: пакет `@fontsource/*` перевёл все шрифты в локальные `.woff2`, а Vite-плагин `csp-meta-injector` на `vite build` удаляет Google Fonts и полностью убирает `'unsafe-inline'` из `script-src` в `dist/index.html` — см. §11.6).*
+   - Директива `frame-ancestors` сознательно **не включена** в `<meta>`-тег (по спецификации W3C `<meta>` CSP её игнорирует и вызывает предупреждение в консоли), она будет добавлена через HTTP-заголовки на сервере Этапа 4.
 
 ---
 
@@ -259,7 +259,7 @@
    - Реализован discoverable fallback (`allowCredentials: []`) на случай потери локального реестра после сброса БД.
    - Все операции сохранения Passkey/выхода работают по принципу «сначала персистируем, потом обновляем состояние» и не глушат ошибки.
 5. **Load-then-Mount & Межвкладочная синхронизация (`src/hooks/useSalonBootstrap.ts`, `src/App.tsx` · `L-11`, `L-14`):**
-   - Удалены громоздкие `useLocalFirstHydration.ts` и `useHydrationCommit`: корневой компонент `App` сначала ждёт `useSalonBootstrap()`, а затем монтирует `<SalonApp key={resetEpoch} initialData={...} />`, где доменные хуки (`useBookingFlow`, `usePortfolioGallery`, `useChatConcierge`, `useSponsoredAds`) инициализируются уже готовым срезом и используют атомарный батч `setMany` под защитой Web Locks (`navigator.locks`) и синхронизацией через `BroadcastChannel`.
+   - Удалены громоздкие `useLocalFirstHydration.ts` и `useHydrationCommit`: корневой компонент `App` сначала ждёт `useSalonBootstrap()`, а затем монтирует `<SalonApp key={resetEpoch} initialData={...} />`, где доменные хуки (`useBookingFlow`, `usePortfolioGallery`, `useChatConcierge`, `useSponsoredAds`) инициализируются уже готовым срезом и используют атомарный батч `IndexedDBAdapter.setMany`. *(Уточнено по `N-09`: очередь Web Locks `navigator.locks` и `BroadcastChannel` реализованы в `src/infrastructure/storage/salonRepository.ts`, а не в `IndexedDBAdapter`).*
    - Формула пересчёта рейтинга перенесена в чистый модуль `src/domain/rating.ts` (добавлено накопление `ratingSum`, чтобы исключить дрейф от повторного округления).
 6. **Build-time CSP, самохостинговые шрифты и строгий ESLint/CI (`src/infrastructure/security/csp.ts`, `vite.config.ts`, `eslint.config.js`, `scripts/ci.workflow.yml` · `L-07`, `L-08`, `L-15`, `L-17`):**
    - Шрифты встроены через `@fontsource/*` (Workbox кэширует `.woff2`), внешние `<link>` к Google Fonts и запрет зума `user-scalable=no` удалены из `index.html`.
@@ -268,4 +268,28 @@
 7. **Осознанное решение по `src/types.ts` (`L-18`):**
    - Контракты хранилища (`domain/storage.ts`), схем (`domain/schemas.ts`), идентичности (`domain/identity.ts`) и расчёта рейтинга (`domain/rating.ts`) размещены в `src/domain/`. Базовые продуктовые DTO (`Appointment`, `Artist`, `Review`, `PortfolioItem`, `ChatMessage`, `SponsoredAd`, `ClientAnchorPoint`) сознательно оставлены в `src/types.ts` до подключения серверных контрактов Этапа 4, чтобы не плодить лишние реэкспорты без изменения моделей.
 
+---
+
+## 🛠️ 12. Спринт 3.3 «Хотфикс хранилища» (`N-01 … N-09`, 17 ноября 2026 г.)
+
+1. **Дискриминированные чтения `getDetailed()` и защита от seed-перезаписи (`N-01`):**
+   - `ResilientStorageAdapter.getDetailed<T>(key)` возвращает `{ status: 'ok', value } | { status: 'missing' } | { status: 'unreadable', error }` (а при фатальной блокировке движка и переходе на `memory_only` для новых ключей — `'missing'`).
+   - `SalonRepository.ensureSeededAndLoad()` **никогда** не перезаписывает `'unreadable'`-коллекции seed-ом и блокирует запись в них (`unreadableCollections`) до чистого чтения; `recomputeHealth()` удерживает `health: 'degraded'`, пока не опустеют и `unreadableKeys`, и `pendingRetryKeys`.
+2. **Схема v3 и backfill `origin` для legacy v2 (`N-02`):**
+   - `SALON_SCHEMA_VERSION = 3`, добавлена миграция `v2 → v3` + сквозная разметка `inferOrigin(items, seedIds)`: записи без `origin`, чьи ID не входят в seed-наборы, гарантированно помечаются `origin: 'user'`.
+3. **Поэлементный карантин, non-secret passthrough и JSON-экспорт (`N-03`):**
+   - `partitionCollectionRecords()` в `src/domain/schemas.ts` отбирает битые элементы или элементы с секретами в `quarantine:<collection>:<ts>`, сохраняя валидные записи и пробрасывая незнакомые несекретные поля (`allowUnknownNonSecret: true`) для forward/backward совместимости.
+   - Повреждённые не-массивы перед fallback-сидом копируются в `quarantine:`; `ErrorBoundary` и баннер салона предоставляют выгрузку карантина в `.json`.
+4. **Live cross-tab sync без remount (`N-04` & `N-09`):**
+   - Из `useSalonBootstrap.ts` удалены `artistsRef`/`reviewsRef`/`anchorPointsRef` и дублирующиеся slice-состояния; переход на единый `useReducer` (`bootstrapData`, `externalRevision`, `resetEpoch`, `storageHealth`, `storageWarnings`, `outbox`).
+   - Кросс-вкладочные сообщения фильтруются по `tabId`, дебаунсятся (150 мс) и обновляют хуки по изменению `externalRevision` **без инкремента `resetEpoch` и потери открытых модалок**.
+5. **WebAuthn: честные статусы, CBOR SPKI, `UV` и `BE` (`N-05`):**
+   - Заменён `verified: boolean` на `verification: 'signature_verified' | 'presence_only'` + метод сессии `'webauthn_passkey' | 'webauthn_presence_only'`.
+   - При отсутствии `getPublicKey()` SPKI извлекается из `attestationObject` (`extractSpkiFromAttestationObject`, CBOR/COSE EC2 P-256 & RSA).
+   - Для роли `'master'` принудительно проверяется флаг `UV`; при установленном `BE` (`0x08`) немонотонный `signCount` даёт предупреждение без ложной блокировки синхронизируемых ключей.
+6. **Единотранзакционный Outbox & триггеры дозаписи (`N-06`):**
+   - Репозиторные методы `*WithOutbox`, `saveLikesAndPortfolioAtomic`, `addReviewAndUpdateArtistWithOutbox`, `updateAnchorPointWithOutbox`, `updateMasterSalonWithOutbox` записывают изменённую коллекцию, `outbox` и `schemaMeta` в одной `setMany`-транзакции.
+   - `sanitizeOutboxPayload()` переведён на строгий белый список `ALLOWED_OUTBOX_PAYLOAD_KEYS`; в `useSalonBootstrap.ts` подключены обработчики `online`, `visibilitychange`, `pagehide` и `beforeunload`.
+7. **Суженный детектор секретов (`N-07` & `N-11`):**
+   - `secretHygiene.ts` разрешает обычную английскую речь со словом `bearer`, но продолжает блокировать `Authorization: Bearer <token>` и JWT (`eyJ…`), а `isNonEmptyString` в `schemas.ts` теперь отсекает пустые и пробельные строки (`val.trim().length > 0`).
 

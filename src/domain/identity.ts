@@ -6,7 +6,11 @@
 
 import { UserRole } from '../types';
 
-export type AuthMethod = 'none' | 'webauthn_passkey' | 'demo_passkey_sim';
+export type AuthMethod =
+  | 'none'
+  | 'webauthn_passkey'
+  | 'webauthn_presence_only'
+  | 'demo_passkey_sim';
 
 /** Default session TTL: 8 hours (enforced locally until backend sessions launch in Stage 4). */
 export const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1000;

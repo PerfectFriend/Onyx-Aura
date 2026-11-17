@@ -1,6 +1,7 @@
 // =============================================================================
-// Domain contracts for Stage 2/3.2 Local-First persistence, storage health,
-// atomic multi-key transactions, schema migrations, and offline sync outbox.
+// Domain contracts for Stage 2/3.3 Local-First persistence, storage health,
+// unreadable-vs-missing distinction (N-01), quarantine keys (N-03),
+// atomic multi-key transactions + outbox (N-06), schema migrations (N-02).
 // Pure interfaces free of UI or simulation dependencies (Manifest Law 2 & 3).
 // =============================================================================
 
@@ -19,7 +20,7 @@ export type StorageBackendKind = 'indexeddb' | 'memory';
 
 export type StorageHealth = 'ok' | 'degraded' | 'memory_only';
 
-export type StorageKey =
+export type BaseStorageKey =
   | 'artists'
   | 'appointments'
   | 'portfolio'
@@ -34,7 +35,18 @@ export type StorageKey =
   | 'outbox'
   | 'schemaMeta';
 
+export type StorageKey = BaseStorageKey | `quarantine:${string}`;
+
 export type StorageEntry = readonly [StorageKey, unknown];
+
+/**
+ * Discriminated read result distinguishing "key absent" from "read I/O failed" (N-01)
+ * so transient read errors NEVER trigger seed overwrites of real user data.
+ */
+export type StorageReadResult<T> =
+  | { status: 'ok'; value: T }
+  | { status: 'missing' }
+  | { status: 'unreadable'; error: string };
 
 /**
  * Abstract async key-value storage backend (IndexedDB in browser, Memory fallback in tests/SSR).
@@ -42,6 +54,7 @@ export type StorageEntry = readonly [StorageKey, unknown];
 export interface StorageAdapter {
   readonly backend: StorageBackendKind;
   get<T>(key: StorageKey): Promise<T | undefined>;
+  getDetailed?<T>(key: StorageKey): Promise<StorageReadResult<T>>;
   set<T>(key: StorageKey, value: T): Promise<void>;
   setMany?(entries: ReadonlyArray<StorageEntry>): Promise<void>;
   remove(key: StorageKey): Promise<void>;
@@ -54,6 +67,8 @@ export interface StorageHealthReport {
   backend: StorageBackendKind;
   warnings: string[];
   lastError?: string;
+  unreadableKeys: StorageKey[];
+  pendingWriteKeys: StorageKey[];
 }
 
 export type OutboxEntity =
@@ -72,11 +87,17 @@ export interface OutboxMutation {
   id: string;
   entity: OutboxEntity;
   action: string;
-  /** Lightweight reference payload (entity IDs / action metadata — never bulk PII). */
+  /** Lightweight allowlisted reference payload (entity IDs / counts — never PII). */
   payload: unknown;
   createdAt: string;
   status: 'pending_sync' | 'synced';
   attempts: number;
+}
+
+export interface OutboxMutationInput {
+  entity: OutboxEntity;
+  action: string;
+  payload: unknown;
 }
 
 export interface DataLayerMeta {
@@ -105,4 +126,6 @@ export interface HydratedSalonData {
   warnings: string[];
   readOnlyFutureSchema: boolean;
   storedFutureVersion?: number;
+  unreadableKeys: StorageKey[];
+  quarantineKeys: string[];
 }
