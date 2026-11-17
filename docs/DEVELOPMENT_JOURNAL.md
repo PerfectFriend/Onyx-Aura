@@ -3092,3 +3092,73 @@ CSP говорит: script только `'self'`.
 
 Передаю на приёмку **Коляну** и **Грише** — ждём добро на старт Этапа 4!  
 **Женя**
+
+---
+
+### 2026-11-17 00:52 UTC · [REPORT] · От: Женя (Сеньор-разработчик) → Кому: Гриша + Колян
+
+> Предмет: **Этап 4 · Спринт 4.1 — Foundation only (Честные платежи и серверная идентичность, без PCI-самоделки)**  
+> Основание: `[ASSIGNMENT]` Гриши от `2026-11-16 18:32 CET` + закрытие всех обязательных Deliverables 4.1 и запретов («Не делать в 4.1»).
+
+Гриша, Колян — фундамент Этапа 4 собран строго по спецификации «Foundation only»: в React-дереве больше нет ни одного карточного `<input>`, платёжная логика изолирована за доменным портом, а сервер Express выдаёт одноразовые WebAuthn challenge без ложных обещаний.
+
+---
+
+#### Выполнение Deliverables 4.1 (пункты 1–6)
+
+1. **ADR в [`docs/PAYMENTS_ADR.md`](./PAYMENTS_ADR.md) + §13 [`docs/ARCHITECTURE_NOTES.md`](./ARCHITECTURE_NOTES.md):**
+   - Таблица «За 30 секунд» и диаграммы потоков сразу отвечают на оба критерия приёмки:
+     - **Куда уходят деньги:** в 4.1 никуда (`[SIM] MockPaymentProvider` через порт `PaymentProvider`), а целевой путь 4.2+ — **Stripe Hosted Checkout / Elements (PCI DSS SAQ-A)**, при котором данные карты никогда не касаются нашего DOM или бэкенда.
+     - **Кто верифицирует Passkey:** сейчас одноразовый server-challenge (TTL `120 с`) выдаёт и потребляет Express stub (`/api/auth/webauthn/challenge` и `/verify`), честно возвращая `verificationTier: 'challenge_stub_only'`, `cryptographicServerVerified: false`, пока подпись SPKI проверяется локально в браузере; серверная БД ключей и COSE/SPKI-проверка запланированы на Спринт 4.2.
+   - Зафиксирован жёсткий запрет на любые `<input>` поля PAN / MMYY / CVV в React.
+
+2. **`src/domain/payments.ts` + чистый порт `PaymentProvider`:**
+   - Введены типы `PaymentMode` (`'hosted_psp' | 'simulated'`), `PaymentIntentStatus`, `DepositIntent` (сумма строго в целых центах `amountMinor` для исключения дрейфа float), `DepositSession`, `PaymentProviderCapabilities` (с литералом `collectsCardInDom: false`) и порт `PaymentProvider` + чистые утилиты `toMinorUnits` / `formatMinorUsd` (**100%** V8-покрытие).
+
+3. **`[SIM] MockPaymentProvider` + зачистка `src/components/CheckoutModal.tsx`:**
+   - Реализован `MockPaymentProvider` (`src/infrastructure/payments/mockPaymentProvider.ts`: `id: 'mock_sim'`, `mode: 'simulated'`, `isSimulated: true`, `acceptsRealMoney: false`, `collectsCardInDom: false`).
+   - В `src/components/CheckoutModal.tsx` полностью удалены прежние состояния и `<input>` поля номера карты, `MM/YY` и `CVC`. Поток оформления при фиатной и `[SIM]` валютах маршрутизируется через `defaultPaymentProvider.createDepositIntent` → `confirmDeposit` и честно отображает бейдж `[SIM] ZERO CARD INPUTS`.
+
+4. **Минимальный Express backend + одноразовый WebAuthn challenge stub:**
+   - Поднят единый серверный entrypoint `server.ts` (Express 5 + Vite middleware в dev / статика `dist/` в prod на порту `3000`, скрипты `"dev": "tsx server.ts"` и `"start": "NODE_ENV=production tsx server.ts"`).
+   - В `src/server/challengeService.ts` и `src/server/apiRouter.ts` реализованы:
+     - `GET /api/health`
+     - `GET /api/payments/provider` → возвращает `activeProviderId: 'mock_sim'`, `isSimulated: true`, `hostedCheckoutConfigured: false`, `pciInputsAllowedInDom: false`, `plannedPspTarget: 'stripe_hosted_checkout_saq_a'`.
+     - `POST /api/auth/webauthn/challenge` → генерирует одноразовый 32-байтовый CSPRNG-challenge (`ch-<uuid>`, TTL `120 с`, ограничение стора `2000` записей).
+     - `POST /api/auth/webauthn/verify` → немедленно удаляет `challengeId` (строгий anti-replay), проверяет TTL, `clientDataJSON.type` / `challenge` / `origin` и флаг `UP` (`0x01`) в `authenticatorData`, **принципиально возвращая `verificationTier: 'challenge_stub_only'` и `cryptographicServerVerified: false`**.
+   - В `src/infrastructure/identity/webAuthnService.ts` добавлены `requestWebAuthnChallengeWithFallback` (запрос в `/api/auth/webauthn/challenge` с таймаутом 1.2 с и тихим fallback на CSPRNG в static/offline-песочницах) и `submitChallengeStubVerification`; в `src/components/PasskeyAuthModal.tsx` обновлена плашка честности (`LOCAL_ONLY` + серверный stub с одноразовым challenge без утверждений про server-check).
+
+5. **`docs/REALITY_MAP.md` (v3.3) + автоматический сторож Zero-PCI:**
+   - Обновлён `docs/REALITY_MAP.md` до **v3.3** (+ [`README.md`](../README.md) и [`docs/CURRENT_ASSIGNMENT.md`](./CURRENT_ASSIGNMENT.md)): `Payment Domain Port & Zero-PCI Boundary` (`REAL`), `Server API & WebAuthn Challenge Stub` (`PROTOTYPE`), `Checkout Deposit Preview` (`[SIM] MockPaymentProvider`), область V8-покрытия дополнена `src/server/**/*.ts`.
+   - Создан `src/__tests__/paymentFoundation.test.ts`:
+     - **Zero-PCI Watchdog:** сканирует `src/components/*` и `src/App.tsx` на отсутствие `<input>` с `card number / pan / cvv / cvc / mm/yy / cc-*` и карточных стейтов `cardNumber/cardCvc`.
+     - Полная проверка `toMinorUnits` / `formatMinorUsd`, жизненного цикла `MockPaymentProvider`, `WebAuthnChallengeStubStore` (TTL, single-use anti-replay, `type`/`challenge`/`origin`/`UP`, `cryptographicServerVerified === false`) и живых HTTP-запросов к Express `createFoundationApiRouter()`.
+
+6. **Соблюдение запретов «Не делать в 4.1»:**
+   - 0 боевых ключей Stripe в коде/env;
+   - 0 PCI-полей в DOM;
+   - 0 ложных заявлений про «server-check passkey» или «продакшн-оплату»;
+   - `L-19` god-компоненты в этом спринте не трогались.
+
+---
+
+#### Воспроизведённые проверки Спринта 4.1
+
+- **`npm run lint` (`eslint src server.ts`, `recommendedTypeChecked` + `jsx-a11y/recommended`):** ✅ **0 ошибок**.
+- **`npm run typecheck` (`tsc --noEmit`, TypeScript 6.0.3 + `@types/express` + `node`):** ✅ **0 ошибок**.
+- **`npm run test:coverage` (`vitest run --coverage`):** ✅ **11 тест-файлов, 62/62 тестов PASSED** (добавлено 5 новых наборов в `paymentFoundation.test.ts`; **Honesty Watchdog** зелёный).
+  - **V8 Coverage (`src/domain/**/*.ts`, `src/infrastructure/**/*.ts`, `src/server/**/*.ts`, `src/utils/**/*.ts`):** Statements **68.98%**, Branches **63.10%**, Functions **70.41%**, Lines **72.87%** (`payments.ts` **100%**, `mockPaymentProvider.ts` **90% lines**, `server/` **85.89%**).
+- **`npm run build` (`vite build` + CSP + Workbox):** ✅ Собрано за **1.26s** (1723 модуля), `dist/index.html` (`2.01 kB`), Workbox precache **205 entries (`38356.13 KiB`)**.
+
+---
+
+😄 **Традиционный анекдот Спринта 4.1:**
+
+> Открывает новый разработчик `CheckoutModal.tsx`, ищет привычный `<input placeholder="CVC" />`, а его там нет. Вместо него висит табличка `[SIM] ZERO CARD INPUTS` и порт `PaymentProvider`.
+> Спрашивает у Express-сервера по пути `/api/auth/webauthn/verify`:
+> — Ну ты-то хоть скажи клиенту, что мы тут полностью на сервере всё проверили!
+> А сервер достаёт штамп: **`verificationTier: 'challenge_stub_only'`, `cryptographicServerVerified: false`** — и показывает пальцем на ADR:
+> — В 4.1 мы честные швейцары: одноразовый талончик на вход выдадим и проверим, что он не фальшивый, а проверять паспорт с печатью начнём по расписанию в Спринте 4.2!
+
+Передаю на приёмку **Грише** и **Коляну** — Foundation 4.1 готов!  
+**Женя**

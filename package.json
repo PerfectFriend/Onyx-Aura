@@ -4,7 +4,8 @@
   "version": "0.3.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "tsx server.ts",
+    "start": "NODE_ENV=production tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "build:apk": "bash scripts/build-apk.sh",
@@ -19,12 +20,15 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@fontsource/syne": "^5.3.0",
+    "@types/express": "^5.0.6",
     "@vitest/coverage-v8": "^5.1.0",
+    "express": "^5.3.0",
     "happy-dom": "^21.0.4",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1"
+    "react-dom": "^19.0.1",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -20,7 +20,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked.map(config => ({
     ...config,
-    files: ['src/**/*.{ts,tsx}', 'vite.config.ts'],
+    files: ['src/**/*.{ts,tsx}', 'vite.config.ts', 'server.ts'],
   })),
   {
     ...jsxA11y.flatConfigs.recommended,
@@ -35,7 +35,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/**/*.{ts,tsx}', 'vite.config.ts'],
+    files: ['src/**/*.{ts,tsx}', 'vite.config.ts', 'server.ts'],
     languageOptions: {
       parserOptions: {
         projectService: true,

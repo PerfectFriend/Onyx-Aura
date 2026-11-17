@@ -293,3 +293,18 @@
 7. **Суженный детектор секретов (`N-07` & `N-11`):**
    - `secretHygiene.ts` разрешает обычную английскую речь со словом `bearer`, но продолжает блокировать `Authorization: Bearer <token>` и JWT (`eyJ…`), а `isNonEmptyString` в `schemas.ts` теперь отсекает пустые и пробельные строки (`val.trim().length > 0`).
 
+---
+
+## 💳 13. Этап 4 · Спринт 4.1 «Foundation (Честные платежи и серверная идентичность)»
+
+> Полное решение зафиксировано в [`docs/PAYMENTS_ADR.md`](./PAYMENTS_ADR.md) (читается за 30 секунд).
+
+1. **Zero-PCI Checkout & Чистый порт (`src/domain/payments.ts`, `src/infrastructure/payments/mockPaymentProvider.ts`, `src/components/CheckoutModal.tsx`):**
+   - Из `CheckoutModal.tsx` физически удалены прежние декоративные поля карты (`cardNumber`, `cardExp`, `cardCvc` и их `<input>` в DOM) — нарушение этого правила автоматически ловится тестом-сторожем в `src/__tests__/paymentFoundation.test.ts`.
+   - Введён чистый доменный порт `PaymentProvider` (`DepositIntent`, `DepositSession`, `toMinorUnits`, `formatMinorUsd`). Активная реализация Спринта 4.1 — `[SIM] MockPaymentProvider` (`mode: 'simulated'`, `isSimulated: true`, `collectsCardInDom: false`), которую на Этапе 4.2 заменит серверный `StripeHostedCheckoutProvider` (SAQ-A redirect).
+2. **Express API + WebAuthn Challenge Stub (`server.ts`, `src/server/challengeService.ts`, `src/server/apiRouter.ts`, `src/infrastructure/identity/webAuthnService.ts`):**
+   - Приложение запускается через единый `server.ts` (Express 5 + Vite middleware в dev / статика `dist/` в prod, порт `3000`).
+   - Эндпоинты `GET /api/payments/provider`, `POST /api/auth/webauthn/challenge` и `POST /api/auth/webauthn/verify` выдают одноразовые 32-байтовые challenge (TTL `120 с`, ограниченный размер стора `2000`), проверяют привязку `clientDataJSON` и флаг `UP` после однократного потребления, и **строго возвращают `verificationTier: 'challenge_stub_only'` и `cryptographicServerVerified: false`**.
+   - Клиентский `webAuthnService.ts` запрашивает challenge у `/api/auth/webauthn/challenge` с коротким таймаутом и безопасным fallback на локальный CSPRNG в статичных/оффлайн-средах; реальная серверная COSE/SPKI-проверка подписи и выпуск `HttpOnly` сессий запланированы на Спринт 4.2.
+
+

@@ -557,6 +557,125 @@ export async function detectWebAuthnSupport(): Promise<WebAuthnCapabilityReport>
   }
 }
 
+export type ChallengeSource = 'server_stub' | 'client_csprng_fallback';
+
+export interface ServerChallengeStubVerification {
+  attempted: boolean;
+  accepted: boolean;
+  verificationTier: 'challenge_stub_only' | 'not_attempted';
+  cryptographicServerVerified: false;
+  notice?: string;
+}
+
+async function requestWebAuthnChallengeWithFallback(
+  ceremony: 'registration' | 'authentication',
+  role: UserRole
+): Promise<{
+  challengeBytes: Uint8Array;
+  challengeBase64Url: string;
+  challengeId?: string;
+  challengeSource: ChallengeSource;
+}> {
+  if (
+    typeof fetch === 'function' &&
+    typeof window !== 'undefined' &&
+    window.location?.origin &&
+    window.location.origin.startsWith('http')
+  ) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1200);
+      const res = await fetch('/api/auth/webauthn/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ceremony, role }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          challengeId?: unknown;
+          challengeBase64Url?: unknown;
+        };
+        if (
+          typeof data.challengeId === 'string' &&
+          typeof data.challengeBase64Url === 'string' &&
+          data.challengeBase64Url.length >= 16
+        ) {
+          return {
+            challengeId: data.challengeId,
+            challengeBase64Url: data.challengeBase64Url,
+            challengeBytes: fromBase64Url(data.challengeBase64Url),
+            challengeSource: 'server_stub',
+          };
+        }
+      }
+    } catch {
+      // Offline / static bundle / Vitest sandbox cleanly falls back to local CSPRNG
+    }
+  }
+
+  const challengeBytes = generateCryptographicChallenge(32);
+  return {
+    challengeBytes,
+    challengeBase64Url: toBase64Url(challengeBytes),
+    challengeSource: 'client_csprng_fallback',
+  };
+}
+
+async function submitChallengeStubVerification(params: {
+  challengeId?: string;
+  clientDataJSON: ArrayBuffer;
+  authenticatorData?: ArrayBuffer;
+  expectedOrigin: string;
+}): Promise<ServerChallengeStubVerification> {
+  if (!params.challengeId || typeof fetch !== 'function') {
+    return {
+      attempted: false,
+      accepted: false,
+      verificationTier: 'not_attempted',
+      cryptographicServerVerified: false,
+    };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1200);
+    const res = await fetch('/api/auth/webauthn/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        challengeId: params.challengeId,
+        clientDataJSONBase64Url: toBase64Url(params.clientDataJSON),
+        authenticatorDataBase64Url: params.authenticatorData
+          ? toBase64Url(params.authenticatorData)
+          : undefined,
+        expectedOrigin: params.expectedOrigin,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const data = (await res.json()) as {
+      accepted?: unknown;
+      notice?: unknown;
+    };
+    return {
+      attempted: true,
+      accepted: res.ok && data.accepted === true,
+      verificationTier: 'challenge_stub_only',
+      cryptographicServerVerified: false,
+      notice: typeof data.notice === 'string' ? data.notice : undefined,
+    };
+  } catch {
+    return {
+      attempted: true,
+      accepted: false,
+      verificationTier: 'challenge_stub_only',
+      cryptographicServerVerified: false,
+    };
+  }
+}
+
 export interface RegisterPasskeyParams {
   displayName: string;
   role: UserRole;
@@ -574,7 +693,8 @@ export async function registerWebAuthnPasskey({
   }
 
   const cleanName = displayName.trim() || (role === 'master' ? 'Master Stylist' : 'Salon Guest');
-  const challenge = generateCryptographicChallenge(32);
+  const challengeResult = await requestWebAuthnChallengeWithFallback('registration', role);
+  const challenge = challengeResult.challengeBytes;
   const userIdBytes = generateCryptographicChallenge(16);
   const rpId = window.location.hostname;
 
@@ -618,6 +738,15 @@ export async function registerWebAuthnPasskey({
   }
 
   const attestationResponse = credential.response as AuthenticatorAttestationResponse;
+
+  if (challengeResult.challengeSource === 'server_stub') {
+    await submitChallengeStubVerification({
+      challengeId: challengeResult.challengeId,
+      clientDataJSON: attestationResponse.clientDataJSON,
+      expectedOrigin: window.location.origin,
+    });
+  }
+
   const publicKeyBuf =
     typeof attestationResponse.getPublicKey === 'function'
       ? attestationResponse.getPublicKey()
@@ -661,7 +790,8 @@ export async function registerWebAuthnPasskey({
 /**
  * Prompts browser WebAuthn assertion for registered Passkeys OR discoverable
  * resident credentials (`allowCredentials: []`), enforcing UV for `master`,
- * `BE` synced passkey handling, and honest `signature_verified` vs `presence_only` levels (N-05).
+ * `BE` synced passkey handling, honest `signature_verified` vs `presence_only` levels (N-05),
+ * and Stage 4.1 one-time server challenge stub when `/api` is available.
  */
 export async function authenticateWebAuthnPasskey(
   credentials: PasskeyCredentialRecord[],
@@ -672,6 +802,8 @@ export async function authenticateWebAuthnPasskey(
   cryptographicSignatureVerified: boolean;
   discoveredNew: boolean;
   warnings: string[];
+  challengeSource: ChallengeSource;
+  serverStubVerification: ServerChallengeStubVerification;
 }> {
   const realCredentials = credentials.filter(c => !c.isSimulatedFallback);
   if (realCredentials.length === 0 && !options.allowDiscoverableFallback) {
@@ -683,8 +815,13 @@ export async function authenticateWebAuthnPasskey(
     throw new Error(capability.reason || 'WebAuthn is unsupported in this context.');
   }
 
-  const challenge = generateCryptographicChallenge(32);
-  const expectedChallengeBase64Url = toBase64Url(challenge);
+  const hasMasterCandidate = realCredentials.some(c => c.role === 'master');
+  const challengeResult = await requestWebAuthnChallengeWithFallback(
+    'authentication',
+    hasMasterCandidate ? 'master' : 'client'
+  );
+  const challenge = challengeResult.challengeBytes;
+  const expectedChallengeBase64Url = challengeResult.challengeBase64Url;
   const rpId = window.location.hostname;
   const expectedOrigin = window.location.origin;
 
@@ -693,8 +830,6 @@ export async function authenticateWebAuthnPasskey(
     id: fromBase64Url(c.rawIdBase64Url) as unknown as BufferSource,
     transports: c.transports as AuthenticatorTransport[] | undefined,
   }));
-
-  const hasMasterCandidate = realCredentials.some(c => c.role === 'master');
 
   const publicKeyRequest: PublicKeyCredentialRequestOptions = {
     challenge: challenge as unknown as BufferSource,
@@ -730,6 +865,13 @@ export async function authenticateWebAuthnPasskey(
     storedCredential: matched,
   });
 
+  const serverStubVerification = await submitChallengeStubVerification({
+    challengeId: challengeResult.challengeId,
+    clientDataJSON: assertionResponse.clientDataJSON,
+    authenticatorData: assertionResponse.authenticatorData,
+    expectedOrigin,
+  });
+
   const nowIso = new Date().toISOString();
 
   if (matched) {
@@ -743,6 +885,8 @@ export async function authenticateWebAuthnPasskey(
       cryptographicSignatureVerified: verifyResult.cryptographicSignatureVerified,
       discoveredNew: false,
       warnings: verifyResult.warnings,
+      challengeSource: challengeResult.challengeSource,
+      serverStubVerification,
     };
   }
 
@@ -767,6 +911,8 @@ export async function authenticateWebAuthnPasskey(
     cryptographicSignatureVerified: false,
     discoveredNew: true,
     warnings: verifyResult.warnings,
+    challengeSource: challengeResult.challengeSource,
+    serverStubVerification,
   };
 }
 

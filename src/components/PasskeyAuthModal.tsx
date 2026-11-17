@@ -149,7 +149,8 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                   : `WebAuthn ограничен средой: ${capabilities.reason || 'недоступен в текущей песочнице.'}`}
               </p>
               <p className="text-[11px] opacity-80">
-                Режим <span className="font-mono font-bold">LOCAL_ONLY</span>: подпись, challenge, rpIdHash и счётчик `signCount` проверяются локально в браузере (SPKI); серверной авторизации и проверки прав пока нет (Этап 4).
+                Режим <span className="font-mono font-bold">LOCAL_ONLY</span>: подпись проверяется локально по SPKI в браузере; серверный stub{' '}
+                <span className="font-mono">/api/auth/webauthn/challenge</span> выдаёт одноразовый challenge с TTL (полная крипто-проверка подписи на сервере — Этап 4.2).
               </p>
             </div>
           </div>

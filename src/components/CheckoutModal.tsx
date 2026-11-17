@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet } from 'lucide-react';
 import { Artist, NailService, PaymentCurrency, PortfolioItem, Appointment } from '../types';
-import { computeSHA256Detailed } from '../simulation/cryptocloud';
+import { defaultPaymentProvider } from '../infrastructure/payments/mockPaymentProvider';
 import { CornerFlourish } from './OrnamentalFlourish';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
 
@@ -76,11 +76,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
   } | null>(null);
   const [confirmedAppointment, setConfirmedAppointment] = useState<Appointment | null>(null);
 
-  // Demo card form fields (UI simulation only; Stage 4 will use hosted PSP fields)
-  const [cardNumber, setCardNumber] = useState<string>('•••• •••• •••• 4242');
-  const [cardExp, setCardExp] = useState<string>('12/28');
-  const [cardCvc, setCardCvc] = useState<string>('888');
-
+  const capabilities = defaultPaymentProvider.getCapabilities();
   const demoWalletLabel = '0xSIM_WALLET_71cA9...8E29 (Demo Preview)';
 
   const basePriceUSD = bookingDetails.service.priceUSD;
@@ -96,19 +92,26 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
     setErrorMessage(null);
 
     try {
-      const txPayload = `${Date.now()}:${bookingDetails.artist.id}:${totalUSD}:${selectedCurrency}`;
-      const { hash: txHash, isRealSha256 } = await computeSHA256Detailed(txPayload);
-
-      // [SIM] Simulated checkout latency
-      await new Promise(resolve => setTimeout(resolve, 900));
-
-      const uniqueSuffix =
+      const bookingRefId =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID().slice(0, 8)
-          : `${Date.now()}`;
+          ? `apt-${crypto.randomUUID().slice(0, 8)}`
+          : `apt-${Date.now()}`;
+
+      const intent = await defaultPaymentProvider.createDepositIntent({
+        bookingReferenceId: bookingRefId,
+        artistId: bookingDetails.artist.id,
+        serviceId: bookingDetails.service.id,
+        amountUsd: totalUSD,
+        displayCurrency: selectedCurrency,
+      });
+
+      const session = await defaultPaymentProvider.confirmDeposit({
+        intent,
+        idempotencyKey: `idem-${bookingRefId}`,
+      });
 
       const newAppointment: Appointment = {
-        id: `apt-${uniqueSuffix}`,
+        id: bookingRefId,
         clientName: bookingDetails.clientName,
         clientPhone: bookingDetails.clientPhone,
         clientEmail: bookingDetails.clientEmail,
@@ -123,19 +126,19 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
         date: bookingDetails.date,
         timeSlot: bookingDetails.timeSlot,
         status: 'escrow_locked',
-        escrowTxHash: txHash,
+        escrowTxHash: session.authorizationRef,
         remindersEnabled: bookingDetails.enablePush || bookingDetails.enableSMS,
         pushReminderScheduled: bookingDetails.enablePush,
         smsReminderScheduled: bookingDetails.enableSMS,
         referenceLookTitle: bookingDetails.referenceLook?.title,
         referenceLookImage: bookingDetails.referenceLook?.image,
         customNotes: bookingDetails.customNotes,
-        createdAt: new Date().toISOString(),
+        createdAt: session.recordedAt,
       };
 
       setCompletedTx({
-        txHash,
-        isRealSha256,
+        txHash: session.authorizationRef,
+        isRealSha256: session.isRealSha256,
         totalAmount: convertedTotal,
         currency: selectedCurrency,
       });
@@ -275,39 +278,19 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="p-4 bg-[#12141a] rounded-xl border border-red-500/30 space-y-3">
+              <div className="p-4 bg-[#12141a] rounded-xl border border-red-500/30 space-y-2.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#9ca3af] flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-[#d4af37]" />
-                    <span>Demo Card Form [SIM]</span>
+                    <span>{capabilities.label}</span>
                   </span>
                   <span className="text-[11px] text-red-300 font-mono">
-                    [SIM] Not Charged
+                    [SIM] ZERO CARD INPUTS
                   </span>
                 </div>
-                <input
-                  type="text"
-                  value={cardNumber}
-                  onChange={e => setCardNumber(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-[#0b0c10] border border-[#272a33] rounded text-white font-mono"
-                  placeholder="Demo Card Number"
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={cardExp}
-                    onChange={e => setCardExp(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-[#0b0c10] border border-[#272a33] rounded text-white font-mono"
-                    placeholder="MM/YY"
-                  />
-                  <input
-                    type="text"
-                    value={cardCvc}
-                    onChange={e => setCardCvc(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-[#0b0c10] border border-[#272a33] rounded text-white font-mono"
-                    placeholder="CVC"
-                  />
-                </div>
+                <p className="text-[11px] text-[#9ca3af] leading-relaxed">
+                  {capabilities.notice}
+                </p>
               </div>
             )}
 
