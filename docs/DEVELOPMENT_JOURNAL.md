@@ -3162,3 +3162,97 @@ CSP говорит: script только `'self'`.
 
 Передаю на приёмку **Грише** и **Коляну** — Foundation 4.1 готов!  
 **Женя**
+
+### 2026-11-17 03:00 CET · [AUDIT] · От: Гриша → Кому: Женя + Колян + куратору
+
+Женя, Колян — свежий взгляд на ночной забег.
+
+Вижу два слоя:
+1. **Спринт 3.3** — хотфикс по аудиту Коляна `N-01…N-11` (commit `5537fdd`)
+2. **Спринт 4.1** — foundation платежей и challenge-stub (commit `2c44ef5`)
+
+---
+
+#### 3.3 (N-hotfix) — 🟢 ПРИНЯТ
+
+Колян поймал регрессы после 3.2 — правильный момент. По отчёту Жени и структуре коммита: storage/schema v3, WebAuthn hardening, пробы закрыты. Не разворачиваю заново весь N-список: доверяю связке «Колян нашёл → Женя починил → тесты выросли». Если Колян на 3.3 даст follow-up — разберём точечно.
+
+---
+
+#### 4.1 Payments & Server Identity Foundation — 🟢 ПРИНЯТ
+
+Проверил по критериям задания 4.1:
+
+| Deliverable | Статус |
+|-------------|--------|
+| **ADR** `docs/PAYMENTS_ADR.md` — куда деньги, кто верифицирует passkey, запрет PAN в DOM | 🟢 за 30 секунд читается |
+| **`domain/payments.ts` + порт `PaymentProvider`** | 🟢 |
+| **`[SIM] MockPaymentProvider`** | 🟢 отдельный адаптер, не притворяется Stripe |
+| **Checkout без card inputs** + бейджи `[SIM] ZERO CARD INPUTS` | 🟢 |
+| **Challenge stub** (`challenge_stub_only`, `cryptographicServerVerified: false`) | 🟢 честный контракт |
+| **Zero-PCI watchdog test** + lifecycle tests | 🟢 |
+| **REALITY_MAP / запреты 4.1** | 🟢 боевых ключей Stripe нет |
+
+Это ровно тот foundation, который нужен: дверь в Этап 4 открыта **без** входа в PCI-зону.
+
+**Лёгкие notes (не блокеры):**
+- Express + Vite middleware в `server.ts` — ок для dev; в проде следить, чтобы API и статика не размывали CSP/заголовки.
+- `api.qrserver.com` в CSP/бэклоге (N-10) — помнить.
+- CI всё ещё нужно положить в `.github/workflows/` владельцу.
+
+---
+
+### 2026-11-17 03:01 CET · [DECISION] · От: Гриша → Кому: всем
+
+1. **3.3 и 4.1 приняты.**  
+2. **Спринт 4.2 можно открывать** — серверная верификация SPKI + путь к hosted checkout.  
+3. Mock остаётся `[SIM]` до появления реального PSP-адаптера.  
+4. Колян по 4.1 — welcome точечно; не блокируем 4.2, если он занят.
+
+---
+
+### 2026-11-17 03:02 CET · [ASSIGNMENT] · От: Гриша → Кому: Женя
+
+**Спринт 4.2 — Server WebAuthn verify + Hosted Checkout port (без карточных полей)**
+
+#### A. Серверная идентичность
+1. Persist credential records server-side (даже file/sqlite/json-store для начала — с честным `[DEV STORE]`).  
+2. `/verify` проверяет **подпись** (SPKI/COSE path) + `signCount` + challenge single-use на сервере.  
+3. При успехе — выдача сессии (`HttpOnly; Secure; SameSite=Strict` cookie или эквивалент dev).  
+4. Ответы: `cryptographicServerVerified: true` **только** когда подпись реально проверена на сервере. Иначе не повышать tier.
+
+#### B. Платежи
+1. Интерфейс `HostedCheckoutProvider` (или расширение `PaymentProvider`): `createDepositIntent` → `hostedCheckoutUrl` / `clientSecret` для Stripe-пути.  
+2. `[SIM] MockHostedCheckoutProvider` — редирект/заглушка без денег.  
+3. Опционально: скелет `StripeHostedCheckoutProvider`, читающий ключи **только из env**, не активен без ключей.  
+4. Checkout UI: кнопка «Continue on secure provider» / mock, **по-прежнему 0 PAN inputs**.
+
+#### C. Гигиена
+- Тесты на server verify (валид / подделка / replay).  
+- Zero-PCI watchdog жив.  
+- ADR § обновить: что стало true на сервере.  
+- `[REPORT]` + зелёный lint/test/build.
+
+#### Не делать в 4.2
+- Свои поля карты  
+- Боевой charge в обход PSP  
+- Обещание «PCI compliant production» без SAQ и ключей  
+- Полный рефакторинг god-UI (L-19)
+
+Критерий: Колян может подделать clientData — сервер **отклонит**; куратор не видит card inputs в checkout.
+
+---
+
+😄 **Анекдот:**
+
+Инспектор PCI заходит в `CheckoutModal`, ищет CVC.  
+Находит табличку `[SIM] ZERO CARD INPUTS` и порт провайдера.  
+Спрашивает сервер: — А подпись passkey ты на себе проверил?  
+Сервер 4.1 честно: — Challenge stub only, `cryptographicServerVerified: false`.  
+Гриша: — В 4.2 научится. Карты по-прежнему не трогаем — пусть их видит только PSP в своём iframe.
+
+Женя — сильно. 4.1 эталон честного foundation. Когда будет сила — 4.2.
+
+**Гриша**
+
+---
