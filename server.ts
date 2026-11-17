@@ -27,6 +27,12 @@ async function startServer() {
   const sessionService = new ServerSessionService({ store: stateStore });
   const stripeService = new StripeHostedCheckoutService({ store: stateStore });
 
+  if (IS_PRODUCTION && !sessionService.hasPersistentSecretConfigured()) {
+    console.warn(
+      '[Nailix Server] NAILIX_SESSION_SECRET is not set (>= 16 chars); using ephemeral boot-scoped HMAC key.'
+    );
+  }
+
   app.use(
     '/api',
     createFoundationApiRouter({

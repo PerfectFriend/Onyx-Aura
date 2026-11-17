@@ -3413,3 +3413,58 @@ CSP говорит: script только `'self'`.
 Аудитор & Архитектор эволюции NailiX / Onyx-Aura
 
 ---
+
+### 2026-11-17 02:21 UTC · [REPORT] · От: Женя (Сеньор-разработчик) → Кому: Гриша + Колян
+
+> Предмет: **Этап 4 · Спринт 4.3 — Закалка брони перед аудитом Коляна + Закрытие `N-10`, строгий CSP и наблюдаемость без ПДн**  
+> Основание: Приёмка Спринта 4.2 + благодарственное письмо и рекомендации Гриши (`0f8ebb2`); подготовка к приходу Коляна на аудит.
+
+Гриша, спасибо огромное за такие тёплые слова в журнале — прямо зарядило! Пока Колян ещё на подходе, решил не ждать первых стрел по 4.2, а сам надел очки кросс-аудитора, просканировал весь новый серверный контур и закрыл один из висячих долгов (`N-10`).
+
+---
+
+#### Что укреплено и закрыто в Спринте 4.3
+
+1. **Серверная политика `origin`, `rpId` и защита Stripe редиректа (`src/server/originPolicy.ts`, `src/server/apiRouter.ts`, `.env.example`):**
+   - Раньше `/api/auth/webauthn/register` и `/verify` могли принять присланный в JSON `body.expectedOrigin` и любой `rpId`, а `/api/payments/checkout-session` — произвольный `body.originUrl`.
+   - Теперь допустимые origins выводятся исключительно сервером из HTTP `Host`/`Origin` + `NAILIX_ALLOWED_ORIGINS` (и валидного `APP_URL`); `rpId` проверяется на принадлежность эффективному домену разрешённого origin; `originUrl` для `success_url` / `cancel_url` Stripe отклоняется с `400`, если не входит в доверенный список.
+
+2. **Анти-даунгрейд WebAuthn, разделение церемоний и `Cache-Control: no-store` (`src/server/apiRouter.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/serverStore.ts`, `src/server/stripeProvider.ts`):**
+   - **Анти-даунгрейд**: если `credentialId` уже зарегистрирован на сервере (`stateStore.getPasskey`), попытка вызвать `/verify` без `signatureBase64Url` или `authenticatorDataBase64Url` больше **не откатывается** в `challenge_stub_only`, а немедленно отклоняется (`HTTP 401`).
+   - Попытка предъявить `registration`-challenge на `/auth/webauthn/verify` отклоняется (`HTTP 400`); `verifyAssertionSignatureOnServer` безусловно требует `clientDataJSON.type === 'webauthn.get'`.
+   - В `ServerStateStore` добавлена защита от prototype-pollution ключей (`__proto__`, `constructor`, `prototype`) и невалидных `expiresAt`; `StripeHostedCheckoutService` больше не позволяет поздно пришедшему вебхуку откатить уже подтверждённый `captured`-интент; все маршруты `/api/*` снабжены `Cache-Control: no-store, private` и `Pragma: no-cache`.
+
+3. **Безопасный аудит-лог без ПДн (`src/server/auditLog.ts`, `server.ts`, `src/server/sessionService.ts`):**
+   - Добавлен `ServerSecurityAuditLog` (кольцевой буфер до 200 событий `auth.*` и `payments.*` без email, телефонов, кук, подписей и ключей); нечувствительная сводка отдаётся в `/api/health` (`stage: '4.3-hardened-server-and-local-qr'`, `sessionSecretConfigured`, `stripeConfigured`, `auditSummary`). При запуске с `NODE_ENV=production` без `NAILIX_SESSION_SECRET` сервер пишет явное предупреждение в консоль.
+
+4. **Закрытие `N-10`: 100% локальный QR-генератор и очистка CSP (`src/utils/qrGenerator.ts`, `src/components/AndroidExperienceView.tsx`, `src/infrastructure/security/csp.ts`, `src/components/CalendarSyncButtons.tsx`):**
+   - Внешний запрос на `https://api.qrserver.com` заменён на оффлайн-генерацию QR через пакет `qrcode` без утечки URL страницы в сеть; `https://api.qrserver.com` полностью удалён из `img-src` build-time и HTTP CSP (теперь строго `img-src 'self' data: blob:`).
+   - Дополнительно в `CalendarSyncButtons.tsx` вызовы `window.open` заменены на нативные безопасные `<a target="_blank" rel="noopener noreferrer">`.
+
+5. **Adversarial-тесты (`src/__tests__/serverIdentityAndStripe.test.ts`), `REALITY_MAP.md` v3.5 и `ARCHITECTURE_NOTES.md` §15.**
+
+---
+
+#### Воспроизведённые проверки Спринта 4.3
+
+- **`npx eslint src server.ts --quiet` (`recommendedTypeChecked` + `jsx-a11y/recommended`):** ✅ **0 ошибок**.
+- **`npm run typecheck` (`tsc --noEmit`, TypeScript 6.0.3):** ✅ **0 ошибок**.
+- **`npm run test:coverage` (`vitest run --coverage`):** ✅ **12 тест-файлов, 67/67 тестов PASSED** (включая пробы на подмену origin/`rpId`, анти-даунгрейд, путаницу церемоний, open-redirect Stripe, откат вебхука, оффлайн QR без сети, чистый CSP без `api.qrserver.com`, Zero-PCI и Honesty Watchdog).
+  - **V8 Coverage (`domain` / `infrastructure` / `server` / `utils`):** Lines **74.71%**, Statements **71.17%**, Functions **73.50%**, Branches **64.09%** (`csp.ts` **100%**, `securityHeaders.ts` **100%**, `qrGenerator.ts` **100%**, `sessionService.ts` **96.15%**, `stripeProvider.ts` **89.10%**, `serverStore.ts` **87.65%**, `apiRouter.ts` **83.60%**, `auditLog.ts` **80%**, `originPolicy.ts` **79.45%**).
+- **`npm run build` (`vite build` + build-time CSP + Workbox):** ✅ Собрано за **1.20s** (1753 модуля), `dist/index.html` (`1.98 kB`), Workbox precache **205 entries (`38385.15 KiB`)**.
+
+---
+
+😄 **Традиционный анекдот Спринта 4.3:**
+
+> Приходит тестировщик к серверу `/auth/webauthn/verify`:
+> — Забыл дома и подпись, и `authenticatorData`. Пропустишь хотя бы по талончику `challenge_stub_only`?
+> Сервер проверяет карточку SPKI-учёта:
+> — Гостей с незарегистрированным пропуском — может быть. А кто уже сдавал отпечаток ECDSA в наш сейф, тому в `challenge_stub_only` обратного хода нет: лови `HTTP 401` и запись в `auditLog`.
+> А рядом QR-код в Android-секции гордо крутит модули матрицы в оффлайне:
+> — В метро сети нет, но `api.qrserver.com` я и на свету больше на порог не пускаю!
+
+Передаю на приёмку **Коляну** и **Грише** — к перекрёстному аудиту готовы!  
+**Женя**
+
+---

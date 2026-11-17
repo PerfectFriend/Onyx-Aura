@@ -1,7 +1,7 @@
 # ✦ NAILIX / ONYX-AURA — КАРТА РЕАЛЬНОСТИ (REALITY MAP) ✦
 
-> **Статус**: Канонический документ честности (актуализирован в Этапе 4 · Спринт 4.2 «Серверная SPKI-идентичность, `HttpOnly` сессии, HTTP Security Headers и Stripe Hosted Checkout SAQ-A»)  
-> **Версия**: 3.4  
+> **Статус**: Канонический документ честности (актуализирован в Этапе 4 · Спринт 4.3 «Закалка серверной брони + Закрытие N-10 и строгий CSP»)  
+> **Версия**: 3.5  
 > **Дата обновления**: 17 ноября 2026 г.  
 > **Исполнитель**: Женя (Сеньор-разработчик)  
 > **Аудиторы**: Гриша (Архитектор эволюции) & Колян (Cross-Model Auditor, Claude Sonnet 5.5)  
@@ -25,16 +25,16 @@
 
 | Подсистема / Возможность | Файлы реализации | Статус | Доказательство и ограничения |
 | :--- | :--- | :---: | :--- |
-| **Server WebAuthn SPKI Crypto & `HttpOnly` Sessions** | `server.ts`, `src/server/serverStore.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/sessionService.ts`, `src/server/apiRouter.ts` | 🟢 **`REAL`** | Одноразовые 32-байтовые challenge (TTL `120 с`), регистрация SPKI в `.data/nailix-server.json` (`/api/auth/webauthn/register`), реальная серверная проверка ECDSA P-256 (`-7`) / RS256 (`-257`) через `node:crypto.verify`, `rpIdHash`, обязательный `UV` для роли `'master'`, `signCount` с учётом `BE=1`, и выпуск HMAC-SHA256 `HttpOnly` cookie `nailix_sid` (`/api/auth/session`, `/logout`). Если ключ не зарегистрирован на сервере, честно отдаётся `challenge_stub_only` (`cryptographicServerVerified: false`). |
-| **HTTP Security Headers & CSP `frame-ancestors`** | `src/server/securityHeaders.ts`, `server.ts`, `src/infrastructure/security/csp.ts` | 🟢 **`REAL`** | Express выдаёт HTTP-заголовки `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` и `Content-Security-Policy` с настраиваемой `frame-ancestors` (`NAILIX_FRAME_ANCESTORS`). |
-| **Stripe Hosted Checkout Adapter (SAQ-A) & Webhooks** | `src/server/stripeProvider.ts`, `src/infrastructure/payments/hostedCheckoutProvider.ts` | 🟡 **`PROTOTYPE`** (Env-ready) | Готовый SAQ-A адаптер под Stripe REST API (`/v1/checkout/sessions`, целые центы, `Idempotency-Key`) + проверка HMAC-SHA256 `Stripe-Signature` с окном 300 с и идемпотентностью `event.id`. Без `STRIPE_SECRET_KEY` в env сервер честно отвечает `activeProviderId: 'mock_sim'`, `hostedCheckoutConfigured: false`. |
+| **Server WebAuthn SPKI Crypto, Origin/RP Policy & `HttpOnly` Sessions** | `server.ts`, `src/server/originPolicy.ts`, `src/server/auditLog.ts`, `src/server/serverStore.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/sessionService.ts`, `src/server/apiRouter.ts` | 🟢 **`REAL`** | Одноразовые 32-байтовые challenge (TTL `120 с`), регистрация SPKI в `.data/nailix-server.json`, серверная политика `origin`/`rpId` без доверия клиентскому `expectedOrigin`, запрет даунгрейда зарегистрированных ключей, проверка `ES256`/`RS256` через `node:crypto.verify`, HMAC-SHA256 `HttpOnly` cookie `nailix_sid`, `Cache-Control: no-store` на `/api/*` и не содержащий ПДн аудит-лог. При отсутствии ключа на сервере честно отдаётся `challenge_stub_only` (`cryptographicServerVerified: false`). |
+| **HTTP Security Headers & Strict Offline CSP** | `src/server/securityHeaders.ts`, `server.ts`, `src/infrastructure/security/csp.ts`, `src/utils/qrGenerator.ts` | 🟢 **`REAL`** | Express выдаёт `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Content-Security-Policy` с `frame-ancestors` (`NAILIX_FRAME_ANCESTORS`) и очищенной `img-src 'self' data: blob:` (внешний `api.qrserver.com` полностью убран, `N-10` закрыт локальным QR-генератором `qrcode`). |
+| **Stripe Hosted Checkout Adapter (SAQ-A) & Webhooks** | `src/server/stripeProvider.ts`, `src/infrastructure/payments/hostedCheckoutProvider.ts` | 🟡 **`PROTOTYPE`** (Env-ready) | Готовый SAQ-A адаптер под Stripe REST API (`/v1/checkout/sessions`, целые центы, `Idempotency-Key`, защита от open-redirect редиректа и от регресса терминального статуса `captured`) + HMAC-SHA256 `Stripe-Signature` с окном 300 с и идемпотентностью `event.id`. Без `STRIPE_SECRET_KEY` в env сервер честно отвечает `activeProviderId: 'mock_sim'`, `hostedCheckoutConfigured: false`. |
 | **Payment Domain Port & Zero-PCI Boundary** | `src/domain/payments.ts`, `docs/PAYMENTS_ADR.md`, `src/components/CheckoutModal.tsx` | 🟢 **`REAL`** | Чистый контракт `PaymentProvider` (`DepositIntent`, `DepositSession`, целые центы `toMinorUnits`). Из `CheckoutModal.tsx` полностью удалены все поля номера карты / `MM/YY` / `CVC` (контролируется тестом Zero-PCI Watchdog). |
 | **Local-First Resilient Storage Engine** | `src/domain/storage.ts`, `src/domain/schemas.ts`, `src/infrastructure/storage/indexedDbAdapter.ts`, `src/infrastructure/storage/salonRepository.ts` | 🟢 **`REAL`** | `IndexedDBAdapter` (`tx.oncomplete`, `setMany`) + `ResilientStorageAdapter.getDetailed()` (`ok \| missing \| unreadable`), Web Locks, debounced `BroadcastChannel`, карантин с passthrough (`N-03`), миграции `v1 → v2 → v3`, `read-only` для будущих схем. |
 | **Transactional Outbox & Seed Isolation** | `src/infrastructure/storage/salonRepository.ts`, `src/domain/storage.ts` | 🟢 **`REAL`** | Атомарные `*WithOutbox` транзакции (`commitWithOutbox`), strict allowlist `sanitizeOutboxPayload` (без ПДн), триггеры `online`/`visibilitychange`/`pagehide`/`beforeunload` и разметка `origin: 'seed' \| 'user'`. |
 | **Load-then-Mount & Live Cross-Tab Sync** | `src/hooks/useSalonBootstrap.ts`, `src/App.tsx`, `src/components/ErrorBoundary.tsx` | 🟢 **`REAL`** | Единый `useReducer`, экран загрузки до чтения БД, sync через `externalRevision` без размонтирования модалок и экспорт `.json` карантина. |
 | **Client WebAuthn Crypto & Secret Hygiene** | `src/domain/identity.ts`, `src/infrastructure/identity/webAuthnService.ts`, `src/infrastructure/identity/secretHygiene.ts` | 🟢 **`REAL`** | Локальная SPKI-проверка + CBOR/COSE SPKI из `attestationObject`, `UP/UV`, `BE=1`, и узкая проверка секретов `assertNoSecretLikeFields`. |
-| **Build-Time CSP & Self-Hosted Fonts** | `src/infrastructure/security/csp.ts`, `vite.config.ts`, `index.html`, `src/main.tsx` | 🟢 **`REAL`** | Локальные шрифты `@fontsource/*`, production build `<meta>` CSP без `script-src 'unsafe-inline'`. *(Долг `N-10`: QR-превью в `AndroidExperienceView` ещё использует `api.qrserver.com`)*. |
-| **Universal Calendar Export (.ICS + Web Links)** | `src/utils/calendarSync.ts`, `src/components/CalendarSyncButtons.tsx` | 🟢 **`REAL`** | Валидные файлы RFC 5545 `.ics` с `VALARM` и ссылки Google Calendar / Outlook. |
+| **Build-Time Strict CSP, Self-Hosted Fonts & Local QR (`N-10`)** | `src/infrastructure/security/csp.ts`, `src/utils/qrGenerator.ts`, `vite.config.ts`, `index.html`, `src/main.tsx` | 🟢 **`REAL`** | Локальные шрифты `@fontsource/*`, production build `<meta>` CSP без `script-src 'unsafe-inline'` и **без внешних доменов изображений**, 100% локальный offline QR-генератор вместо `api.qrserver.com`. |
+| **Universal Calendar Export (.ICS + Web Links)** | `src/utils/calendarSync.ts`, `src/components/CalendarSyncButtons.tsx` | 🟢 **`REAL`** | Валидные файлы RFC 5545 `.ics` с `VALARM` и безопасные `<a>` ссылки Google Calendar / Outlook. |
 | **Haptics & Geo Distance Math** | `src/utils/haptics.ts`, `src/services/geoDistance.ts` | 🟢 **`REAL`** | `navigator.vibrate`, формула гаверсинусов и `navigator.geolocation`. |
 | **PWA & Workbox Offline Precache** | `vite.config.ts`, `public/manifest.webmanifest` | 🟢 **`REAL`** | Production Service Worker (`devOptions.enabled: false`), precache картинок и `.woff2`. |
 | **Скрипт сборки Android APK** | `scripts/build-apk.sh`, `docs/KEY_ROTATION_RUNBOOK.md` | 🟢 **`REAL`** | Сборка в `dist-apk/` со строгим `env:NAILIX_KEYSTORE_PASS`. |
@@ -63,9 +63,9 @@
 
 ---
 
-## 📊 Итоговая сводка честности (v3.4)
+## 📊 Итоговая сводка честности (v3.5)
 
-- 🟢 **`REAL` (Технические возможности):** **12 подсистем** — **Server WebAuthn SPKI Crypto & `HttpOnly` Sessions**, **HTTP Security Headers + CSP `frame-ancestors`**, Resilient Storage v3, Transactional Outbox, Payment Domain Port & Zero-PCI Boundary, Load-then-Mount, Client WebAuthn SPKI + Secret Hygiene, Build-time CSP + Self-Hosted Fonts, `.ics` Export, Geo + Haptics, PWA/Workbox, Local APK Script.
+- 🟢 **`REAL` (Технические возможности):** **13 подсистем** — **Server WebAuthn SPKI Crypto + Origin/RP Policy & `HttpOnly` Sessions**, **HTTP Security Headers + Strict Offline CSP (`img-src 'self' data: blob:`)**, **100% Local Offline QR (`N-10`)**, Resilient Storage v3, Transactional Outbox, Payment Domain Port & Zero-PCI Boundary, Load-then-Mount, Client WebAuthn SPKI + Secret Hygiene, `.ics` Export, Geo + Haptics, PWA/Workbox, Local APK Script, Non-PII Security Audit Log.
 - 🟡 **`PROTOTYPE`:** **2 каркаса** — **Stripe Hosted Checkout SAQ-A Adapter (`stripeProvider.ts`, требует `STRIPE_SECRET_KEY` в env)** и Android WebView Shell (`K-18`).
 - 🔵 **`LOCAL_ONLY` (Продуктовые функции):** **5 функций** (+ fallback Passkey без сервера).
 - 🔴 **`SIMULATED`:** **7 модулей** (+ `[SIM] Демо Passkey` и `[SIM] MockPaymentProvider` без env-ключей Stripe).
@@ -75,4 +75,4 @@
 ---
 
 *«Честность в коде — честность перед миром.»*  
-*Версия 3.4 (Этап 4 · Спринт 4.2): внедрены серверная проверка ECDSA/RSASSA WebAuthn по SPKI, HMAC-подписанные `HttpOnly` cookie, HTTP Security Headers с `frame-ancestors` и env-driven Stripe Hosted Checkout SAQ-A + HMAC-вебхуки.*
+*Версия 3.5 (Этап 4 · Спринт 4.3): усилена серверная защита `origin`/`rpId`/анти-даунгрейд WebAuthn, open-redirect защита Stripe и необратимость `captured`, добавлен не содержащий ПДн аудит-лог, закрыт `N-10` локальным оффлайн-QR и вычищен внешний `api.qrserver.com` из CSP.*

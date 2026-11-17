@@ -294,11 +294,12 @@ describe('Stage 4 · Sprint 4.1 Payment & Server Identity Foundation', () => {
       expect(challengeJson.challengeId).toMatch(/^ch-/);
       expect(challengeJson.verificationTier).toBe('challenge_stub_only');
 
+      const serverOrigin = `http://127.0.0.1:${addr.port}`;
       const clientDataB64u = toBase64Url(
         JSON.stringify({
           type: 'webauthn.get',
           challenge: challengeJson.challengeBase64Url,
-          origin: 'http://127.0.0.1:3000',
+          origin: serverOrigin,
         })
       );
 
@@ -309,7 +310,7 @@ describe('Stage 4 · Sprint 4.1 Payment & Server Identity Foundation', () => {
           challengeId: challengeJson.challengeId,
           clientDataJSONBase64Url: clientDataB64u,
           authenticatorDataBase64Url: makeAuthDataWithUpFlag(true),
-          expectedOrigin: 'http://127.0.0.1:3000',
+          expectedOrigin: serverOrigin,
         }),
       });
       expect(verifyRes.status).toBe(200);

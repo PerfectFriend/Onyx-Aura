@@ -52,7 +52,16 @@ function emptySnapshot(): PersistedServerSnapshot {
   };
 }
 
+const FORBIDDEN_RECORD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function assertSafeRecordId(id: string, kind: string): void {
+  if (!id || FORBIDDEN_RECORD_KEYS.has(id)) {
+    throw new Error(`Invalid ${kind} identifier.`);
+  }
+}
+
 function assertPublicOnlyPasskey(record: ServerPasskeyRecord): void {
+  assertSafeRecordId(record.id, 'passkey');
   const forbidden = record as unknown as Record<string, unknown>;
   for (const key of ['privateKey', 'secretKey', 'seedPhrase', 'mnemonic', 'password']) {
     if (key in forbidden && forbidden[key] !== undefined) {
@@ -80,8 +89,11 @@ export class InMemoryServerStateStore implements ServerStateStore {
   protected snapshot: PersistedServerSnapshot = emptySnapshot();
 
   public async getPasskey(credentialId: string): Promise<ServerPasskeyRecord | undefined> {
+    if (!credentialId || FORBIDDEN_RECORD_KEYS.has(credentialId)) return undefined;
     await this.ensureLoaded();
-    return this.snapshot.passkeys[credentialId];
+    return Object.prototype.hasOwnProperty.call(this.snapshot.passkeys, credentialId)
+      ? this.snapshot.passkeys[credentialId]
+      : undefined;
   }
 
   public async listPasskeysByRole(role?: UserRole): Promise<ServerPasskeyRecord[]> {
@@ -98,10 +110,14 @@ export class InMemoryServerStateStore implements ServerStateStore {
   }
 
   public async getSession(sessionId: string): Promise<ServerSessionRecord | undefined> {
+    if (!sessionId || FORBIDDEN_RECORD_KEYS.has(sessionId)) return undefined;
     await this.ensureLoaded();
+    if (!Object.prototype.hasOwnProperty.call(this.snapshot.sessions, sessionId)) {
+      return undefined;
+    }
     const rec = this.snapshot.sessions[sessionId];
-    if (!rec) return undefined;
-    if (Date.now() >= Date.parse(rec.expiresAt)) {
+    const expiresMs = Date.parse(rec.expiresAt);
+    if (!Number.isFinite(expiresMs) || Date.now() >= expiresMs) {
       await this.deleteSession(sessionId);
       return undefined;
     }
@@ -109,11 +125,17 @@ export class InMemoryServerStateStore implements ServerStateStore {
   }
 
   public async saveSession(session: ServerSessionRecord): Promise<void> {
+    assertSafeRecordId(session.sessionId, 'session');
+    const expiresMs = Date.parse(session.expiresAt);
+    if (!Number.isFinite(expiresMs)) {
+      throw new Error('Refusing to persist session with invalid expiresAt timestamp.');
+    }
     await this.mutate(state => {
       // Opportunistically purge expired sessions
       const now = Date.now();
       for (const [sid, existing] of Object.entries(state.sessions)) {
-        if (now >= Date.parse(existing.expiresAt)) {
+        const exp = Date.parse(existing.expiresAt);
+        if (!Number.isFinite(exp) || now >= exp) {
           delete state.sessions[sid];
         }
       }
@@ -122,17 +144,22 @@ export class InMemoryServerStateStore implements ServerStateStore {
   }
 
   public async deleteSession(sessionId: string): Promise<void> {
+    if (!sessionId || FORBIDDEN_RECORD_KEYS.has(sessionId)) return;
     await this.mutate(state => {
       delete state.sessions[sessionId];
     });
   }
 
   public async getDepositIntent(intentId: string): Promise<DepositIntent | undefined> {
+    if (!intentId || FORBIDDEN_RECORD_KEYS.has(intentId)) return undefined;
     await this.ensureLoaded();
-    return this.snapshot.depositIntents[intentId];
+    return Object.prototype.hasOwnProperty.call(this.snapshot.depositIntents, intentId)
+      ? this.snapshot.depositIntents[intentId]
+      : undefined;
   }
 
   public async saveDepositIntent(intent: DepositIntent): Promise<void> {
+    assertSafeRecordId(intent.id, 'deposit intent');
     await this.mutate(state => {
       state.depositIntents[intent.id] = { ...intent };
     });

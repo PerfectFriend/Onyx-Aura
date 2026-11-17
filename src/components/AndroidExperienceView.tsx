@@ -11,6 +11,7 @@ import { ThemeMode } from '../types';
 import { TranslationStrings } from '../i18n/translations';
 import { reminderService } from '../services/reminderService';
 import { DEMO_CLIENT_PROFILE, getRelativeDateISO } from '../data/initialData';
+import { generateLocalQrDataUrl } from '../utils/qrGenerator';
 
 interface BatteryManagerLike extends EventTarget {
   level: number;
@@ -116,6 +117,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
   // Offline cache status
   const [isCaching, setIsCaching] = useState<boolean>(false);
   const [cacheDone, setCacheDone] = useState<boolean>(false);
+  const [localQrDataUrl, setLocalQrDataUrl] = useState<string | null>(null);
 
   // Query hardware specs on mount
   useEffect(() => {
@@ -151,8 +153,18 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
       }).catch(() => {});
     }
 
+    // Generate local offline QR code without external network leakage (N-10)
+    const pairingUrl = typeof window !== 'undefined' ? window.location.origin : 'https://nailix.art';
+    let cancelled = false;
+    void generateLocalQrDataUrl(pairingUrl)
+      .then((dataUrl) => {
+        if (!cancelled) setLocalQrDataUrl(dataUrl);
+      })
+      .catch(() => {});
+
     // Cleanup camera when leaving view
     return () => {
+      cancelled = true;
       stopCamera();
     };
   }, []);
@@ -368,9 +380,7 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
     }, 1200);
   };
 
-  // Current App URL for QR Code
-  const currentUrl = typeof window !== 'undefined' ? window.location.href : 'https://nailix.art';
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(currentUrl)}`;
+  // Current App origin used for local QR generation (no external api.qrserver.com call)
 
   return (
     <div className="space-y-8 pb-20 animate-fade-in">
@@ -1093,18 +1103,24 @@ export const AndroidExperienceView: React.FC<AndroidExperienceViewProps> = ({
             </div>
           </div>
 
-          {/* QR Code Container */}
+          {/* Local Offline QR Code Container (N-10: zero external api.qrserver.com call) */}
           <div className="md:col-span-4 flex flex-col items-center justify-center p-4 rounded-2xl bg-white/5 border border-cyan-500/30 shadow-inner">
             <div className="p-3 bg-white rounded-xl shadow-xl">
-              <img
-                src={qrCodeUrl}
-                alt="Scan to open Nailix on Android"
-                className="w-44 h-44 object-contain"
-              />
+              {localQrDataUrl ? (
+                <img
+                  src={localQrDataUrl}
+                  alt="Scan to open Nailix on Android"
+                  className="w-44 h-44 object-contain"
+                />
+              ) : (
+                <div className="w-44 h-44 flex items-center justify-center text-slate-500 text-xs font-mono">
+                  Generating QR…
+                </div>
+              )}
             </div>
             <span className="text-[10px] font-mono text-cyan-300 mt-2.5 flex items-center gap-1">
               <QrCode className="w-3.5 h-3.5" />
-              <span>Scan with Android Camera</span>
+              <span>Scan with Android Camera · Local Offline QR</span>
             </span>
           </div>
 

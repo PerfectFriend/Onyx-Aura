@@ -284,10 +284,15 @@ export class StripeHostedCheckoutService {
     if (intentId && newStatus) {
       const existing = await this.store.getDepositIntent(intentId);
       if (existing) {
-        await this.store.saveDepositIntent({
-          ...existing,
-          status: newStatus,
-        });
+        const isAlreadyCaptured = existing.status === 'captured';
+        if (!isAlreadyCaptured || newStatus === 'captured') {
+          await this.store.saveDepositIntent({
+            ...existing,
+            status: newStatus,
+          });
+        } else {
+          newStatus = existing.status;
+        }
       }
     }
 

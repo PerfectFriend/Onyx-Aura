@@ -9,6 +9,7 @@
 
 import { createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from 'node:crypto';
 import { UserRole } from '../types';
+import { isValidRpIdFormat } from './originPolicy';
 import { ServerPasskeyRecord } from './serverStore';
 
 function fromBase64Url(b64u: string): Buffer {
@@ -82,6 +83,10 @@ export function verifyRegistrationBindingOnServer(
     return { ok: false, error: 'Registration origin mismatch.', initialSignCount: 0 };
   }
 
+  if (!isValidRpIdFormat(input.rpId)) {
+    return { ok: false, error: 'Invalid WebAuthn rpId format.', initialSignCount: 0 };
+  }
+
   if (!validateSpkiKeyForRegistration(input.publicKeySpkiBase64Url, input.algorithm)) {
     return {
       ok: false,
@@ -149,25 +154,37 @@ export function verifyAssertionSignatureOnServer(
     };
   }
 
-  if (input.expectedOrigin) {
-    try {
-      const parsed = JSON.parse(clientDataBytes.toString('utf8')) as { origin?: unknown };
-      if (parsed.origin !== input.expectedOrigin) {
-        return {
-          cryptographicSignatureValid: false,
-          nextSignCount: input.storedCredential.signCount,
-          warnings,
-          error: 'Origin mismatch during server assertion verification.',
-        };
-      }
-    } catch {
-      return {
-        cryptographicSignatureValid: false,
-        nextSignCount: input.storedCredential.signCount,
-        warnings,
-        error: 'Unparseable clientDataJSON.',
-      };
-    }
+  let parsedClientData: { type?: unknown; origin?: unknown };
+  try {
+    parsedClientData = JSON.parse(clientDataBytes.toString('utf8')) as {
+      type?: unknown;
+      origin?: unknown;
+    };
+  } catch {
+    return {
+      cryptographicSignatureValid: false,
+      nextSignCount: input.storedCredential.signCount,
+      warnings,
+      error: 'Unparseable clientDataJSON.',
+    };
+  }
+
+  if (parsedClientData.type !== 'webauthn.get') {
+    return {
+      cryptographicSignatureValid: false,
+      nextSignCount: input.storedCredential.signCount,
+      warnings,
+      error: 'Unexpected clientDataJSON type during server assertion check (expected webauthn.get).',
+    };
+  }
+
+  if (input.expectedOrigin && parsedClientData.origin !== input.expectedOrigin) {
+    return {
+      cryptographicSignatureValid: false,
+      nextSignCount: input.storedCredential.signCount,
+      warnings,
+      error: 'Origin mismatch during server assertion verification.',
+    };
   }
 
   // 1. RP ID Hash check

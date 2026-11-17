@@ -16,6 +16,7 @@ export class ServerSessionService {
   private readonly store: ServerStateStore;
   private readonly hmacSecret: Buffer;
   private readonly ttlMs: number;
+  private readonly persistentSecretConfigured: boolean;
 
   constructor(options: {
     store: ServerStateStore;
@@ -24,10 +25,15 @@ export class ServerSessionService {
   }) {
     this.store = options.store;
     const rawSecret = options.secret || process.env.NAILIX_SESSION_SECRET;
-    this.hmacSecret = rawSecret && rawSecret.length >= 16
+    this.persistentSecretConfigured = Boolean(rawSecret && rawSecret.length >= 16);
+    this.hmacSecret = this.persistentSecretConfigured && rawSecret
       ? Buffer.from(rawSecret, 'utf8')
       : randomBytes(32);
     this.ttlMs = options.ttlMs ?? DEFAULT_SESSION_TTL_MS;
+  }
+
+  public hasPersistentSecretConfigured(): boolean {
+    return this.persistentSecretConfigured;
   }
 
   private signSessionId(sessionId: string): string {

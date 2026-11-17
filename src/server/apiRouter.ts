@@ -10,10 +10,16 @@
 
 import express, { NextFunction, Request, Response, Router } from 'express';
 import { PaymentCurrency, UserRole } from '../types';
+import { ServerSecurityAuditLog } from './auditLog';
 import {
   defaultChallengeStubStore,
   WebAuthnChallengeStubStore,
 } from './challengeService';
+import {
+  resolveTrustedCheckoutOriginUrl,
+  validateRpIdForOrigin,
+  validateWebAuthnOrigin,
+} from './originPolicy';
 import { InMemoryServerStateStore, ServerStateStore } from './serverStore';
 import { ServerSessionService } from './sessionService';
 import { StripeHostedCheckoutService } from './stripeProvider';
@@ -30,11 +36,25 @@ function asyncRoute(
   };
 }
 
+function extractClientDataOrigin(clientDataJSONBase64Url: string): string | undefined {
+  try {
+    const padded = clientDataJSONBase64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (padded.length % 4)) % 4;
+    const raw = Buffer.from(`${padded}${'='.repeat(padLen)}`, 'base64').toString('utf8');
+    const parsed = JSON.parse(raw) as { origin?: unknown };
+    return typeof parsed.origin === 'string' ? parsed.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface FoundationRouterDependencies {
   challengeStore?: WebAuthnChallengeStubStore;
   stateStore?: ServerStateStore;
   sessionService?: ServerSessionService;
   stripeService?: StripeHostedCheckoutService;
+  allowedOrigins?: string[];
+  auditLog?: ServerSecurityAuditLog;
 }
 
 export function createFoundationApiRouter(
@@ -49,8 +69,17 @@ export function createFoundationApiRouter(
   const stateStore = deps.stateStore ?? new InMemoryServerStateStore();
   const sessionService = deps.sessionService ?? new ServerSessionService({ store: stateStore });
   const stripeService = deps.stripeService ?? new StripeHostedCheckoutService({ store: stateStore });
+  const explicitOrigins = deps.allowedOrigins;
+  const auditLog = deps.auditLog ?? new ServerSecurityAuditLog();
 
   const router = express.Router();
+
+  // Never allow proxies or Service Workers to cache API auth cookies, challenges, or intents
+  router.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.setHeader('Pragma', 'no-cache');
+    next();
+  });
 
   // Stripe webhook route MUST receive raw Buffer BEFORE express.json() alters formatting
   router.post(
@@ -66,11 +95,18 @@ export function createFoundationApiRouter(
           rawBody,
           signatureHeader: req.header('stripe-signature'),
         });
+        auditLog.record(
+          result.duplicate ? 'payments.webhook.duplicate' : 'payments.webhook.processed',
+          'ok',
+          result.eventType
+        );
         res.status(200).json(result);
       } catch (err) {
+        const message = err instanceof Error ? err.message : 'Invalid Stripe webhook payload.';
+        auditLog.record('payments.webhook.rejected', 'rejected', message);
         res.status(400).json({
           received: false,
-          error: err instanceof Error ? err.message : 'Invalid Stripe webhook payload.',
+          error: message,
         });
       }
     })
@@ -81,8 +117,11 @@ export function createFoundationApiRouter(
   router.get('/health', (_req, res) => {
     res.json({
       ok: true,
-      stage: '4.2-server-identity-and-stripe-saq-a',
+      stage: '4.3-hardened-server-and-local-qr',
       pendingChallenges: challengeStore.getPendingCount(),
+      sessionSecretConfigured: sessionService.hasPersistentSecretConfigured(),
+      stripeConfigured: stripeService.isConfigured(),
+      auditSummary: auditLog.getSummary(),
     });
   });
 
@@ -121,12 +160,17 @@ export function createFoundationApiRouter(
         return;
       }
 
-      const proto = req.header('x-forwarded-proto') || req.protocol || 'http';
-      const host = req.header('host') || 'localhost:3000';
-      const originUrl =
-        typeof body.originUrl === 'string' && body.originUrl.startsWith('http')
-          ? body.originUrl
-          : `${proto}://${host}`;
+      const originResolution = resolveTrustedCheckoutOriginUrl({
+        candidateOriginUrl: typeof body.originUrl === 'string' ? body.originUrl : undefined,
+        req,
+        explicitOrigins,
+      });
+
+      if (!originResolution.ok) {
+        auditLog.record('payments.checkout.rejected', 'rejected', originResolution.error);
+        res.status(400).json({ error: originResolution.error });
+        return;
+      }
 
       try {
         const intent = await stripeService.createHostedCheckoutSession({
@@ -137,13 +181,15 @@ export function createFoundationApiRouter(
           serviceName,
           amountUsd,
           displayCurrency,
-          originUrl,
+          originUrl: originResolution.originUrl,
         });
+        auditLog.record('payments.checkout.created', 'ok', intent.providerId);
         res.status(201).json({ intent, hostedCheckoutUrl: intent.hostedCheckoutUrl });
       } catch (err) {
-        res.status(502).json({
-          error: err instanceof Error ? err.message : 'Unable to create Stripe Hosted Checkout session.',
-        });
+        const msg =
+          err instanceof Error ? err.message : 'Unable to create Stripe Hosted Checkout session.';
+        auditLog.record('payments.checkout.rejected', 'rejected', msg);
+        res.status(502).json({ error: msg });
       }
     })
   );
@@ -172,6 +218,7 @@ export function createFoundationApiRouter(
     const role: UserRole = body.role === 'master' ? 'master' : 'client';
 
     const issued = challengeStore.issueChallenge({ ceremony, role });
+    auditLog.record('auth.challenge.issued', 'ok', `${ceremony}:${role}`);
     res.status(200).json(issued);
   });
 
@@ -193,9 +240,9 @@ export function createFoundationApiRouter(
         typeof body.authenticatorDataBase64Url === 'string'
           ? body.authenticatorDataBase64Url
           : undefined;
-      const expectedOrigin =
+      const bodyExpectedOrigin =
         typeof body.expectedOrigin === 'string' ? body.expectedOrigin : undefined;
-      const rpId = typeof body.rpId === 'string' ? body.rpId.trim() : '';
+      const rpId = typeof body.rpId === 'string' ? body.rpId.trim().toLowerCase() : '';
       const displayName =
         typeof body.displayName === 'string' && body.displayName.trim()
           ? body.displayName.trim().slice(0, 64)
@@ -220,21 +267,39 @@ export function createFoundationApiRouter(
 
       const consumed = challengeStore.consumeChallengeRecord(challengeId);
       if (consumed.status !== 'ok') {
-        res.status(400).json({
-          registered: false,
-          error:
-            consumed.status === 'expired'
-              ? 'Registration challenge expired (TTL exceeded).'
-              : 'Unknown or already-consumed registration challenge.',
-        });
+        const err =
+          consumed.status === 'expired'
+            ? 'Registration challenge expired (TTL exceeded).'
+            : 'Unknown or already-consumed registration challenge.';
+        auditLog.record('auth.register.rejected', 'rejected', err);
+        res.status(400).json({ registered: false, error: err });
         return;
       }
 
       if (consumed.record.ceremony !== 'registration') {
-        res.status(400).json({
-          registered: false,
-          error: 'Challenge was not issued for WebAuthn registration.',
-        });
+        const err = 'Challenge was not issued for WebAuthn registration.';
+        auditLog.record('auth.register.rejected', 'rejected', err);
+        res.status(400).json({ registered: false, error: err });
+        return;
+      }
+
+      const clientOrigin = extractClientDataOrigin(clientDataJSONBase64Url);
+      const originCheck = validateWebAuthnOrigin({
+        clientOrigin,
+        bodyExpectedOrigin,
+        req,
+        explicitOrigins,
+      });
+      if (!originCheck.ok) {
+        auditLog.record('auth.register.rejected', 'rejected', originCheck.error);
+        res.status(400).json({ registered: false, error: originCheck.error });
+        return;
+      }
+
+      if (!validateRpIdForOrigin(rpId, originCheck.authoritativeOrigin)) {
+        const err = `WebAuthn rpId "${rpId}" is not permitted for origin ${originCheck.authoritativeOrigin}.`;
+        auditLog.record('auth.register.rejected', 'rejected', err);
+        res.status(400).json({ registered: false, error: err });
         return;
       }
 
@@ -242,7 +307,7 @@ export function createFoundationApiRouter(
         expectedChallengeBase64Url: consumed.record.challengeBase64Url,
         clientDataJSONBase64Url,
         publicKeySpkiBase64Url,
-        expectedOrigin,
+        expectedOrigin: originCheck.authoritativeOrigin,
         rpId,
         algorithm,
         role: consumed.record.role ?? role,
@@ -250,10 +315,8 @@ export function createFoundationApiRouter(
       });
 
       if (!check.ok) {
-        res.status(400).json({
-          registered: false,
-          error: check.error,
-        });
+        auditLog.record('auth.register.rejected', 'rejected', check.error);
+        res.status(400).json({ registered: false, error: check.error });
         return;
       }
 
@@ -278,6 +341,7 @@ export function createFoundationApiRouter(
         verificationLevel: 'server_spki_verified',
       });
 
+      auditLog.record('auth.register.ok', 'ok', consumed.record.role);
       res.status(201).json({
         registered: true,
         verificationTier: 'server_spki_verified',
@@ -300,9 +364,9 @@ export function createFoundationApiRouter(
         typeof body.authenticatorDataBase64Url === 'string'
           ? body.authenticatorDataBase64Url
           : undefined;
-      const expectedOrigin =
+      const bodyExpectedOrigin =
         typeof body.expectedOrigin === 'string' ? body.expectedOrigin : undefined;
-      const credentialId = typeof body.credentialId === 'string' ? body.credentialId : undefined;
+      const credentialId = typeof body.credentialId === 'string' ? body.credentialId.trim() : undefined;
       const signatureBase64Url =
         typeof body.signatureBase64Url === 'string' ? body.signatureBase64Url : undefined;
 
@@ -321,68 +385,118 @@ export function createFoundationApiRouter(
         challengeId,
         clientDataJSONBase64Url,
         authenticatorDataBase64Url,
-        expectedOrigin,
+        expectedOrigin: bodyExpectedOrigin,
       });
 
       if (!stubCheck.accepted) {
+        auditLog.record('auth.verify.spki_rejected', 'rejected', stubCheck.error);
         res.status(400).json(stubCheck);
         return;
       }
 
-      // Upgrade to REAL server cryptographic SPKI verification if registered credential & signature exist
-      if (credentialId && authenticatorDataBase64Url && signatureBase64Url) {
-        const storedCred = await stateStore.getPasskey(credentialId);
-        if (storedCred) {
-          const cryptoCheck = verifyAssertionSignatureOnServer({
-            storedCredential: storedCred,
-            clientDataJSONBase64Url,
-            authenticatorDataBase64Url,
-            signatureBase64Url,
-            expectedOrigin,
-          });
+      if (stubCheck.ceremony !== 'authentication') {
+        const err = 'Verify endpoint accepts authentication challenges only.';
+        auditLog.record('auth.verify.spki_rejected', 'rejected', err);
+        res.status(400).json({
+          accepted: false,
+          verificationTier: 'challenge_stub_only',
+          cryptographicServerVerified: false,
+          challengeConsumed: true,
+          error: err,
+        });
+        return;
+      }
 
-          if (!cryptoCheck.cryptographicSignatureValid) {
-            res.status(401).json({
-              accepted: false,
-              verificationTier: 'server_spki_verified',
-              cryptographicServerVerified: false,
-              challengeConsumed: true,
-              error: cryptoCheck.error,
-              warnings: cryptoCheck.warnings,
-            });
-            return;
-          }
+      // Server-authoritative origin validation (never blindly trust body.expectedOrigin)
+      const originCheck = validateWebAuthnOrigin({
+        clientOrigin: stubCheck.origin,
+        bodyExpectedOrigin,
+        req,
+        explicitOrigins,
+      });
 
-          await stateStore.upsertPasskey({
-            ...storedCred,
-            signCount: cryptoCheck.nextSignCount,
-            lastUsedAt: new Date().toISOString(),
-          });
+      if (!originCheck.ok) {
+        auditLog.record('auth.verify.spki_rejected', 'rejected', originCheck.error);
+        res.status(400).json({
+          accepted: false,
+          verificationTier: 'challenge_stub_only',
+          cryptographicServerVerified: false,
+          challengeConsumed: true,
+          error: originCheck.error,
+        });
+        return;
+      }
 
-          const session = await sessionService.createAndSetSession(req, res, {
-            credentialId: storedCred.id,
-            displayName: storedCred.displayName,
-            role: storedCred.role,
-            verificationLevel: 'server_spki_verified',
-          });
-
-          res.status(200).json({
-            accepted: true,
+      // Look up credentialId in persistent server SPKI store
+      const storedCred = credentialId ? await stateStore.getPasskey(credentialId) : undefined;
+      if (storedCred) {
+        // Anti-downgrade guard: registered passkeys MUST present full signature + authenticatorData
+        if (!authenticatorDataBase64Url || !signatureBase64Url) {
+          const err =
+            'Registered credential requires cryptographic signature and authenticatorData; downgrade to challenge stub is rejected.';
+          auditLog.record('auth.verify.downgrade_blocked', 'rejected', err);
+          res.status(401).json({
+            accepted: false,
             verificationTier: 'server_spki_verified',
-            cryptographicServerVerified: true,
+            cryptographicServerVerified: false,
             challengeConsumed: true,
-            ceremony: stubCheck.ceremony,
-            origin: stubCheck.origin,
-            warnings: cryptoCheck.warnings,
-            session,
-            notice:
-              'Server confirmed ECDSA/RSASSA SPKI assertion signature and issued signed HttpOnly session cookie.',
+            error: err,
           });
           return;
         }
+
+        const cryptoCheck = verifyAssertionSignatureOnServer({
+          storedCredential: storedCred,
+          clientDataJSONBase64Url,
+          authenticatorDataBase64Url,
+          signatureBase64Url,
+          expectedOrigin: originCheck.authoritativeOrigin,
+        });
+
+        if (!cryptoCheck.cryptographicSignatureValid) {
+          auditLog.record('auth.verify.spki_rejected', 'rejected', cryptoCheck.error);
+          res.status(401).json({
+            accepted: false,
+            verificationTier: 'server_spki_verified',
+            cryptographicServerVerified: false,
+            challengeConsumed: true,
+            error: cryptoCheck.error,
+            warnings: cryptoCheck.warnings,
+          });
+          return;
+        }
+
+        await stateStore.upsertPasskey({
+          ...storedCred,
+          signCount: cryptoCheck.nextSignCount,
+          lastUsedAt: new Date().toISOString(),
+        });
+
+        const session = await sessionService.createAndSetSession(req, res, {
+          credentialId: storedCred.id,
+          displayName: storedCred.displayName,
+          role: storedCred.role,
+          verificationLevel: 'server_spki_verified',
+        });
+
+        auditLog.record('auth.verify.spki_ok', 'ok', storedCred.role);
+        res.status(200).json({
+          accepted: true,
+          verificationTier: 'server_spki_verified',
+          cryptographicServerVerified: true,
+          challengeConsumed: true,
+          ceremony: stubCheck.ceremony,
+          origin: originCheck.authoritativeOrigin,
+          warnings: cryptoCheck.warnings,
+          session,
+          notice:
+            'Server confirmed ECDSA/RSASSA SPKI assertion signature and issued signed HttpOnly session cookie.',
+        });
+        return;
       }
 
-      // Honest fallback when credential is not registered in server SPKI store or raw signature omitted
+      // Honest fallback when credential is not registered in server SPKI store
+      auditLog.record('auth.verify.stub_fallback', 'fallback', 'unregistered-credential');
       res.status(200).json(stubCheck);
     })
   );
@@ -414,6 +528,7 @@ export function createFoundationApiRouter(
     '/auth/logout',
     asyncRoute(async (req, res) => {
       await sessionService.revokeSessionFromRequest(req, res);
+      auditLog.record('auth.session.revoked', 'ok');
       res.status(200).json({ signedOut: true });
     })
   );

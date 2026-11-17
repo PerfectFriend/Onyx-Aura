@@ -328,5 +328,19 @@
 4. **HTTP Security Headers Middleware (`src/server/securityHeaders.ts`):**
    - Каждый HTTP-ответ Express содержит `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` и HTTP-заголовок `Content-Security-Policy` с настраиваемой директивой `frame-ancestors` (`NAILIX_FRAME_ANCESTORS`).
 
+---
+
+## 🛡️ 15. Спринт 4.3 «Закалка брони перед аудитом Коляна + Закрытие N-10 и строгий CSP»
+
+1. **Авторитетная политика `origin` / `rpId` и защита редиректа Stripe (`src/server/originPolicy.ts`, `src/server/apiRouter.ts`):**
+   - Эндпоинты `/api/auth/webauthn/register`, `/verify` и `/api/payments/checkout-session` больше не принимают на веру переданные клиентом `body.expectedOrigin`, произвольный `rpId` или произвольный `body.originUrl`: допустимые origin выводятся сервером из HTTP `Host`/`Origin` + `NAILIX_ALLOWED_ORIGINS` (и валидного `APP_URL`), `rpId` проверяется на совпадение с эффективным доменом разрешённого origin, а URL возврата Stripe защищён от open-redirect.
+2. **Анти-даунгрейд WebAuthn и усиление границ (`src/server/apiRouter.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/serverStore.ts`, `src/server/stripeProvider.ts`):**
+   - Если `credentialId` уже зарегистрирован на сервере (`stateStore.getPasskey`), `/verify` **запрещает** откат в `challenge_stub_only` без `signatureBase64Url` / `authenticatorDataBase64Url` (отказ HTTP `401`) и отклоняет `registration`-challenge на `/verify` (`HTTP 400`).
+   - `verifyAssertionSignatureOnServer` принудительно требует `clientDataJSON.type === 'webauthn.get'`; `ServerStateStore` отсекает prototype-pollution ключи и некорректные `expiresAt`; `StripeHostedCheckoutService` защищает терминальный статус `captured` от отката задержанными/непоследовательными вебхуками; все маршруты `/api/*` отдают `Cache-Control: no-store, private`.
+3. **Безопасный аудит-лог без ПДн (`src/server/auditLog.ts`):**
+   - `ServerSecurityAuditLog` фиксирует ограниченный по размеру (200 записей) поток событий аутентификации и платежей без email, телефонов, кук, подписей и ключей; сводка публикуется в `/api/health`.
+4. **Закрытие `N-10`: 100% локальный QR и вычищение `api.qrserver.com` (`src/utils/qrGenerator.ts`, `src/components/AndroidExperienceView.tsx`, `src/infrastructure/security/csp.ts`):**
+   - Pairing QR-код генерируется оффлайн пакетом `qrcode` локально без отправки URL на внешний сервис; домен `https://api.qrserver.com` полностью удалён из `img-src` build-time и HTTP CSP (`img-src 'self' data: blob:`). Заодно в `CalendarSyncButtons.tsx` вызовы `window.open` заменены на безопасные `<a target="_blank" rel="noopener noreferrer">`.
+
 
 

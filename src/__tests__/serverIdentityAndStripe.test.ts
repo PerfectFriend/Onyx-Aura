@@ -8,10 +8,12 @@ import express from 'express';
 import { describe, it, expect } from 'vitest';
 import { createFoundationApiRouter } from '../server/apiRouter';
 import { WebAuthnChallengeStubStore } from '../server/challengeService';
-import { securityHeadersMiddleware } from '../server/securityHeaders';
+import { buildServerHttpCsp, securityHeadersMiddleware } from '../server/securityHeaders';
 import { FileServerStateStore, InMemoryServerStateStore } from '../server/serverStore';
 import { ServerSessionService } from '../server/sessionService';
 import { StripeHostedCheckoutService, verifyStripeWebhookSignature } from '../server/stripeProvider';
+import { buildContentSecurityPolicy } from '../infrastructure/security/csp';
+import { generateLocalQrDataUrl, generateLocalQrSvg } from '../utils/qrGenerator';
 
 function toBase64Url(buf: Buffer | string): string {
   const b = typeof buf === 'string' ? Buffer.from(buf, 'utf8') : buf;
@@ -114,7 +116,15 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
 
     await withServer(
       app => {
-        app.use('/api', createFoundationApiRouter({ challengeStore, stateStore, sessionService }));
+        app.use(
+          '/api',
+          createFoundationApiRouter({
+            challengeStore,
+            stateStore,
+            sessionService,
+            allowedOrigins: [origin],
+          })
+        );
       },
       async baseUrl => {
         // 1. Register credential on server
@@ -462,5 +472,311 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
     });
     expect(staleSig.valid).toBe(false);
     expect(staleSig.reason).toContain('tolerance');
+  });
+
+  it('Sprint 4.3 Hardening: blocks origin/rpId hijacking, registered passkey downgrade, ceremony confusion, open-redirect checkout, and out-of-order webhook regression', async () => {
+    const stateStore = new InMemoryServerStateStore();
+    const challengeStore = new WebAuthnChallengeStubStore();
+    const webhookSecret = 'whsec_hardening_test_123456';
+    const stripeService = new StripeHostedCheckoutService({
+      store: stateStore,
+      secretKey: 'sk_test_hardening_key',
+      webhookSecret,
+      fetchFn: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'cs_hard_1',
+              url: 'https://checkout.stripe.com/c/pay/cs_hard_1',
+            }),
+            { status: 200 }
+          )
+        ),
+    });
+
+    const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const spkiB64u = toBase64Url(publicKey.export({ type: 'spki', format: 'der' }));
+
+    await withServer(
+      app => {
+        app.use(
+          '/api',
+          createFoundationApiRouter({
+            challengeStore,
+            stateStore,
+            stripeService,
+          })
+        );
+      },
+      async baseUrl => {
+        const trustedOrigin = new URL(baseUrl).origin;
+        const trustedRpId = new URL(baseUrl).hostname;
+
+        // 1. Forged third-party expectedOrigin MUST be rejected on /register
+        const ch1 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'registration', role: 'master' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+
+        const forgedRegRes = await fetch(`${baseUrl}/api/auth/webauthn/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch1.challengeId,
+            credentialId: 'cred-forged-origin',
+            publicKeySpkiBase64Url: spkiB64u,
+            clientDataJSONBase64Url: toBase64Url(
+              JSON.stringify({
+                type: 'webauthn.create',
+                challenge: ch1.challengeBase64Url,
+                origin: 'https://evil-attacker.example',
+              })
+            ),
+            expectedOrigin: 'https://evil-attacker.example',
+            rpId: 'evil-attacker.example',
+            algorithm: -7,
+            role: 'master',
+          }),
+        });
+        expect(forgedRegRes.status).toBe(400);
+
+        // 2. Arbitrary third-party rpId MUST be rejected even when origin matches server host
+        const ch2 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'registration', role: 'master' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+
+        const badRpRes = await fetch(`${baseUrl}/api/auth/webauthn/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch2.challengeId,
+            credentialId: 'cred-bad-rpid',
+            publicKeySpkiBase64Url: spkiB64u,
+            clientDataJSONBase64Url: toBase64Url(
+              JSON.stringify({
+                type: 'webauthn.create',
+                challenge: ch2.challengeBase64Url,
+                origin: trustedOrigin,
+              })
+            ),
+            rpId: 'google.com',
+            algorithm: -7,
+            role: 'master',
+          }),
+        });
+        expect(badRpRes.status).toBe(400);
+
+        // 3. Valid registration on actual trusted server host succeeds & sets Cache-Control: no-store
+        const ch3 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'registration', role: 'master' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+
+        const okReg = await fetch(`${baseUrl}/api/auth/webauthn/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch3.challengeId,
+            credentialId: 'cred-legit-host',
+            publicKeySpkiBase64Url: spkiB64u,
+            clientDataJSONBase64Url: toBase64Url(
+              JSON.stringify({
+                type: 'webauthn.create',
+                challenge: ch3.challengeBase64Url,
+                origin: trustedOrigin,
+              })
+            ),
+            authenticatorDataBase64Url: toBase64Url(makeAuthenticatorData(trustedRpId, 0x05, 1)),
+            rpId: trustedRpId,
+            algorithm: -7,
+            role: 'master',
+          }),
+        });
+        expect(okReg.status).toBe(201);
+        expect(okReg.headers.get('cache-control')).toContain('no-store');
+
+        // 4. Registered credential omitting signature MUST be blocked with 401 (anti-downgrade)
+        const ch4 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'authentication', role: 'master' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+
+        const downgradeRes = await fetch(`${baseUrl}/api/auth/webauthn/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch4.challengeId,
+            credentialId: 'cred-legit-host',
+            clientDataJSONBase64Url: toBase64Url(
+              JSON.stringify({
+                type: 'webauthn.get',
+                challenge: ch4.challengeBase64Url,
+                origin: trustedOrigin,
+              })
+            ),
+          }),
+        });
+        expect(downgradeRes.status).toBe(401);
+
+        // 5. Registration challenge passed to /verify MUST be rejected with 400
+        const ch5 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'registration', role: 'client' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+
+        const wrongCeremonyRes = await fetch(`${baseUrl}/api/auth/webauthn/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch5.challengeId,
+            clientDataJSONBase64Url: toBase64Url(
+              JSON.stringify({
+                type: 'webauthn.create',
+                challenge: ch5.challengeBase64Url,
+                origin: trustedOrigin,
+              })
+            ),
+          }),
+        });
+        expect(wrongCeremonyRes.status).toBe(400);
+
+        // Keep privateKey exercised to guarantee real signature still passes on valid flow
+        const ch6 = (await (
+          await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony: 'authentication', role: 'master' }),
+          })
+        ).json()) as { challengeId: string; challengeBase64Url: string };
+        const cdBuf = Buffer.from(
+          JSON.stringify({
+            type: 'webauthn.get',
+            challenge: ch6.challengeBase64Url,
+            origin: trustedOrigin,
+          }),
+          'utf8'
+        );
+        const adBuf = makeAuthenticatorData(trustedRpId, 0x05, 2);
+        const realSig = cryptoSign(
+          'sha256',
+          Buffer.concat([adBuf, createHash('sha256').update(cdBuf).digest()]),
+          privateKey
+        );
+        const legitVerify = await fetch(`${baseUrl}/api/auth/webauthn/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challengeId: ch6.challengeId,
+            credentialId: 'cred-legit-host',
+            clientDataJSONBase64Url: toBase64Url(cdBuf),
+            authenticatorDataBase64Url: toBase64Url(adBuf),
+            signatureBase64Url: toBase64Url(realSig),
+          }),
+        });
+        expect(legitVerify.status).toBe(200);
+
+        // 6. Open-redirect originUrl MUST be rejected on /payments/checkout-session
+        const evilCheckout = await fetch(`${baseUrl}/api/payments/checkout-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bookingReferenceId: 'apt-open-redir',
+            artistId: 'art-1',
+            serviceId: 'svc-1',
+            amountUsd: 100,
+            originUrl: 'https://evil-phish.example',
+          }),
+        });
+        expect(evilCheckout.status).toBe(400);
+
+        // 7. Webhook status cannot regress captured intent back to canceled
+        const goodCheckout = await fetch(`${baseUrl}/api/payments/checkout-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bookingReferenceId: 'apt-mono-1',
+            artistId: 'art-1',
+            serviceId: 'svc-1',
+            amountUsd: 100,
+          }),
+        });
+        expect(goodCheckout.status).toBe(201);
+        const { intent } = (await goodCheckout.json()) as { intent: { id: string } };
+
+        const ts = Math.floor(Date.now() / 1000);
+        const capPayload = JSON.stringify({
+          id: 'evt_cap_1',
+          type: 'checkout.session.completed',
+          data: { object: { payment_status: 'paid', metadata: { intentId: intent.id } } },
+        });
+        const capSig = createHmac('sha256', webhookSecret).update(`${ts}.${capPayload}`).digest('hex');
+        expect(
+          (
+            await fetch(`${baseUrl}/api/payments/webhooks/stripe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${ts},v1=${capSig}` },
+              body: capPayload,
+            })
+          ).status
+        ).toBe(200);
+
+        const expPayload = JSON.stringify({
+          id: 'evt_exp_late_1',
+          type: 'checkout.session.expired',
+          data: { object: { metadata: { intentId: intent.id } } },
+        });
+        const expSig = createHmac('sha256', webhookSecret).update(`${ts}.${expPayload}`).digest('hex');
+        await fetch(`${baseUrl}/api/payments/webhooks/stripe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${ts},v1=${expSig}` },
+          body: expPayload,
+        });
+
+        const finalIntent = (await (
+          await fetch(`${baseUrl}/api/payments/intents/${intent.id}`)
+        ).json()) as { intent: { status: string } };
+        expect(finalIntent.intent.status).toBe('captured');
+
+        // 8. Non-PII health audit summary exposes counts cleanly
+        const health = (await (await fetch(`${baseUrl}/api/health`)).json()) as {
+          ok: boolean;
+          stage: string;
+          auditSummary: { totalRecorded: number; recentRejectedCount: number };
+        };
+        expect(health.ok).toBe(true);
+        expect(health.stage).toBe('4.3-hardened-server-and-local-qr');
+        expect(health.auditSummary.totalRecorded).toBeGreaterThan(0);
+        expect(health.auditSummary.recentRejectedCount).toBeGreaterThan(0);
+      }
+    );
+  });
+
+  it('N-10 Local Offline QR & Strict CSP: generates QR locally without network and removes api.qrserver.com from CSP', async () => {
+    const svg = await generateLocalQrSvg('https://nailix.art');
+    expect(svg).toContain('<svg');
+    expect(svg).toContain('</svg>');
+
+    const dataUrl = await generateLocalQrDataUrl('https://nailix.art');
+    expect(dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+
+    expect(buildContentSecurityPolicy('development')).not.toContain('qrserver.com');
+    expect(buildContentSecurityPolicy('production')).not.toContain('qrserver.com');
+    expect(buildServerHttpCsp(true)).not.toContain('qrserver.com');
   });
 });
