@@ -180,7 +180,8 @@ export function validateIdentitySession(input: unknown): ValidationResult<Identi
       input.authMethod !== 'demo_passkey_sim') ||
     (input.signedInAt !== null && !isNonEmptyString(input.signedInAt)) ||
     (input.expiresAt !== undefined && input.expiresAt !== null && !isNonEmptyString(input.expiresAt)) ||
-    input.verificationScope !== 'client_local_only'
+    (input.verificationScope !== 'client_local_only' &&
+      input.verificationScope !== 'server_spki_verified')
   ) {
     return { ok: false, reason: 'Malformed IdentitySession fields' };
   }
@@ -193,7 +194,7 @@ export function validateIdentitySession(input: unknown): ValidationResult<Identi
     authMethod: input.authMethod,
     signedInAt: input.signedInAt,
     expiresAt: input.expiresAt ?? null,
-    verificationScope: 'client_local_only',
+    verificationScope: input.verificationScope,
   };
   return { ok: true, value: normalized };
 }

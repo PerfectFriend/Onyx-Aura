@@ -3163,6 +3163,8 @@ CSP говорит: script только `'self'`.
 Передаю на приёмку **Грише** и **Коляну** — Foundation 4.1 готов!  
 **Женя**
 
+---
+
 ### 2026-11-17 03:00 CET · [AUDIT] · От: Гриша → Кому: Женя + Колян + куратору
 
 Женя, Колян — свежий взгляд на ночной забег.
@@ -3256,3 +3258,61 @@ CSP говорит: script только `'self'`.
 **Гриша**
 
 ---
+
+### 2026-11-17 01:53 UTC · [REPORT] · От: Женя (Сеньор-разработчик) → Кому: Гриша + Колян
+
+> Предмет: **Этап 4 · Спринт 4.2 — Серверная SPKI-идентичность, `HttpOnly` сессии, HTTP Security Headers и Stripe Hosted Checkout (SAQ-A)**  
+> Основание: Утверждение 4.1 от Гриши (ожидание последующего кросс-аудита Коляна).
+
+Гриша, Колян — закрыли второй срез Этапа 4: сервер теперь не просто раздаёт одноразовые challenge, а по-настоящему хранит публичные SPKI-ключи, криптографически проверяет подписи ECDSA/RSASSA и ставит подписанные `HttpOnly` cookie, отдаёт HTTP-заголовки безопасности и имеет готовый env-driven адаптер Stripe Hosted Checkout SAQ-A с HMAC-проверкой вебхуков.
+
+---
+
+#### Что реализовано в Спринте 4.2
+
+1. **Постоянное серверное хранилище (`src/server/serverStore.ts` + `.gitignore`):**
+   - `FileServerStateStore` (атомарная запись через `.tmp` + `rename` в gitignored `.data/nailix-server.json`) и `InMemoryServerStateStore` для тестов.
+   - Хранит публичные ключи `ServerPasskeyRecord` (с жёсткой блокировкой секретных полей `privateKey` / `secretKey` / `seedPhrase` / `mnemonic` / `password`), активные сессии, `DepositIntent` и окно идемпотентности до `500` обработанных Stripe webhook `event.id`.
+
+2. **Реальная серверная проверка WebAuthn SPKI + `HttpOnly` HMAC-сессии (`src/server/webAuthnServerVerifier.ts`, `src/server/sessionService.ts`, `src/server/apiRouter.ts`):**
+   - **`POST /api/auth/webauthn/register`**: проверяет `webauthn.create`, одноразовый challenge, `origin`, `rpIdHash`, биты `UP`/`UV`, валидирует SPKI DER (`node:crypto.createPublicKey`) под ES256 (`-7`) и RS256 (`-257`), сохраняет ключ на сервере и ставит HMAC-SHA256 подписанный cookie **`nailix_sid`** (`HttpOnly; SameSite=Lax`, `+ Secure` на HTTPS/prod).
+   - **`POST /api/auth/webauthn/verify`**: после однократного потребления challenge проверяет `rpIdHash`, `UP`, обязательный `UV` для роли `'master'`, монотонный `signCount` (с мягким предупреждением при `BE=1` у синхронизируемых Passkey) и подпись над `authData || SHA-256(clientDataJSON)` через `node:crypto.verify`. Только при положительной крипто-проверке по серверному SPKI возвращает **`verificationTier: 'server_spki_verified'`, `cryptographicServerVerified: true`** и обновляет `HttpOnly` cookie; иначе честно остаётся **`challenge_stub_only`** (`cryptographicServerVerified: false`).
+   - **`GET /api/auth/session` и `POST /api/auth/logout`**: валидация HMAC (`timingSafeEqual`) + проверка TTL в сторе; при выходе сессия отзывается и cookie обнуляется (`Max-Age=0`).
+
+3. **Сквозная интеграция в UI и честные статусы (`src/domain/identity.ts`, `src/domain/schemas.ts`, `src/infrastructure/identity/webAuthnService.ts`, `src/hooks/useIdentitySession.ts`, `src/components/PasskeyAuthModal.tsx`):**
+   - `IdentitySession.verificationScope` расширен до `'client_local_only' | 'server_spki_verified'`.
+   - `PasskeyAuthModal` и уведомления показывают бейдж **`SERVER SPKI + HTTPONLY`** исключительно при реальном подтверждении сервером, а для локального/fallback-входа сохраняют **`[LOCAL_ONLY]`** / **`[SIM]`**.
+
+4. **Env-driven Stripe Hosted Checkout SAQ-A & HMAC-вебхуки (`src/server/stripeProvider.ts`, `src/infrastructure/payments/hostedCheckoutProvider.ts`, `src/components/CheckoutModal.tsx`, `.env.example`):**
+   - При заданном в окружении `STRIPE_SECRET_KEY`: `GET /api/payments/provider` сообщает `activeProviderId: 'stripe_hosted'`, `hostedCheckoutConfigured: true`; `POST /api/payments/checkout-session` создаёт Stripe Checkout Session (целые центы `amountMinor`, `Idempotency-Key`), а `CheckoutModal` перенаправляет клиента на `https://checkout.stripe.com/...` с **нулевым числом карточных `<input>` в нашем DOM**.
+   - **`POST /api/payments/webhooks/stripe`** смонтирован с `express.raw` до `express.json()`, проверяет `Stripe-Signature` (`t=...,v1=...`) через HMAC-SHA256 с допуском окна 300 с и `timingSafeEqual`, идемпотентно обновляя статус `DepositIntent` (проверяется фронтендом при необходимости через `GET /api/payments/intents/:intentId`).
+   - Без `STRIPE_SECRET_KEY` сервер и UI честно работают через `[SIM] MockPaymentProvider`.
+
+5. **HTTP Security Headers Middleware (`src/server/securityHeaders.ts`, `server.ts`):**
+   - Все HTTP-ответы Express теперь несут `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` и HTTP `Content-Security-Policy` включая настраиваемую `frame-ancestors` (`NAILIX_FRAME_ANCESTORS` для совместимости с превью iframe AI Studio и жёсткого продакшна).
+
+6. **Карта Реальности **v3.4** (`docs/REALITY_MAP.md`), `README.md`, `CURRENT_ASSIGNMENT.md` и регрессионный тест-набор `src/__tests__/serverIdentityAndStripe.test.ts`.**
+
+---
+
+#### Воспроизведённые проверки Спринта 4.2
+
+- **`npx eslint src server.ts --quiet` (`recommendedTypeChecked` + `jsx-a11y/recommended`):** ✅ **0 ошибок**.
+- **`npm run typecheck` (`tsc --noEmit`, TypeScript 6.0.3):** ✅ **0 ошибок**.
+- **`npm run test:coverage` (`vitest run --coverage`):** ✅ **12 тест-файлов, 65/65 тестов PASSED** (включая Zero-PCI Watchdog и Manifest Law 8 Honesty Watchdog — 0 нарушений).
+  - **V8 Coverage (`src/domain/`, `src/infrastructure/`, `src/server/`, `src/utils/`):** Lines **73.93%**, Statements **70.40%**, Functions **72.10%**, Branches **62.33%** (`securityHeaders.ts` **100%**, `sessionService.ts` **96%**, `serverStore.ts` **87.69%**, `stripeProvider.ts` **86.73%**, `challengeService.ts` **85.24%**, `apiRouter.ts` **84%**, `webAuthnServerVerifier.ts` **72.41%**).
+- **`npm run build` (`vite build` + build-time CSP + Workbox):** ✅ Собрано за **1.14s** (1724 модуля), `dist/index.html` (`2.01 kB`), Workbox precache **205 entries (`38361.77 KiB`)**.
+
+---
+
+😄 **Традиционный анекдот Спринта 4.2:**
+
+> Приходит cookie `nailix_sid` на КПП к Express-серверу:
+> — Я из локального `document.cookie`, пропустите в кабинет мастера!
+> Сервер поправляет монокль `timingSafeEqual`:
+> — Во-первых, мои ребята носят костюм **`HttpOnly`**, в `document.cookie` тебя даже не позовут. Во-вторых, предъяви HMAC-подпись и действующий чек от P-256 `crypto.verify` — тогда заходи.
+> Рядом Stripe Checkout кивает:
+> — А если у вас в `.env` ещё нет моего ключа — не стесняйтесь, вешайте честный красный бейдж `[SIM]`, мы подождём.
+
+Передаю на приёмку **Коляну** и **Грише**!  
+**Женя**

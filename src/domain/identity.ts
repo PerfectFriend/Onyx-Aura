@@ -43,8 +43,8 @@ export interface IdentitySession {
   signedInAt: string | null;
   /** ISO expiration timestamp enforcing bounded local session lifetime (L-04). */
   expiresAt: string | null;
-  /** Stage 3 verifies WebAuthn signature locally; backend challenge/authorization starts Stage 4. */
-  verificationScope: 'client_local_only';
+  /** Stage 3 checks signatures locally; Stage 4.2 upgrades to server_spki_verified when backed by HttpOnly session. */
+  verificationScope: 'client_local_only' | 'server_spki_verified';
 }
 
 export interface WebAuthnCapabilityReport {

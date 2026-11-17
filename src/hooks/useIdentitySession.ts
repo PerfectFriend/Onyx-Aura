@@ -13,6 +13,8 @@ import {
   buildSessionExpiryFromNow,
   createSimulatedDemoPasskey,
   detectWebAuthnSupport,
+  fetchServerIdentitySessionStatus,
+  logoutServerIdentitySession,
   registerWebAuthnPasskey,
 } from '../infrastructure/identity/webAuthnService';
 
@@ -109,7 +111,8 @@ export function useIdentitySession({
     async (
       cred: PasskeyCredentialRecord,
       isNewRegistration: boolean,
-      signatureVerified = false
+      signatureVerified = false,
+      serverSpkiVerified = false
     ) => {
       const nowIso = new Date().toISOString();
       const authMethod = cred.isSimulatedFallback
@@ -126,7 +129,10 @@ export function useIdentitySession({
         authMethod,
         signedInAt: nowIso,
         expiresAt: buildSessionExpiryFromNow(),
-        verificationScope: 'client_local_only',
+        verificationScope:
+          !cred.isSimulatedFallback && serverSpkiVerified
+            ? 'server_spki_verified'
+            : 'client_local_only',
       };
 
       // Persist FIRST so failed writes never desync UI from storage (L-12)
@@ -159,11 +165,24 @@ export function useIdentitySession({
         });
         setPasskeys(nextPasskeys);
 
-        await commitSession(created, true, Boolean(created.publicKeySpkiBase64Url));
+        const serverStatus = await fetchServerIdentitySessionStatus();
+        const isServerBacked =
+          serverStatus.authenticated &&
+          serverStatus.credentialId === created.id &&
+          serverStatus.verificationScope === 'server_spki_verified';
+
+        await commitSession(
+          created,
+          true,
+          Boolean(created.publicKeySpkiBase64Url),
+          isServerBacked
+        );
 
         onNotify?.(
-          'Passkey (WebAuthn)',
-          `Ключ «${created.displayName}» зарегистрирован в устройстве.`
+          isServerBacked ? 'Passkey Server SPKI Active' : 'Passkey (WebAuthn) [LOCAL_ONLY]',
+          isServerBacked
+            ? `Ключ «${created.displayName}» зарегистрирован в устройстве и на сервере (HttpOnly cookie).`
+            : `Ключ «${created.displayName}» сохранён в устройстве локально.`
         );
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Не удалось создать Passkey.';
@@ -179,8 +198,13 @@ export function useIdentitySession({
     setIsBusy(true);
     setAuthError(null);
     try {
-      const { credential, verification, cryptographicSignatureVerified, discoveredNew } =
-        await authenticateWebAuthnPasskey(passkeys, { allowDiscoverableFallback: true });
+      const {
+        credential,
+        verification,
+        cryptographicSignatureVerified,
+        discoveredNew,
+        serverStubVerification,
+      } = await authenticateWebAuthnPasskey(passkeys, { allowDiscoverableFallback: true });
 
       const nextPasskeys = discoveredNew
         ? [credential, ...passkeys]
@@ -189,21 +213,32 @@ export function useIdentitySession({
       await onPersistPasskeys?.(nextPasskeys, 'PASSKEY_ASSERTION_USED', {
         credentialId: credential.id,
         cryptographicSignatureVerified,
+        serverSpkiChecked: serverStubVerification.cryptographicServerVerified,
         discoveredNew,
       });
       setPasskeys(nextPasskeys);
 
-      await commitSession(credential, false, verification === 'signature_verified');
+      const serverOk = serverStubVerification.cryptographicServerVerified;
+      await commitSession(
+        credential,
+        false,
+        verification === 'signature_verified',
+        serverOk
+      );
 
       onNotify?.(
-        verification === 'signature_verified'
+        serverOk
+          ? 'Passkey Server SPKI + HttpOnly Session'
+          : verification === 'signature_verified'
           ? 'Passkey Signature Confirmed [LOCAL_ONLY]'
           : 'Passkey Presence Only [LOCAL_ONLY]',
-        `${credential.displayName}: ${
-          verification === 'signature_verified'
-            ? 'криптоподпись SPKI проверена локально'
-            : 'подтверждено только присутствие (без SPKI ключа)'
-        } (TTL 8ч).`
+        serverOk
+          ? `${credential.displayName}: подпись SPKI подтверждена на сервере + HttpOnly сессия (TTL 8ч).`
+          : `${credential.displayName}: ${
+              verification === 'signature_verified'
+                ? 'криптоподпись SPKI проверена локально'
+                : 'подтверждено только присутствие (без SPKI ключа)'
+            } (TTL 8ч).`
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось выполнить вход по Passkey.';
@@ -276,11 +311,12 @@ export function useIdentitySession({
     setIsBusy(true);
     setAuthError(null);
     try {
+      await logoutServerIdentitySession();
       const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
       await onPersistSession?.(anonymous, 'IDENTITY_SIGNED_OUT');
       setSession(anonymous);
       onRoleSynced?.('client');
-      onNotify?.('Passkey Session Ended', 'Локальный сеанс завершён.');
+      onNotify?.('Passkey Session Ended', 'Сеанс завершён (клиент и HttpOnly cookie).');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось завершить сеанс в хранилище.';
       setAuthError(message);
@@ -299,6 +335,7 @@ export function useIdentitySession({
         setPasskeys(nextPasskeys);
 
         if (session.credentialId === credentialId) {
+          await logoutServerIdentitySession();
           const anonymous: IdentitySession = { ...DEFAULT_ANONYMOUS_SESSION };
           await onPersistSession?.(anonymous, 'IDENTITY_SESSION_REVOKED');
           setSession(anonymous);

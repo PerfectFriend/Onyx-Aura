@@ -111,7 +111,10 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
             </div>
             <div>
               <h2 id="passkey-modal-title" className="font-display font-bold text-lg">
-                Passkeys & WebAuthn [LOCAL_ONLY]
+                Passkeys & WebAuthn{' '}
+                {session.authenticated && session.verificationScope === 'server_spki_verified'
+                  ? '[SERVER SPKI]'
+                  : '[LOCAL_ONLY]'}
               </h2>
               <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-slate-600'}`}>
                 Без паролей · приватный ключ остаётся в TPM / Enclave устройства
@@ -149,8 +152,10 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                   : `WebAuthn ограничен средой: ${capabilities.reason || 'недоступен в текущей песочнице.'}`}
               </p>
               <p className="text-[11px] opacity-80">
-                Режим <span className="font-mono font-bold">LOCAL_ONLY</span>: подпись проверяется локально по SPKI в браузере; серверный stub{' '}
-                <span className="font-mono">/api/auth/webauthn/challenge</span> выдаёт одноразовый challenge с TTL (полная крипто-проверка подписи на сервере — Этап 4.2).
+                Сервер{' '}
+                <span className="font-mono">/api/auth/webauthn/*</span> выдаёт одноразовый challenge с TTL и при наличии зарегистрированного SPKI-ключа подтверждает криптоподпись +{' '}
+                <span className="font-mono">HttpOnly</span> сессию (иначе остаётся честный режим{' '}
+                <span className="font-mono font-bold">LOCAL_ONLY</span>).
               </p>
             </div>
           </div>
@@ -174,8 +179,14 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                       {session.displayName ?? 'Guest'}
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 uppercase">
-                      Демо-роль: {session.role}
+                      Роль: {session.role}
                     </span>
+                    {session.verificationScope === 'server_spki_verified' &&
+                      session.authMethod !== 'demo_passkey_sim' && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-900/70 text-emerald-200 border border-emerald-500/50 font-bold">
+                          SERVER SPKI + HTTPONLY
+                        </span>
+                      )}
                     {session.authMethod === 'demo_passkey_sim' && (
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-900/70 text-red-200 border border-red-500/50 font-bold">
                         [SIM] DEMO PREVIEW
@@ -188,7 +199,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                     )}
                   </div>
                   <p className="text-[11px] font-mono text-gray-400 mt-0.5">
-                    ID: {session.credentialId?.slice(0, 18)}... · TTL до:{' '}
+                    ID: {session.credentialId?.slice(0, 18)}... · Scope: {session.verificationScope} · TTL до:{' '}
                     {session.expiresAt ? new Date(session.expiresAt).toLocaleTimeString() : '—'}
                   </p>
                 </div>

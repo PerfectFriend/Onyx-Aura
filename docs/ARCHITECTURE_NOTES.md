@@ -307,4 +307,26 @@
    - Эндпоинты `GET /api/payments/provider`, `POST /api/auth/webauthn/challenge` и `POST /api/auth/webauthn/verify` выдают одноразовые 32-байтовые challenge (TTL `120 с`, ограниченный размер стора `2000`), проверяют привязку `clientDataJSON` и флаг `UP` после однократного потребления, и **строго возвращают `verificationTier: 'challenge_stub_only'` и `cryptographicServerVerified: false`**.
    - Клиентский `webAuthnService.ts` запрашивает challenge у `/api/auth/webauthn/challenge` с коротким таймаутом и безопасным fallback на локальный CSPRNG в статичных/оффлайн-средах; реальная серверная COSE/SPKI-проверка подписи и выпуск `HttpOnly` сессий запланированы на Спринт 4.2.
 
+---
+
+## 🔐 14. Этап 4 · Спринт 4.2 «Серверная SPKI-идентичность, `HttpOnly` сессии и Stripe Hosted Checkout (SAQ-A)»
+
+1. **Постоянное серверное хранилище (`src/server/serverStore.ts`):**
+   - `FileServerStateStore` (атомарная запись через `.tmp` + `rename` в gitignored `.data/nailix-server.json`) и `InMemoryServerStateStore` для изолированных тестов.
+   - Хранит публичные SPKI-ключи (`ServerPasskeyRecord`, явная блокировка секретных полей), активные сессии (`ServerSessionRecord`), `DepositIntent` и окно идемпотентности обработанных вебхуков Stripe (до 500 последних `event.id`).
+
+2. **Реальная серверная крипто-проверка WebAuthn и `HttpOnly` сессии (`src/server/webAuthnServerVerifier.ts`, `src/server/sessionService.ts`, `src/server/apiRouter.ts`):**
+   - **`POST /api/auth/webauthn/register`**: проверяет `clientDataJSON.type === 'webauthn.create'`, одноразовый challenge, `origin`, `rpIdHash`, биты `UP`/`UV`, валидирует SPKI DER (`node:crypto.createPublicKey`) для ES256 (`-7`) и RS256 (`-257`), сохраняет ключ на сервере и ставит подписанный HMAC-SHA256 `HttpOnly; SameSite=Lax` cookie `nailix_sid`.
+   - **`POST /api/auth/webauthn/verify`**: проверяет одноразовый challenge, `rpIdHash`, `UP`, обязательный `UV` для роли `'master'`, монотонный `signCount` (с предупреждением для синхронизируемых ключей `BE=1`), криптографическую подпись над `authData \|\| SHA-256(clientDataJSON)` через `node:crypto.verify` -> только после успешной проверки возвращает `verificationTier: 'server_spki_verified'`, `cryptographicServerVerified: true` и обновляет `HttpOnly` cookie. При отсутствии ключа на сервере честно остаётся `challenge_stub_only` (`cryptographicServerVerified: false`).
+   - **`GET /api/auth/session` и `POST /api/auth/logout`**: проверяют подпись HMAC (`timingSafeEqual`) + TTL в хранилище; выход немедленно отзывает серверную сессию и обнуляет cookie (`Max-Age=0`).
+
+3. **Env-driven Stripe Hosted Checkout (SAQ-A) и HMAC-вебхуки (`src/server/stripeProvider.ts`, `src/infrastructure/payments/hostedCheckoutProvider.ts`, `src/components/CheckoutModal.tsx`):**
+   - При наличии `STRIPE_SECRET_KEY` сервер переводит `/api/payments/provider` в режим `'hosted_psp'` (`stripe_hosted`), создаёт Checkout Session через Stripe REST API (`POST /api/payments/checkout-session`) в целых центах (`amountMinor`) и перенаправляет клиента на `https://checkout.stripe.com/...` без касания карточных данных в React DOM.
+   - **`POST /api/payments/webhooks/stripe`** смонтирован с `express.raw` до JSON-парсера и проверяет заголовок `Stripe-Signature` (`t=...,v1=...`) по HMAC-SHA256 с допуском окна воспроизведения 300 с и `timingSafeEqual`, обновляя `DepositIntent` идемпотентно.
+   - Без `STRIPE_SECRET_KEY` сервер и UI честно остаются в `[SIM]`-режиме (`mock_sim`, Zero-PCI DOM).
+
+4. **HTTP Security Headers Middleware (`src/server/securityHeaders.ts`):**
+   - Каждый HTTP-ответ Express содержит `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` и HTTP-заголовок `Content-Security-Policy` с настраиваемой директивой `frame-ancestors` (`NAILIX_FRAME_ANCESTORS`).
+
+
 

@@ -15,4 +15,5 @@ coverage/
 *.jks
 *.apk
 *.idsig
+.data/
 

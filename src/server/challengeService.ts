@@ -139,12 +139,31 @@ export class WebAuthnChallengeStubStore {
     };
   }
 
+  public consumeChallengeRecord(
+    challengeId: string,
+    nowMs: number = Date.now()
+  ):
+    | { status: 'ok'; record: IssuedChallengeRecord }
+    | { status: 'missing' }
+    | { status: 'expired'; record: IssuedChallengeRecord } {
+    const record = this.store.get(challengeId);
+    if (!record) {
+      return { status: 'missing' };
+    }
+    // Consume immediately (strict single-use non-replay guarantee)
+    this.store.delete(challengeId);
+    if (nowMs >= record.expiresAtMs) {
+      return { status: 'expired', record };
+    }
+    return { status: 'ok', record };
+  }
+
   public verifyChallengeStub(
     input: ChallengeVerifyStubRequest,
     nowMs: number = Date.now()
   ): ChallengeVerifyStubResult {
-    const record = this.store.get(input.challengeId);
-    if (!record) {
+    const consumed = this.consumeChallengeRecord(input.challengeId, nowMs);
+    if (consumed.status === 'missing') {
       return {
         accepted: false,
         verificationTier: 'challenge_stub_only',
@@ -155,10 +174,7 @@ export class WebAuthnChallengeStubStore {
       };
     }
 
-    // Consume immediately (strict single-use non-replay guarantee)
-    this.store.delete(input.challengeId);
-
-    if (nowMs >= record.expiresAtMs) {
+    if (consumed.status === 'expired') {
       return {
         accepted: false,
         verificationTier: 'challenge_stub_only',
@@ -168,6 +184,8 @@ export class WebAuthnChallengeStubStore {
         notice: 'Challenge expired before submission.',
       };
     }
+
+    const { record } = consumed;
 
     let clientData: { type?: unknown; challenge?: unknown; origin?: unknown };
     try {

@@ -562,9 +562,52 @@ export type ChallengeSource = 'server_stub' | 'client_csprng_fallback';
 export interface ServerChallengeStubVerification {
   attempted: boolean;
   accepted: boolean;
-  verificationTier: 'challenge_stub_only' | 'not_attempted';
-  cryptographicServerVerified: false;
+  verificationTier: 'server_spki_verified' | 'challenge_stub_only' | 'not_attempted';
+  cryptographicServerVerified: boolean;
   notice?: string;
+}
+
+export async function fetchServerIdentitySessionStatus(): Promise<{
+  authenticated: boolean;
+  credentialId?: string;
+  role?: UserRole;
+  verificationScope: 'client_local_only' | 'server_spki_verified';
+}> {
+  if (typeof fetch !== 'function') {
+    return { authenticated: false, verificationScope: 'client_local_only' };
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1200);
+    const res = await fetch('/api/auth/session', {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      return { authenticated: false, verificationScope: 'client_local_only' };
+    }
+    return (await res.json()) as {
+      authenticated: boolean;
+      credentialId?: string;
+      role?: UserRole;
+      verificationScope: 'client_local_only' | 'server_spki_verified';
+    };
+  } catch {
+    return { authenticated: false, verificationScope: 'client_local_only' };
+  }
+}
+
+export async function logoutServerIdentitySession(): Promise<void> {
+  if (typeof fetch !== 'function') return;
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+  } catch {
+    // Ignore network failures during local sign-out
+  }
 }
 
 async function requestWebAuthnChallengeWithFallback(
@@ -623,10 +666,12 @@ async function requestWebAuthnChallengeWithFallback(
   };
 }
 
-async function submitChallengeStubVerification(params: {
+async function submitChallengeServerVerification(params: {
   challengeId?: string;
+  credentialId?: string;
   clientDataJSON: ArrayBuffer;
   authenticatorData?: ArrayBuffer;
+  signature?: ArrayBuffer;
   expectedOrigin: string;
 }): Promise<ServerChallengeStubVerification> {
   if (!params.challengeId || typeof fetch !== 'function') {
@@ -644,12 +689,15 @@ async function submitChallengeStubVerification(params: {
     const res = await fetch('/api/auth/webauthn/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({
         challengeId: params.challengeId,
+        credentialId: params.credentialId,
         clientDataJSONBase64Url: toBase64Url(params.clientDataJSON),
         authenticatorDataBase64Url: params.authenticatorData
           ? toBase64Url(params.authenticatorData)
           : undefined,
+        signatureBase64Url: params.signature ? toBase64Url(params.signature) : undefined,
         expectedOrigin: params.expectedOrigin,
       }),
       signal: controller.signal,
@@ -657,13 +705,19 @@ async function submitChallengeStubVerification(params: {
     clearTimeout(timeout);
     const data = (await res.json()) as {
       accepted?: unknown;
+      verificationTier?: unknown;
+      cryptographicServerVerified?: unknown;
       notice?: unknown;
     };
+    const tier =
+      data.verificationTier === 'server_spki_verified'
+        ? 'server_spki_verified'
+        : 'challenge_stub_only';
     return {
       attempted: true,
       accepted: res.ok && data.accepted === true,
-      verificationTier: 'challenge_stub_only',
-      cryptographicServerVerified: false,
+      verificationTier: tier,
+      cryptographicServerVerified: Boolean(res.ok && data.cryptographicServerVerified === true),
       notice: typeof data.notice === 'string' ? data.notice : undefined,
     };
   } catch {
@@ -739,14 +793,6 @@ export async function registerWebAuthnPasskey({
 
   const attestationResponse = credential.response as AuthenticatorAttestationResponse;
 
-  if (challengeResult.challengeSource === 'server_stub') {
-    await submitChallengeStubVerification({
-      challengeId: challengeResult.challengeId,
-      clientDataJSON: attestationResponse.clientDataJSON,
-      expectedOrigin: window.location.origin,
-    });
-  }
-
   const publicKeyBuf =
     typeof attestationResponse.getPublicKey === 'function'
       ? attestationResponse.getPublicKey()
@@ -766,6 +812,47 @@ export async function registerWebAuthnPasskey({
     if (extracted) {
       publicKeySpkiBase64Url = extracted.spkiBase64Url;
       alg = extracted.algorithm;
+    }
+  }
+
+  const authenticatorDataBuf =
+    typeof attestationResponse.getAuthenticatorData === 'function'
+      ? attestationResponse.getAuthenticatorData()
+      : undefined;
+
+  // Register public SPKI key + consume registration challenge on backend when available
+  if (challengeResult.challengeSource === 'server_stub' && challengeResult.challengeId) {
+    if (publicKeySpkiBase64Url) {
+      try {
+        await fetch('/api/auth/webauthn/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            challengeId: challengeResult.challengeId,
+            credentialId: credential.id,
+            rawIdBase64Url: toBase64Url(credential.rawId),
+            publicKeySpkiBase64Url,
+            clientDataJSONBase64Url: toBase64Url(attestationResponse.clientDataJSON),
+            authenticatorDataBase64Url: authenticatorDataBuf
+              ? toBase64Url(authenticatorDataBuf)
+              : undefined,
+            expectedOrigin: window.location.origin,
+            rpId,
+            algorithm: alg,
+            displayName: cleanName,
+            role,
+          }),
+        });
+      } catch {
+        // Fallback to local-only registration if network interrupts mid-flight
+      }
+    } else {
+      await submitChallengeServerVerification({
+        challengeId: challengeResult.challengeId,
+        clientDataJSON: attestationResponse.clientDataJSON,
+        expectedOrigin: window.location.origin,
+      });
     }
   }
 
@@ -791,7 +878,7 @@ export async function registerWebAuthnPasskey({
  * Prompts browser WebAuthn assertion for registered Passkeys OR discoverable
  * resident credentials (`allowCredentials: []`), enforcing UV for `master`,
  * `BE` synced passkey handling, honest `signature_verified` vs `presence_only` levels (N-05),
- * and Stage 4.1 one-time server challenge stub when `/api` is available.
+ * and Stage 4.2 server-side SPKI verification + HttpOnly session when registered on backend.
  */
 export async function authenticateWebAuthnPasskey(
   credentials: PasskeyCredentialRecord[],
@@ -865,10 +952,12 @@ export async function authenticateWebAuthnPasskey(
     storedCredential: matched,
   });
 
-  const serverStubVerification = await submitChallengeStubVerification({
+  const serverStubVerification = await submitChallengeServerVerification({
     challengeId: challengeResult.challengeId,
+    credentialId: assertion.id,
     clientDataJSON: assertionResponse.clientDataJSON,
     authenticatorData: assertionResponse.authenticatorData,
+    signature: assertionResponse.signature,
     expectedOrigin,
   });
 

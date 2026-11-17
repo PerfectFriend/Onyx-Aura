@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
-import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet, ExternalLink } from 'lucide-react';
 import { Artist, NailService, PaymentCurrency, PortfolioItem, Appointment } from '../types';
+import { PaymentProviderCapabilities } from '../domain/payments';
+import {
+  createServerHostedCheckoutSession,
+  resolveActivePaymentCapabilities,
+} from '../infrastructure/payments/hostedCheckoutProvider';
 import { defaultPaymentProvider } from '../infrastructure/payments/mockPaymentProvider';
 import { CornerFlourish } from './OrnamentalFlourish';
 import { CalendarSyncButtons } from './CalendarSyncButtons';
@@ -68,6 +73,9 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
   const [tipPercentage, setTipPercentage] = useState<number>(18);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<PaymentProviderCapabilities>(() =>
+    defaultPaymentProvider.getCapabilities()
+  );
   const [completedTx, setCompletedTx] = useState<{
     txHash: string;
     isRealSha256: boolean;
@@ -76,7 +84,18 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
   } | null>(null);
   const [confirmedAppointment, setConfirmedAppointment] = useState<Appointment | null>(null);
 
-  const capabilities = defaultPaymentProvider.getCapabilities();
+  useEffect(() => {
+    let active = true;
+    resolveActivePaymentCapabilities()
+      .then(caps => {
+        if (active) setCapabilities(caps);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const demoWalletLabel = '0xSIM_WALLET_71cA9...8E29 (Demo Preview)';
 
   const basePriceUSD = bookingDetails.service.priceUSD;
@@ -85,6 +104,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
 
   const currencyInfo = RATES[selectedCurrency];
   const convertedTotal = (totalUSD * currencyInfo.rate).toFixed(currencyInfo.isCrypto ? 4 : 2);
+  const isHostedStripeFlow = !currencyInfo.isCrypto && !capabilities.isSimulated;
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,6 +116,20 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? `apt-${crypto.randomUUID().slice(0, 8)}`
           : `apt-${Date.now()}`;
+
+      if (isHostedStripeFlow) {
+        const { hostedCheckoutUrl } = await createServerHostedCheckoutSession({
+          bookingReferenceId: bookingRefId,
+          artistId: bookingDetails.artist.id,
+          artistName: bookingDetails.artist.name,
+          serviceId: bookingDetails.service.id,
+          serviceName: bookingDetails.service.name,
+          amountUsd: totalUSD,
+          displayCurrency: selectedCurrency,
+        });
+        window.location.assign(hostedCheckoutUrl);
+        return;
+      }
 
       const intent = await defaultPaymentProvider.createDepositIntent({
         bookingReferenceId: bookingRefId,
@@ -278,14 +312,22 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="p-4 bg-[#12141a] rounded-xl border border-red-500/30 space-y-2.5">
+              <div
+                className={`p-4 bg-[#12141a] rounded-xl border space-y-2.5 ${
+                  isHostedStripeFlow ? 'border-emerald-500/40' : 'border-red-500/30'
+                }`}
+              >
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#9ca3af] flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-[#d4af37]" />
                     <span>{capabilities.label}</span>
                   </span>
-                  <span className="text-[11px] text-red-300 font-mono">
-                    [SIM] ZERO CARD INPUTS
+                  <span
+                    className={`text-[11px] font-mono ${
+                      isHostedStripeFlow ? 'text-emerald-300' : 'text-red-300'
+                    }`}
+                  >
+                    {isHostedStripeFlow ? 'SAQ-A · ZERO CARD INPUTS' : '[SIM] ZERO CARD INPUTS'}
                   </span>
                 </div>
                 <p className="text-[11px] text-[#9ca3af] leading-relaxed">
@@ -294,13 +336,29 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
               </div>
             )}
 
-            {/* Honest Demo Deposit Box */}
-            <div className="p-3.5 rounded-lg bg-red-950/25 border border-red-500/40 flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
+            {/* Honest Deposit Notice Box */}
+            <div
+              className={`p-3.5 rounded-lg border flex items-start gap-3 ${
+                isHostedStripeFlow
+                  ? 'bg-emerald-950/20 border-emerald-500/40'
+                  : 'bg-red-950/25 border-red-500/40'
+              }`}
+            >
+              <ShieldCheck
+                className={`w-5 h-5 shrink-0 mt-0.5 ${
+                  isHostedStripeFlow ? 'text-emerald-300' : 'text-red-300'
+                }`}
+              />
               <div className="text-xs space-y-1">
-                <p className="font-semibold text-white">Demo Deposit Guarantee [SIM]</p>
+                <p className="font-semibold text-white">
+                  {isHostedStripeFlow
+                    ? 'Stripe Hosted Checkout (SAQ-A)'
+                    : 'Demo Deposit Guarantee [SIM]'}
+                </p>
                 <p className="text-[#9ca3af] leading-relaxed">
-                  [SIM] Local session simulation: no real money, card charge, or smart contract execution takes place. Booking state lives in memory for this browser session.
+                  {isHostedStripeFlow
+                    ? 'You will be redirected to Stripe Hosted Checkout. Nailix never renders card inputs or sees PAN/CVC details.'
+                    : '[SIM] Local session simulation: no real money, card charge, or smart contract execution takes place. Booking state lives in memory for this browser session.'}
                 </p>
               </div>
             </div>
@@ -316,7 +374,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
                 <span className="font-mono tabular-nums">${tipAmountUSD}</span>
               </div>
               <div className="flex justify-between text-white font-semibold text-sm pt-2 border-t border-[#1f222b]">
-                <span>Simulated Total [SIM]</span>
+                <span>{isHostedStripeFlow ? 'Deposit Total' : 'Simulated Total [SIM]'}</span>
                 <span className="font-mono text-base text-[#d4af37] tabular-nums">
                   {convertedTotal} {selectedCurrency} (${totalUSD} USD)
                 </span>
@@ -333,7 +391,16 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
                 {isProcessing ? (
                   <>
                     <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                    <span>Saving Demo Booking [SIM]...</span>
+                    <span>
+                      {isHostedStripeFlow
+                        ? 'Connecting to Stripe Checkout...'
+                        : 'Saving Demo Booking [SIM]...'}
+                    </span>
+                  </>
+                ) : isHostedStripeFlow ? (
+                  <>
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Proceed to Stripe Checkout (${totalUSD} USD)</span>
                   </>
                 ) : (
                   <>
