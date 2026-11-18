@@ -1,14 +1,19 @@
 // =============================================================================
-// Stage 4 · Sprint 4.2 — Express API Router
-// - WebAuthn: single-use challenge, server SPKI registration (/register), real
-//   Node Crypto ES256/RS256 assertion verification (/verify), HttpOnly session
-//   introspection (/session) & revocation (/logout).
-// - Payments: dynamic provider status (/payments/provider), Stripe Hosted
-//   Checkout SAQ-A session (/payments/checkout-session), intent lookup, and
-//   HMAC-SHA256 checked Stripe webhook (/payments/webhooks/stripe).
+// Stage 4 · Sprint 4.4 — Hardened Express API Router
+// - WebAuthn: per-IP rate-limited & challenge-quota isolated; mandatory
+//   authData/attestationObject COSE/SPKI binding + 409 anti-squatting on
+//   /register; server-authoritative role assignment (Q-01, Q-02, Q-06).
+// - Payments: server-calculated catalog deposit pricing (Q-03), deterministic
+//   booking idempotency, Origin mutation checks (Q-07), minimal /health (Q-06),
+//   and sanitized Stripe webhook error responses (Q-09).
 // =============================================================================
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import express, { NextFunction, Request, Response, Router } from 'express';
+import {
+  CanonicalServiceCatalogEntry,
+  resolveAuthoritativeDepositQuote,
+} from '../domain/serviceCatalog';
 import { PaymentCurrency, UserRole } from '../types';
 import { ServerSecurityAuditLog } from './auditLog';
 import {
@@ -17,9 +22,11 @@ import {
 } from './challengeService';
 import {
   resolveTrustedCheckoutOriginUrl,
+  validateMutationOriginHeader,
   validateRpIdForOrigin,
   validateWebAuthnOrigin,
 } from './originPolicy';
+import { createSlidingWindowRateLimiter, getClientIpKey } from './rateLimiter';
 import { InMemoryServerStateStore, ServerStateStore } from './serverStore';
 import { ServerSessionService } from './sessionService';
 import { StripeHostedCheckoutService } from './stripeProvider';
@@ -48,6 +55,24 @@ function extractClientDataOrigin(clientDataJSONBase64Url: string): string | unde
   }
 }
 
+function constantTimeCodeEqual(a: string, b: string): boolean {
+  const hashA = createHash('sha256').update(a, 'utf8').digest();
+  const hashB = createHash('sha256').update(b, 'utf8').digest();
+  return timingSafeEqual(hashA, hashB);
+}
+
+function resolveConfiguredInviteCodes(explicit?: string[]): string[] {
+  const envRaw = process.env.NAILIX_MASTER_INVITE_CODES ?? '';
+  const combined = [
+    ...(explicit ?? []),
+    ...envRaw
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean),
+  ];
+  return Array.from(new Set(combined.filter(code => code.length >= 6)));
+}
+
 export interface FoundationRouterDependencies {
   challengeStore?: WebAuthnChallengeStubStore;
   stateStore?: ServerStateStore;
@@ -55,6 +80,14 @@ export interface FoundationRouterDependencies {
   stripeService?: StripeHostedCheckoutService;
   allowedOrigins?: string[];
   auditLog?: ServerSecurityAuditLog;
+  isProduction?: boolean;
+  masterInviteCodes?: string[];
+  serviceCatalog?: readonly CanonicalServiceCatalogEntry[];
+  rateLimits?: {
+    windowMs?: number;
+    authMax?: number;
+    checkoutMax?: number;
+  };
 }
 
 export function createFoundationApiRouter(
@@ -71,6 +104,47 @@ export function createFoundationApiRouter(
   const stripeService = deps.stripeService ?? new StripeHostedCheckoutService({ store: stateStore });
   const explicitOrigins = deps.allowedOrigins;
   const auditLog = deps.auditLog ?? new ServerSecurityAuditLog();
+  const isProduction = deps.isProduction ?? process.env.NODE_ENV === 'production';
+
+  const validInviteCodes = resolveConfiguredInviteCodes(deps.masterInviteCodes);
+  const consumedInviteCodes = new Set<string>();
+
+  const matchUnusedInviteCode = (candidate: string): string | null => {
+    for (const code of validInviteCodes) {
+      if (!consumedInviteCodes.has(code) && constantTimeCodeEqual(candidate, code)) {
+        return code;
+      }
+    }
+    return null;
+  };
+
+  const windowMs = deps.rateLimits?.windowMs ?? 60_000;
+  const authRateLimiter = createSlidingWindowRateLimiter({
+    windowMs,
+    maxRequests: deps.rateLimits?.authMax ?? 60,
+    bucketLabel: 'auth',
+    onRateLimited: (_key, label) => {
+      auditLog.record('security.rate_limited', 'rejected', label);
+    },
+  });
+  const checkoutRateLimiter = createSlidingWindowRateLimiter({
+    windowMs,
+    maxRequests: deps.rateLimits?.checkoutMax ?? 20,
+    bucketLabel: 'checkout',
+    onRateLimited: (_key, label) => {
+      auditLog.record('security.rate_limited', 'rejected', label);
+    },
+  });
+
+  const requireTrustedOrigin = (req: Request, res: Response): boolean => {
+    const check = validateMutationOriginHeader({ req, explicitOrigins, isProduction });
+    if (!check.ok) {
+      auditLog.record('security.origin.rejected', 'rejected', check.error);
+      res.status(403).json({ error: check.error });
+      return false;
+    }
+    return true;
+  };
 
   const router = express.Router();
 
@@ -95,18 +169,25 @@ export function createFoundationApiRouter(
           rawBody,
           signatureHeader: req.header('stripe-signature'),
         });
-        auditLog.record(
-          result.duplicate ? 'payments.webhook.duplicate' : 'payments.webhook.processed',
-          'ok',
-          result.eventType
-        );
+        if (result.rejectedReason) {
+          auditLog.record('payments.webhook.rejected', 'rejected', result.rejectedReason);
+        } else if (result.newStatus === 'released') {
+          auditLog.record('payments.refund.processed', 'ok', result.eventType);
+        } else {
+          auditLog.record(
+            result.duplicate ? 'payments.webhook.duplicate' : 'payments.webhook.processed',
+            'ok',
+            result.eventType
+          );
+        }
         res.status(200).json(result);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Invalid Stripe webhook payload.';
-        auditLog.record('payments.webhook.rejected', 'rejected', message);
+        const internalMsg = err instanceof Error ? err.message : 'Invalid Stripe webhook payload.';
+        auditLog.record('payments.webhook.rejected', 'rejected', internalMsg);
+        // Q-09: never reflect raw internal parser/signature details to untrusted callers
         res.status(400).json({
           received: false,
-          error: message,
+          error: 'Invalid Stripe webhook.',
         });
       }
     })
@@ -114,15 +195,9 @@ export function createFoundationApiRouter(
 
   router.use(express.json({ limit: '128kb' }));
 
+  // Q-06: Public health probe exposes minimal { ok: true } only
   router.get('/health', (_req, res) => {
-    res.json({
-      ok: true,
-      stage: '4.3-hardened-server-and-local-qr',
-      pendingChallenges: challengeStore.getPendingCount(),
-      sessionSecretConfigured: sessionService.hasPersistentSecretConfigured(),
-      stripeConfigured: stripeService.isConfigured(),
-      auditSummary: auditLog.getSummary(),
-    });
+    res.json({ ok: true });
   });
 
   router.get('/payments/provider', (_req, res) => {
@@ -131,7 +206,10 @@ export function createFoundationApiRouter(
 
   router.post(
     '/payments/checkout-session',
+    checkoutRateLimiter,
     asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
       const body =
         req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
 
@@ -146,17 +224,36 @@ export function createFoundationApiRouter(
       const bookingReferenceId =
         typeof body.bookingReferenceId === 'string' ? body.bookingReferenceId.trim() : '';
       const artistId = typeof body.artistId === 'string' ? body.artistId.trim() : '';
-      const artistName = typeof body.artistName === 'string' ? body.artistName.trim() : 'Master Artist';
       const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
-      const serviceName = typeof body.serviceName === 'string' ? body.serviceName.trim() : 'Haute Manicure';
-      const amountUsd = typeof body.amountUsd === 'number' ? body.amountUsd : Number.NaN;
+      const tipPercentage = typeof body.tipPercentage === 'number' ? body.tipPercentage : 0;
       const displayCurrency =
         typeof body.displayCurrency === 'string' ? (body.displayCurrency as PaymentCurrency) : 'USD';
 
-      if (!bookingReferenceId || !artistId || !serviceId || !Number.isFinite(amountUsd)) {
+      if (
+        !bookingReferenceId ||
+        bookingReferenceId.length > 64 ||
+        !artistId ||
+        artistId.length > 64 ||
+        !serviceId ||
+        serviceId.length > 64
+      ) {
         res.status(400).json({
-          error: 'bookingReferenceId, artistId, serviceId, and finite amountUsd are required.',
+          error: 'Valid bookingReferenceId, artistId, and serviceId (max 64 chars) are required.',
         });
+        return;
+      }
+
+      // Q-03: Server computes price & canonical labels from authoritative catalog (ignores client amountUsd)
+      const quoteRes = resolveAuthoritativeDepositQuote({
+        artistId,
+        serviceId,
+        tipPercentage,
+        catalog: deps.serviceCatalog,
+      });
+
+      if (!quoteRes.ok) {
+        auditLog.record('payments.checkout.rejected', 'rejected', quoteRes.error);
+        res.status(400).json({ error: quoteRes.error });
         return;
       }
 
@@ -164,6 +261,7 @@ export function createFoundationApiRouter(
         candidateOriginUrl: typeof body.originUrl === 'string' ? body.originUrl : undefined,
         req,
         explicitOrigins,
+        isProduction,
       });
 
       if (!originResolution.ok) {
@@ -175,11 +273,11 @@ export function createFoundationApiRouter(
       try {
         const intent = await stripeService.createHostedCheckoutSession({
           bookingReferenceId,
-          artistId,
-          artistName,
-          serviceId,
-          serviceName,
-          amountUsd,
+          artistId: quoteRes.quote.artistId,
+          artistName: quoteRes.quote.artistName,
+          serviceId: quoteRes.quote.serviceId,
+          serviceName: quoteRes.quote.serviceName,
+          amountUsd: quoteRes.quote.totalUsd,
           displayCurrency,
           originUrl: originResolution.originUrl,
         });
@@ -189,7 +287,7 @@ export function createFoundationApiRouter(
         const msg =
           err instanceof Error ? err.message : 'Unable to create Stripe Hosted Checkout session.';
         auditLog.record('payments.checkout.rejected', 'rejected', msg);
-        res.status(502).json({ error: msg });
+        res.status(502).json({ error: 'Unable to initialize Stripe Hosted Checkout session.' });
       }
     })
   );
@@ -198,8 +296,8 @@ export function createFoundationApiRouter(
     '/payments/intents/:intentId',
     asyncRoute(async (req, res) => {
       const intentId = typeof req.params.intentId === 'string' ? req.params.intentId : '';
-      if (!intentId) {
-        res.status(400).json({ error: 'Missing intentId.' });
+      if (!intentId || intentId.length > 96) {
+        res.status(400).json({ error: 'Missing or invalid intentId.' });
         return;
       }
       const intent = await stateStore.getDepositIntent(intentId);
@@ -211,27 +309,35 @@ export function createFoundationApiRouter(
     })
   );
 
-  router.post('/auth/webauthn/challenge', (req, res) => {
+  router.post('/auth/webauthn/challenge', authRateLimiter, (req, res) => {
+    if (!requireTrustedOrigin(req, res)) return;
+
     const body =
       req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
     const ceremony = body.ceremony === 'registration' ? 'registration' : 'authentication';
-    const role: UserRole = body.role === 'master' ? 'master' : 'client';
+    // Q-02: Challenge ignores client-supplied role; server enforces client default on register
+    const clientKey = getClientIpKey(req);
 
-    const issued = challengeStore.issueChallenge({ ceremony, role });
-    auditLog.record('auth.challenge.issued', 'ok', `${ceremony}:${role}`);
+    const issued = challengeStore.issueChallenge({ ceremony, clientKey });
+    auditLog.record('auth.challenge.issued', 'ok', ceremony);
     res.status(200).json(issued);
   });
 
   router.post(
     '/auth/webauthn/register',
+    authRateLimiter,
     asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
       const body =
         req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
 
       const challengeId = typeof body.challengeId === 'string' ? body.challengeId : '';
       const credentialId = typeof body.credentialId === 'string' ? body.credentialId.trim() : '';
       const rawIdBase64Url =
-        typeof body.rawIdBase64Url === 'string' ? body.rawIdBase64Url.trim() : credentialId;
+        typeof body.rawIdBase64Url === 'string' && body.rawIdBase64Url.trim()
+          ? body.rawIdBase64Url.trim()
+          : credentialId;
       const publicKeySpkiBase64Url =
         typeof body.publicKeySpkiBase64Url === 'string' ? body.publicKeySpkiBase64Url.trim() : '';
       const clientDataJSONBase64Url =
@@ -239,6 +345,10 @@ export function createFoundationApiRouter(
       const authenticatorDataBase64Url =
         typeof body.authenticatorDataBase64Url === 'string'
           ? body.authenticatorDataBase64Url
+          : undefined;
+      const attestationObjectBase64Url =
+        typeof body.attestationObjectBase64Url === 'string'
+          ? body.attestationObjectBase64Url
           : undefined;
       const bodyExpectedOrigin =
         typeof body.expectedOrigin === 'string' ? body.expectedOrigin : undefined;
@@ -248,19 +358,21 @@ export function createFoundationApiRouter(
           ? body.displayName.trim().slice(0, 64)
           : 'Salon Guest';
       const algorithm = typeof body.algorithm === 'number' ? body.algorithm : -7;
-      const role: UserRole = body.role === 'master' ? 'master' : 'client';
+      const masterInviteCode =
+        typeof body.masterInviteCode === 'string' ? body.masterInviteCode.trim() : '';
 
       if (
         !challengeId ||
         !credentialId ||
         !publicKeySpkiBase64Url ||
         !clientDataJSONBase64Url ||
-        !rpId
+        !rpId ||
+        (!authenticatorDataBase64Url && !attestationObjectBase64Url)
       ) {
         res.status(400).json({
           registered: false,
           error:
-            'challengeId, credentialId, publicKeySpkiBase64Url, clientDataJSONBase64Url, and rpId are required.',
+            'challengeId, credentialId, publicKeySpkiBase64Url, clientDataJSONBase64Url, rpId, and authenticatorData/attestationObject are required.',
         });
         return;
       }
@@ -283,12 +395,60 @@ export function createFoundationApiRouter(
         return;
       }
 
+      // Q-01: Prevent credentialId squatting/overwriting without active session ownership
+      const existingCred = await stateStore.getPasskey(credentialId);
+      const allCreds = await stateStore.listPasskeysByRole();
+      const conflictingRawId = allCreds.find(
+        c => c.rawIdBase64Url === rawIdBase64Url && c.id !== credentialId
+      );
+      if (conflictingRawId) {
+        auditLog.record('auth.register.conflict', 'rejected', 'rawId-conflict');
+        res.status(409).json({
+          registered: false,
+          error: 'Credential rawId is already registered.',
+        });
+        return;
+      }
+
+      if (existingCred) {
+        const activeSession = await sessionService.getActiveSessionFromRequest(req);
+        const ownsExisting =
+          activeSession !== null &&
+          activeSession.credentialId === credentialId &&
+          activeSession.verificationLevel === 'server_spki_verified';
+        if (!ownsExisting) {
+          auditLog.record('auth.register.conflict', 'rejected', 'credentialId-conflict');
+          res.status(409).json({
+            registered: false,
+            error: 'Credential ID is already registered.',
+          });
+          return;
+        }
+      }
+
+      // Q-02: Role is NEVER taken from client body/challenge. Default is 'client'.
+      let assignedRole: UserRole = existingCred?.role ?? 'client';
+      let matchedInvite: string | null = null;
+      if (masterInviteCode) {
+        matchedInvite = matchUnusedInviteCode(masterInviteCode);
+        if (!matchedInvite) {
+          auditLog.record('auth.master.rejected', 'rejected', 'invalid-invite-code');
+          res.status(403).json({
+            registered: false,
+            error: 'Invalid or already consumed master invite code.',
+          });
+          return;
+        }
+        assignedRole = 'master';
+      }
+
       const clientOrigin = extractClientDataOrigin(clientDataJSONBase64Url);
       const originCheck = validateWebAuthnOrigin({
         clientOrigin,
         bodyExpectedOrigin,
         req,
         explicitOrigins,
+        isProduction,
       });
       if (!originCheck.ok) {
         auditLog.record('auth.register.rejected', 'rejected', originCheck.error);
@@ -310,14 +470,21 @@ export function createFoundationApiRouter(
         expectedOrigin: originCheck.authoritativeOrigin,
         rpId,
         algorithm,
-        role: consumed.record.role ?? role,
+        role: assignedRole,
+        rawIdBase64Url,
         authenticatorDataBase64Url,
+        attestationObjectBase64Url,
       });
 
       if (!check.ok) {
         auditLog.record('auth.register.rejected', 'rejected', check.error);
         res.status(400).json({ registered: false, error: check.error });
         return;
+      }
+
+      if (matchedInvite) {
+        consumedInviteCodes.add(matchedInvite);
+        auditLog.record('auth.master.promoted', 'ok', 'registration-invite');
       }
 
       const nowIso = new Date().toISOString();
@@ -327,21 +494,21 @@ export function createFoundationApiRouter(
         publicKeySpkiBase64Url,
         algorithm,
         displayName,
-        role: consumed.record.role,
+        role: assignedRole,
         rpId,
         signCount: check.initialSignCount,
-        createdAt: nowIso,
+        createdAt: existingCred?.createdAt ?? nowIso,
         lastUsedAt: nowIso,
       });
 
       const session = await sessionService.createAndSetSession(req, res, {
         credentialId,
         displayName,
-        role: consumed.record.role,
+        role: assignedRole,
         verificationLevel: 'server_spki_verified',
       });
 
-      auditLog.record('auth.register.ok', 'ok', consumed.record.role);
+      auditLog.record('auth.register.ok', 'ok', assignedRole);
       res.status(201).json({
         registered: true,
         verificationTier: 'server_spki_verified',
@@ -351,9 +518,66 @@ export function createFoundationApiRouter(
     })
   );
 
+  // Q-02: Explicit server-side master promotion using a configured one-time invite code
+  router.post(
+    '/auth/webauthn/promote-master',
+    authRateLimiter,
+    asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
+      const activeSession = await sessionService.getActiveSessionFromRequest(req);
+      if (!activeSession || activeSession.verificationLevel !== 'server_spki_verified') {
+        res.status(401).json({ error: 'Active server_spki_verified session required.' });
+        return;
+      }
+
+      const body =
+        req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+      const inviteCode =
+        typeof body.masterInviteCode === 'string' ? body.masterInviteCode.trim() : '';
+
+      const matched = inviteCode ? matchUnusedInviteCode(inviteCode) : null;
+      if (!matched) {
+        auditLog.record('auth.master.rejected', 'rejected', 'promote-invalid-invite');
+        res.status(403).json({ error: 'Invalid or already consumed master invite code.' });
+        return;
+      }
+
+      const stored = await stateStore.getPasskey(activeSession.credentialId);
+      if (!stored) {
+        res.status(404).json({ error: 'Registered credential for session not found.' });
+        return;
+      }
+
+      consumedInviteCodes.add(matched);
+      await stateStore.upsertPasskey({
+        ...stored,
+        role: 'master',
+        lastUsedAt: new Date().toISOString(),
+      });
+      await sessionService.revokeSessionFromRequest(req, res);
+      const updatedSession = await sessionService.createAndSetSession(req, res, {
+        credentialId: stored.id,
+        displayName: stored.displayName,
+        role: 'master',
+        verificationLevel: 'server_spki_verified',
+      });
+
+      auditLog.record('auth.master.promoted', 'ok', 'session-invite');
+      res.status(200).json({
+        promoted: true,
+        role: 'master',
+        session: updatedSession,
+      });
+    })
+  );
+
   router.post(
     '/auth/webauthn/verify',
+    authRateLimiter,
     asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
       const body =
         req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
 
@@ -413,6 +637,7 @@ export function createFoundationApiRouter(
         bodyExpectedOrigin,
         req,
         explicitOrigins,
+        isProduction,
       });
 
       if (!originCheck.ok) {
@@ -526,7 +751,10 @@ export function createFoundationApiRouter(
 
   router.post(
     '/auth/logout',
+    authRateLimiter,
     asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
       await sessionService.revokeSessionFromRequest(req, res);
       auditLog.record('auth.session.revoked', 'ok');
       res.status(200).json({ signedOut: true });

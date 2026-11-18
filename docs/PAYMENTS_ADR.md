@@ -9,10 +9,11 @@
 
 ## ⚡ За 30 секунд: два главных вопроса
 
-| Вопрос | В Спринте 4.1 (сейчас) | Целевая архитектура Этапа 4.2+ |
+| Вопрос | В Спринте 4.1 (база) | В Спринте 4.4 (закалка) |
 | :--- | :--- | :--- |
-| **Куда уходят деньги?** | **Никуда (`[SIM]`)**: в `CheckoutModal` удалены все `<input>` поля карты (`PAN / MM/YY / CVC`), а расчёт депозита идёт через порт `PaymentProvider` → `[SIM] MockPaymentProvider` без реального списания. | **Stripe Hosted Checkout / Stripe Elements (PCI DSS SAQ-A)**: браузер уходит на hosted-страницу PSP или рендерит изолированный `iframe` PSP. Сервер Nailix получает только `intentId`, `hostedCheckoutUrl` и подписанные Stripe Webhooks. |
-| **Кто верифицирует Passkey?** | **Сервер + Браузер (разделённые роли)**: серверный stub (`POST /api/auth/webauthn/challenge` и `/verify`) генерирует **одноразовый challenge с TTL 120 с**, проверяет привязку `clientDataJSON` + флаг `UP`, но честно отдаёт `verificationTier: 'challenge_stub_only'`, `cryptographicServerVerified: false`. Подпись по SPKI сейчас проверяется на клиенте (`crypto.subtle.verify`). | **Серверная БД + COSE/SPKI Engine (Этап 4.2)**: backend хранит `publicKeySpki`, `signCount` и роли пользователей, проверяет ECDSA/RSASSA подпись над `authData \|\| SHA-256(clientDataJSON)` на сервере и выдаёт `HttpOnly; SameSite=Strict` сессионную cookie. |
+| **Куда уходят деньги?** | **Никуда (`[SIM]`)**: в `CheckoutModal` удалены все `<input>` поля карты (`PAN / MM/YY / CVC`), а расчёт депозита идёт через порт `PaymentProvider` → `[SIM] MockPaymentProvider`. | **Stripe Hosted Checkout (PCI DSS SAQ-A)**: клиент передаёт только `{ artistId, serviceId, tipPercentage, bookingReferenceId }`. Сервер сам вычисляет сумму по каталогу (`src/domain/serviceCatalog.ts`), ставит `Idempotency-Key` от `bookingReferenceId`, сохраняет локальную `pending`-бронь до редиректа, а при возврате читает статус строго из `GET /api/payments/intents/:id` (куда пишут подписанные Stripe Webhooks). |
+| **Кто верифицирует Passkey?** | **Сервер + Браузер**: серверный challenge (TTL `120 с`), локальная SPKI-проверка. | **Серверная БД + COSE/SPKI Engine**: `/auth/webauthn/register` требует `authData`/`attestationObject` с `AT` + COSE-ключом, блокирует захват чужого `credentialId` статусом `409`, требует `UV` для мастера и выдаёт `HttpOnly; SameSite=Lax` HMAC-сессию `nailix_sid`. |
+| **Кто назначает роль?** | Превью-селектор UI (недоверенный). | **Строго сервер**: по умолчанию любой Passkey получает роль `'client'`. Поле `role` в `/challenge` и `/register` игнорируется; повышение до `'master'` возможно только по одноразовому инвайт-коду из `NAILIX_MASTER_INVITE_CODES` (`POST /register` или `POST /promote-master`). |
 
 ---
 
@@ -76,8 +77,11 @@ PasskeyAuthModal / webAuthnService.ts
 
 ---
 
-## 4. Жёсткие запреты Спринта 4.1 (Guardrails)
+## 4. Жёсткие запреты Спринтов 4.1 → 4.4 (Guardrails)
 
 1. **Zero-PCI DOM:** В `src/components/` и `src/App.tsx` запрещены любые `<input>` для номера карты (PAN), `MM/YY`, `CVV/CVC` — контролируется автоматическим тестом в `src/__tests__/paymentFoundation.test.ts`.
-2. **Никаких боевых секретов в репозитории:** Ни `STRIPE_SECRET_KEY`, ни webhook signing secrets не хранятся в коде; `GET /api/payments/provider` возвращает `hostedCheckoutConfigured: false`.
-3. **Честная маркировка UI/API:** UI Passkey и `/api/auth/webauthn/verify` никогда не утверждают `"server verified"` — в ответе и интерфейсе явно указано `challenge_stub_only` / `LOCAL_ONLY`.
+2. **Никаких боевых секретов в репозитории:** Ни `STRIPE_SECRET_KEY`, ни webhook signing secrets, ни `NAILIX_MASTER_INVITE_CODES` не хранятся в коде; `GET /api/payments/provider` возвращает `hostedCheckoutConfigured: false` без ключей, а `server.ts` отказывается запускаться в `NODE_ENV=production` без `NAILIX_SESSION_SECRET`.
+3. **Серверные роли и цены:** Клиент никогда не задаёт `amountUsd` для Stripe и не назначает себе роль `master` (Q-02 / Q-03).
+4. **Замкнутый цикл Hosted Checkout (Q-04):** До редиректа в `IndexedDB` сохраняется запись `status: 'pending'` (`origin: 'user'`), а возврат с `?intent_id=...` сверяет статус исключительно с сервером (`GET /api/payments/intents/:id`), никогда по `?checkout_status=success`.
+5. **Честная маркировка UI/API:** При отсутствии ключей действует явный режим `[SIM]` / `LOCAL_ONLY`, а при неполной аттестации — `challenge_stub_only`.
+

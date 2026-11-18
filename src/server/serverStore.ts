@@ -78,12 +78,16 @@ export interface ServerStateStore {
   saveSession(session: ServerSessionRecord): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   getDepositIntent(intentId: string): Promise<DepositIntent | undefined>;
+  getDepositIntentByBookingRef(bookingReferenceId: string): Promise<DepositIntent | undefined>;
   saveDepositIntent(intent: DepositIntent): Promise<void>;
   hasProcessedWebhookEvent(eventId: string): Promise<boolean>;
   markWebhookEventProcessed(eventId: string): Promise<void>;
 }
 
 const MAX_WEBHOOK_EVENT_HISTORY = 500;
+const MAX_PASSKEYS_STORE = 1000;
+const MAX_SESSIONS_STORE = 2000;
+const MAX_DEPOSIT_INTENTS = 500;
 
 export class InMemoryServerStateStore implements ServerStateStore {
   protected snapshot: PersistedServerSnapshot = emptySnapshot();
@@ -105,6 +109,10 @@ export class InMemoryServerStateStore implements ServerStateStore {
   public async upsertPasskey(record: ServerPasskeyRecord): Promise<void> {
     assertPublicOnlyPasskey(record);
     await this.mutate(state => {
+      const exists = Object.prototype.hasOwnProperty.call(state.passkeys, record.id);
+      if (!exists && Object.keys(state.passkeys).length >= MAX_PASSKEYS_STORE) {
+        throw new Error('Server passkey registry capacity limit reached.');
+      }
       state.passkeys[record.id] = { ...record };
     });
   }
@@ -139,6 +147,11 @@ export class InMemoryServerStateStore implements ServerStateStore {
           delete state.sessions[sid];
         }
       }
+      const sessionIds = Object.keys(state.sessions);
+      if (sessionIds.length >= MAX_SESSIONS_STORE) {
+        const oldest = sessionIds[0];
+        if (oldest) delete state.sessions[oldest];
+      }
       state.sessions[session.sessionId] = { ...session };
     });
   }
@@ -158,9 +171,44 @@ export class InMemoryServerStateStore implements ServerStateStore {
       : undefined;
   }
 
+  public async getDepositIntentByBookingRef(
+    bookingReferenceId: string
+  ): Promise<DepositIntent | undefined> {
+    if (!bookingReferenceId) return undefined;
+    await this.ensureLoaded();
+    const candidates = Object.values(this.snapshot.depositIntents).filter(
+      item => item.bookingReferenceId === bookingReferenceId
+    );
+    return candidates[candidates.length - 1];
+  }
+
   public async saveDepositIntent(intent: DepositIntent): Promise<void> {
     assertSafeRecordId(intent.id, 'deposit intent');
     await this.mutate(state => {
+      const now = Date.now();
+      const entries = Object.entries(state.depositIntents);
+      if (entries.length >= MAX_DEPOSIT_INTENTS) {
+        // First prune expired requires_action or finished intents
+        for (const [id, existing] of entries) {
+          const exp = Date.parse(existing.expiresAt);
+          const isExpiredUnpaid =
+            existing.status === 'requires_action' && Number.isFinite(exp) && now >= exp;
+          const isFinished =
+            existing.status === 'canceled' ||
+            existing.status === 'failed' ||
+            existing.status === 'released';
+          if (isExpiredUnpaid || isFinished) {
+            delete state.depositIntents[id];
+          }
+          if (Object.keys(state.depositIntents).length < MAX_DEPOSIT_INTENTS) break;
+        }
+        // If still over cap, evict oldest entries
+        const remainingKeys = Object.keys(state.depositIntents);
+        while (remainingKeys.length >= MAX_DEPOSIT_INTENTS) {
+          const drop = remainingKeys.shift();
+          if (drop) delete state.depositIntents[drop];
+        }
+      }
       state.depositIntents[intent.id] = { ...intent };
     });
   }

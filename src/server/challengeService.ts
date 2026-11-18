@@ -11,12 +11,13 @@ import { UserRole } from '../types';
 
 export const DEFAULT_CHALLENGE_TTL_MS = 120_000;
 export const MAX_PENDING_CHALLENGES = 2000;
+export const MAX_PENDING_CHALLENGES_PER_CLIENT = 25;
 
 export interface IssuedChallengeRecord {
   challengeId: string;
   challengeBase64Url: string;
   ceremony: 'registration' | 'authentication';
-  role: UserRole;
+  clientKey: string;
   createdAtMs: number;
   expiresAtMs: number;
 }
@@ -75,17 +76,31 @@ function fromBase64UrlToBuffer(b64u: string): Buffer {
 
 export class WebAuthnChallengeStubStore {
   private readonly store = new Map<string, IssuedChallengeRecord>();
+  private readonly clientBuckets = new Map<string, Set<string>>();
   private readonly ttlMs: number;
 
   constructor(ttlMs: number = DEFAULT_CHALLENGE_TTL_MS) {
     this.ttlMs = ttlMs;
   }
 
+  private removeEntry(challengeId: string): void {
+    const existing = this.store.get(challengeId);
+    if (!existing) return;
+    this.store.delete(challengeId);
+    const bucket = this.clientBuckets.get(existing.clientKey);
+    if (bucket) {
+      bucket.delete(challengeId);
+      if (bucket.size === 0) {
+        this.clientBuckets.delete(existing.clientKey);
+      }
+    }
+  }
+
   public pruneExpired(nowMs: number = Date.now()): number {
     let removed = 0;
     for (const [id, entry] of this.store.entries()) {
       if (nowMs >= entry.expiresAtMs) {
-        this.store.delete(id);
+        this.removeEntry(id);
         removed += 1;
       }
     }
@@ -99,33 +114,62 @@ export class WebAuthnChallengeStubStore {
   public issueChallenge(options: {
     ceremony?: 'registration' | 'authentication';
     role?: UserRole;
+    clientKey?: string;
     nowMs?: number;
   } = {}): IssuedChallengeResponse {
     const nowMs = options.nowMs ?? Date.now();
     this.pruneExpired(nowMs);
 
-    // Bounded store size to prevent trivial memory exhaustion
+    const clientKey =
+      typeof options.clientKey === 'string' && options.clientKey.trim()
+        ? options.clientKey.trim()
+        : 'anonymous';
+
+    // Per-client quota: eviction only touches the calling client's own excess bucket
+    let bucket = this.clientBuckets.get(clientKey);
+    if (!bucket) {
+      bucket = new Set<string>();
+      this.clientBuckets.set(clientKey, bucket);
+    }
+    while (bucket.size >= MAX_PENDING_CHALLENGES_PER_CLIENT) {
+      const oldestClientChallenge = bucket.values().next().value;
+      if (typeof oldestClientChallenge === 'string') {
+        this.removeEntry(oldestClientChallenge);
+      } else {
+        break;
+      }
+    }
+
+    // If global store cap is still reached by distributed clients, evict from the LARGEST client bucket
+    // so an attacker flood cannot evict single-challenge legitimate users (Q-06).
     if (this.store.size >= MAX_PENDING_CHALLENGES) {
-      const oldestKey = this.store.keys().next().value;
-      if (typeof oldestKey === 'string') {
-        this.store.delete(oldestKey);
+      let largestBucket: Set<string> | undefined;
+      for (const candidate of this.clientBuckets.values()) {
+        if (!largestBucket || candidate.size > largestBucket.size) {
+          largestBucket = candidate;
+        }
+      }
+      const victimId =
+        largestBucket?.values().next().value ?? this.store.keys().next().value;
+      if (typeof victimId === 'string') {
+        this.removeEntry(victimId);
       }
     }
 
     const challengeId = `ch-${randomUUID()}`;
     const challengeBase64Url = toBase64UrlBuffer(randomBytes(32));
     const ceremony = options.ceremony === 'registration' ? 'registration' : 'authentication';
-    const role: UserRole = options.role === 'master' ? 'master' : 'client';
     const expiresAtMs = nowMs + this.ttlMs;
 
     this.store.set(challengeId, {
       challengeId,
       challengeBase64Url,
       ceremony,
-      role,
+      clientKey,
       createdAtMs: nowMs,
       expiresAtMs,
     });
+    bucket.add(challengeId);
 
     return {
       challengeId,
@@ -135,7 +179,7 @@ export class WebAuthnChallengeStubStore {
       ttlSeconds: Math.round(this.ttlMs / 1000),
       verificationTier: 'challenge_stub_only',
       notice:
-        'Sprint 4.1 challenge stub: single-use challenge issued on server; full server-side COSE/SPKI signature check starts in Stage 4.2.',
+        'Single-use challenge issued on server; cryptographic server check validates SPKI and flags on /verify.',
     };
   }
 
@@ -151,7 +195,7 @@ export class WebAuthnChallengeStubStore {
       return { status: 'missing' };
     }
     // Consume immediately (strict single-use non-replay guarantee)
-    this.store.delete(challengeId);
+    this.removeEntry(challengeId);
     if (nowMs >= record.expiresAtMs) {
       return { status: 'expired', record };
     }

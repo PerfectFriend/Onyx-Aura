@@ -50,17 +50,20 @@ export async function probeServerPaymentProvider(): Promise<ServerProviderProbeR
 export async function createServerHostedCheckoutSession(params: {
   bookingReferenceId: string;
   artistId: string;
-  artistName: string;
   serviceId: string;
-  serviceName: string;
-  amountUsd: number;
+  tipPercentage: number;
   displayCurrency: PaymentCurrency;
 }): Promise<{ intent: DepositIntent; hostedCheckoutUrl: string }> {
   const res = await fetch('/api/payments/checkout-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     body: JSON.stringify({
-      ...params,
+      bookingReferenceId: params.bookingReferenceId,
+      artistId: params.artistId,
+      serviceId: params.serviceId,
+      tipPercentage: params.tipPercentage,
+      displayCurrency: params.displayCurrency,
       originUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
     }),
   });
@@ -87,6 +90,26 @@ export async function createServerHostedCheckoutSession(params: {
     intent: data.intent,
     hostedCheckoutUrl: data.hostedCheckoutUrl,
   };
+}
+
+export async function fetchServerPaymentIntentStatus(
+  intentId: string
+): Promise<DepositIntent | null> {
+  if (!intentId || typeof fetch !== 'function') return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`/api/payments/intents/${encodeURIComponent(intentId)}`, {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { intent?: DepositIntent };
+    return data.intent ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveActivePaymentCapabilities(): Promise<PaymentProviderCapabilities> {

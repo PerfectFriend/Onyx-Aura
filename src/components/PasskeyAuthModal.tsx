@@ -27,7 +27,11 @@ interface PasskeyAuthModalProps {
   authError: string | null;
   currentRole: UserRole;
   theme?: ThemeMode;
-  onRegisterPasskey: (displayName: string, role: UserRole) => Promise<void> | void;
+  onRegisterPasskey: (
+    displayName: string,
+    role: UserRole,
+    masterInviteCode?: string
+  ) => Promise<void> | void;
   onSignInWithPasskey: () => Promise<void> | void;
   onCreateDemoFallback: (displayName: string, role: UserRole) => Promise<void> | void;
   onSignInDemoFallback?: (credentialId?: string) => Promise<void> | void;
@@ -55,6 +59,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
     currentRole === 'master' ? 'Elena Vasiliev' : 'Marina Sol'
   );
   const [selectedRole, setSelectedRole] = useState<UserRole>(currentRole);
+  const [masterInviteCode, setMasterInviteCode] = useState<string>('');
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -71,7 +76,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
 
   const handleSubmitCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    void onRegisterPasskey(displayName, selectedRole);
+    void onRegisterPasskey(displayName, selectedRole, masterInviteCode.trim() || undefined);
   };
 
   return (
@@ -255,7 +260,7 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                   htmlFor="passkey-demo-role"
                   className="block text-xs font-medium mb-1 opacity-80"
                 >
-                  Демо-роль (UI)
+                  Превью-роль (UI)
                 </label>
                 <select
                   id="passkey-demo-role"
@@ -267,10 +272,33 @@ const PasskeyAuthModalContent: React.FC<Omit<PasskeyAuthModalProps, 'isOpen'>> =
                       : 'bg-white border-amber-300 text-slate-900'
                   }`}
                 >
-                  <option value="client">Клиент (демо)</option>
-                  <option value="master">Мастер (демо)</option>
+                  <option value="client">Клиент</option>
+                  <option value="master">Мастер (нужен инвайт)</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="passkey-master-invite"
+                className="block text-xs font-medium mb-1 opacity-80"
+              >
+                Одноразовый инвайт-код мастера (опционально, назначается сервером)
+              </label>
+              <input
+                id="passkey-master-invite"
+                type="password"
+                value={masterInviteCode}
+                onChange={e => setMasterInviteCode(e.target.value)}
+                maxLength={64}
+                placeholder="Оставьте пустым для роли client"
+                autoComplete="off"
+                className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none ${
+                  isDark
+                    ? 'bg-[#0b0e18] border-cyan-500/30 text-white focus:border-cyan-400'
+                    : 'bg-white border-amber-300 text-slate-900 focus:border-amber-500'
+                }`}
+              />
             </div>
 
             <div className="flex flex-wrap gap-2.5 pt-1">

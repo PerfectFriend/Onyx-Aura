@@ -8,6 +8,10 @@
 // =============================================================================
 
 import { createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from 'node:crypto';
+import {
+  extractAuthDataFromAttestationObject,
+  parseAttestedCredentialDataFromAuthData,
+} from '../domain/webauthnCbor';
 import { UserRole } from '../types';
 import { isValidRpIdFormat } from './originPolicy';
 import { ServerPasskeyRecord } from './serverStore';
@@ -18,7 +22,7 @@ function fromBase64Url(b64u: string): Buffer {
   return Buffer.from(`${padded}${'='.repeat(padLen)}`, 'base64');
 }
 
-function sha256(buf: Buffer | string): Buffer {
+function sha256(buf: Buffer | Uint8Array | string): Buffer {
   return createHash('sha256').update(buf).digest();
 }
 
@@ -30,7 +34,9 @@ export interface ServerRegistrationCheckInput {
   rpId: string;
   algorithm: number;
   role: UserRole;
+  rawIdBase64Url?: string;
   authenticatorDataBase64Url?: string;
+  attestationObjectBase64Url?: string;
 }
 
 export interface ServerRegistrationCheckResult {
@@ -48,10 +54,15 @@ export function validateSpkiKeyForRegistration(
     if (spkiBuf.length < 32) return false;
     const keyObj = createPublicKey({ key: spkiBuf, format: 'der', type: 'spki' });
     if (algorithm === -7) {
-      return keyObj.asymmetricKeyType === 'ec';
+      // Q-08: ES256 requires EC P-256 (prime256v1) strictly; reject P-384 / secp256k1
+      return (
+        keyObj.asymmetricKeyType === 'ec' &&
+        keyObj.asymmetricKeyDetails?.namedCurve === 'prime256v1'
+      );
     }
     if (algorithm === -257) {
-      return keyObj.asymmetricKeyType === 'rsa' || keyObj.asymmetricKeyType === 'rsa-pss';
+      // Q-08: RS256 verifies with PKCS#1 v1.5; reject rsa-pss keys
+      return keyObj.asymmetricKeyType === 'rsa';
     }
     return false;
   } catch {
@@ -90,36 +101,76 @@ export function verifyRegistrationBindingOnServer(
   if (!validateSpkiKeyForRegistration(input.publicKeySpkiBase64Url, input.algorithm)) {
     return {
       ok: false,
-      error: 'Invalid or unsupported SPKI public key (requires ES256 -7 or RS256 -257).',
+      error: 'Invalid or unsupported SPKI public key (requires ES256 P-256 -7 or RS256 RSA -257).',
       initialSignCount: 0,
     };
   }
 
-  let initialSignCount = 0;
-  if (input.authenticatorDataBase64Url) {
-    const authData = fromBase64Url(input.authenticatorDataBase64Url);
-    if (authData.length < 37) {
-      return { ok: false, error: 'AuthenticatorData too short (< 37 bytes).', initialSignCount: 0 };
+  // Q-01: Registration MUST include authenticatorData or attestationObject containing attestedCredentialData
+  let authDataBytes: Uint8Array | null = null;
+  if (input.attestationObjectBase64Url) {
+    const extracted = extractAuthDataFromAttestationObject(
+      fromBase64Url(input.attestationObjectBase64Url)
+    );
+    if (extracted) {
+      authDataBytes = extracted;
     }
-    const expectedRpHash = sha256(input.rpId);
-    if (!timingSafeEqual(authData.subarray(0, 32), expectedRpHash)) {
-      return { ok: false, error: 'Registration rpIdHash mismatch.', initialSignCount: 0 };
-    }
-    const flags = authData[32];
-    if ((flags & 0x01) === 0) {
-      return { ok: false, error: 'Registration missing UP (User Present) bit.', initialSignCount: 0 };
-    }
-    if (input.role === 'master' && (flags & 0x04) === 0) {
-      return {
-        ok: false,
-        error: 'Master role registration requires UV (User Verification) bit.',
-        initialSignCount: 0,
-      };
-    }
-    initialSignCount = authData.readUInt32BE(33);
+  }
+  if (!authDataBytes && input.authenticatorDataBase64Url) {
+    authDataBytes = new Uint8Array(fromBase64Url(input.authenticatorDataBase64Url));
   }
 
-  return { ok: true, initialSignCount };
+  if (!authDataBytes || authDataBytes.length < 37) {
+    return {
+      ok: false,
+      error: 'Registration requires valid authenticatorData or attestationObject.',
+      initialSignCount: 0,
+    };
+  }
+
+  const expectedRpHash = sha256(input.rpId);
+  if (!timingSafeEqual(authDataBytes.subarray(0, 32), expectedRpHash)) {
+    return { ok: false, error: 'Registration rpIdHash mismatch.', initialSignCount: 0 };
+  }
+
+  const flags = authDataBytes[32];
+  if ((flags & 0x01) === 0) {
+    return { ok: false, error: 'Registration missing UP (User Present) bit.', initialSignCount: 0 };
+  }
+  if (input.role === 'master' && (flags & 0x04) === 0) {
+    return {
+      ok: false,
+      error: 'Master role registration always requires UV (User Verification) bit.',
+      initialSignCount: 0,
+    };
+  }
+
+  const attested = parseAttestedCredentialDataFromAuthData(authDataBytes);
+  if (!attested) {
+    return {
+      ok: false,
+      error: 'Registration authenticatorData missing attestedCredentialData (AT bit + COSE key).',
+      initialSignCount: 0,
+    };
+  }
+
+  if (attested.algorithm !== input.algorithm || attested.spkiBase64Url !== input.publicKeySpkiBase64Url) {
+    return {
+      ok: false,
+      error: 'Submitted publicKeySpkiBase64Url/algorithm does not match attestedCredentialData COSE key.',
+      initialSignCount: 0,
+    };
+  }
+
+  if (input.rawIdBase64Url && attested.credentialIdBase64Url !== input.rawIdBase64Url) {
+    return {
+      ok: false,
+      error: 'Submitted credential rawId does not match attestedCredentialData.',
+      initialSignCount: 0,
+    };
+  }
+
+  return { ok: true, initialSignCount: attested.signCount };
 }
 
 export interface ServerAssertionCryptoInput {

@@ -8,7 +8,10 @@
 export type ServerSecurityEventType =
   | 'auth.challenge.issued'
   | 'auth.register.ok'
+  | 'auth.register.conflict'
   | 'auth.register.rejected'
+  | 'auth.master.promoted'
+  | 'auth.master.rejected'
   | 'auth.verify.spki_ok'
   | 'auth.verify.spki_rejected'
   | 'auth.verify.stub_fallback'
@@ -18,7 +21,10 @@ export type ServerSecurityEventType =
   | 'payments.checkout.rejected'
   | 'payments.webhook.processed'
   | 'payments.webhook.duplicate'
-  | 'payments.webhook.rejected';
+  | 'payments.webhook.rejected'
+  | 'payments.refund.processed'
+  | 'security.rate_limited'
+  | 'security.origin.rejected';
 
 export interface ServerSecurityAuditEntry {
   timestamp: string;

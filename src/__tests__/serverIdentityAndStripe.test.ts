@@ -32,6 +32,37 @@ function makeAuthenticatorData(rpId: string, flagsByte: number, signCount: numbe
   return Buffer.concat([rpHash, rest]);
 }
 
+function makeRegistrationAuthenticatorData(params: {
+  rpId: string;
+  flagsByte: number;
+  signCount: number;
+  credentialIdBytes: Buffer;
+  spkiDer: Buffer;
+}): Buffer {
+  const rpHash = createHash('sha256').update(params.rpId).digest();
+  const header = Buffer.alloc(5);
+  header[0] = params.flagsByte | 0x40; // ensure AT bit set
+  header.writeUInt32BE(params.signCount, 1);
+
+  const aaguid = Buffer.alloc(16, 0x11);
+  const credLen = Buffer.alloc(2);
+  credLen.writeUInt16BE(params.credentialIdBytes.length, 0);
+
+  // Uncompressed P-256 SPKI ends with 0x04 || x (32) || y (32)
+  const x = params.spkiDer.subarray(params.spkiDer.length - 64, params.spkiDer.length - 32);
+  const y = params.spkiDer.subarray(params.spkiDer.length - 32);
+
+  // CBOR map(5): { 1: 2, 3: -7, -1: 1, -2: x, -3: y }
+  const coseKey = Buffer.concat([
+    Buffer.from([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20]),
+    x,
+    Buffer.from([0x22, 0x58, 0x20]),
+    y,
+  ]);
+
+  return Buffer.concat([rpHash, header, aaguid, credLen, params.credentialIdBytes, coseKey]);
+}
+
 async function withServer(
   setup: (app: express.Express) => void,
   run: (baseUrl: string) => Promise<void>
@@ -112,7 +143,8 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
     const spkiB64u = toBase64Url(spkiDer);
     const rpId = 'nailix.example';
     const origin = 'https://nailix.example';
-    const credentialId = 'cred-es256-real-1';
+    const credBytes = Buffer.from('cred-es256-real-1', 'utf8');
+    const credentialId = toBase64Url(credBytes);
 
     await withServer(
       app => {
@@ -123,15 +155,16 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
             stateStore,
             sessionService,
             allowedOrigins: [origin],
+            masterInviteCodes: ['TEST-MASTER-INVITE-42'],
           })
         );
       },
       async baseUrl => {
-        // 1. Register credential on server
+        // 1. Register credential on server with attestedCredentialData + master invite code
         const regChallengeRes = await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ceremony: 'registration', role: 'master' }),
+          body: JSON.stringify({ ceremony: 'registration' }),
         });
         const regChallenge = (await regChallengeRes.json()) as {
           challengeId: string;
@@ -145,7 +178,15 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
             origin,
           })
         );
-        const regAuthData = toBase64Url(makeAuthenticatorData(rpId, 0x05, 1)); // UP + UV
+        const regAuthData = toBase64Url(
+          makeRegistrationAuthenticatorData({
+            rpId,
+            flagsByte: 0x05, // UP + UV
+            signCount: 1,
+            credentialIdBytes: credBytes,
+            spkiDer,
+          })
+        );
 
         const regRes = await fetch(`${baseUrl}/api/auth/webauthn/register`, {
           method: 'POST',
@@ -153,7 +194,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           body: JSON.stringify({
             challengeId: regChallenge.challengeId,
             credentialId,
-            rawIdBase64Url: toBase64Url('raw-cred-1'),
+            rawIdBase64Url: credentialId,
             publicKeySpkiBase64Url: spkiB64u,
             clientDataJSONBase64Url: regClientData,
             authenticatorDataBase64Url: regAuthData,
@@ -161,7 +202,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
             rpId,
             algorithm: -7,
             displayName: 'Elena Master',
-            role: 'master',
+            masterInviteCode: 'TEST-MASTER-INVITE-42',
           }),
         });
         expect(regRes.status).toBe(201);
@@ -374,17 +415,15 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
         expect(provJson.isSimulated).toBe(false);
         expect(provJson.pciInputsAllowedInDom).toBe(false);
 
-        // Create checkout session
+        // Create checkout session (server derives $165 USD from canonical catalog artist-1 / srv-1)
         const csRes = await fetch(`${baseUrl}/api/payments/checkout-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingReferenceId: 'apt-stripe-1',
-            artistId: 'art-1',
-            artistName: 'Elena',
-            serviceId: 'svc-1',
-            serviceName: 'Chrome Sculpt',
-            amountUsd: 155,
+            artistId: 'artist-1',
+            serviceId: 'srv-1',
+            tipPercentage: 0,
             displayCurrency: 'USD',
           }),
         });
@@ -394,12 +433,12 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           intent: { id: string; status: string; amountMinor: number; mode: string };
         };
         expect(csJson.hostedCheckoutUrl).toBe('https://checkout.stripe.com/c/pay/cs_test_a1b2c3');
-        expect(csJson.intent.amountMinor).toBe(15500);
+        expect(csJson.intent.amountMinor).toBe(16500);
         expect(csJson.intent.status).toBe('requires_action');
         expect(csJson.intent.mode).toBe('hosted_psp');
-        expect(capturedStripeRequestBody).toContain('unit_amount%5D=15500');
+        expect(capturedStripeRequestBody).toContain('unit_amount%5D=16500');
 
-        // Signed Stripe webhook updates status to 'captured'
+        // Signed Stripe webhook updates status to 'captured' when amount_total & currency match
         const webhookPayload = JSON.stringify({
           id: 'evt_test_001',
           type: 'checkout.session.completed',
@@ -407,6 +446,8 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
             object: {
               id: 'cs_test_a1b2c3',
               payment_status: 'paid',
+              amount_total: 16500,
+              currency: 'usd',
               metadata: { intentId: csJson.intent.id },
             },
           },
@@ -495,7 +536,10 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
     });
 
     const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    const spkiB64u = toBase64Url(publicKey.export({ type: 'spki', format: 'der' }));
+    const spkiDer = publicKey.export({ type: 'spki', format: 'der' });
+    const spkiB64u = toBase64Url(spkiDer);
+    const legitCredBytes = Buffer.from('cred-legit-host', 'utf8');
+    const legitCredentialId = toBase64Url(legitCredBytes);
 
     await withServer(
       app => {
@@ -505,6 +549,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
             challengeStore,
             stateStore,
             stripeService,
+            masterInviteCodes: ['TEST-HARDENING-INVITE'],
           })
         );
       },
@@ -578,7 +623,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ceremony: 'registration', role: 'master' }),
+            body: JSON.stringify({ ceremony: 'registration' }),
           })
         ).json()) as { challengeId: string; challengeBase64Url: string };
 
@@ -587,7 +632,8 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             challengeId: ch3.challengeId,
-            credentialId: 'cred-legit-host',
+            credentialId: legitCredentialId,
+            rawIdBase64Url: legitCredentialId,
             publicKeySpkiBase64Url: spkiB64u,
             clientDataJSONBase64Url: toBase64Url(
               JSON.stringify({
@@ -596,10 +642,18 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
                 origin: trustedOrigin,
               })
             ),
-            authenticatorDataBase64Url: toBase64Url(makeAuthenticatorData(trustedRpId, 0x05, 1)),
+            authenticatorDataBase64Url: toBase64Url(
+              makeRegistrationAuthenticatorData({
+                rpId: trustedRpId,
+                flagsByte: 0x05,
+                signCount: 1,
+                credentialIdBytes: legitCredBytes,
+                spkiDer,
+              })
+            ),
             rpId: trustedRpId,
             algorithm: -7,
-            role: 'master',
+            masterInviteCode: 'TEST-HARDENING-INVITE',
           }),
         });
         expect(okReg.status).toBe(201);
@@ -610,7 +664,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           await fetch(`${baseUrl}/api/auth/webauthn/challenge`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ceremony: 'authentication', role: 'master' }),
+            body: JSON.stringify({ ceremony: 'authentication' }),
           })
         ).json()) as { challengeId: string; challengeBase64Url: string };
 
@@ -619,7 +673,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             challengeId: ch4.challengeId,
-            credentialId: 'cred-legit-host',
+            credentialId: legitCredentialId,
             clientDataJSONBase64Url: toBase64Url(
               JSON.stringify({
                 type: 'webauthn.get',
@@ -683,7 +737,7 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             challengeId: ch6.challengeId,
-            credentialId: 'cred-legit-host',
+            credentialId: legitCredentialId,
             clientDataJSONBase64Url: toBase64Url(cdBuf),
             authenticatorDataBase64Url: toBase64Url(adBuf),
             signatureBase64Url: toBase64Url(realSig),
@@ -697,9 +751,9 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingReferenceId: 'apt-open-redir',
-            artistId: 'art-1',
-            serviceId: 'svc-1',
-            amountUsd: 100,
+            artistId: 'artist-1',
+            serviceId: 'srv-1',
+            tipPercentage: 0,
             originUrl: 'https://evil-phish.example',
           }),
         });
@@ -711,9 +765,9 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             bookingReferenceId: 'apt-mono-1',
-            artistId: 'art-1',
-            serviceId: 'svc-1',
-            amountUsd: 100,
+            artistId: 'artist-1',
+            serviceId: 'srv-1',
+            tipPercentage: 0,
           }),
         });
         expect(goodCheckout.status).toBe(201);
@@ -723,7 +777,14 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
         const capPayload = JSON.stringify({
           id: 'evt_cap_1',
           type: 'checkout.session.completed',
-          data: { object: { payment_status: 'paid', metadata: { intentId: intent.id } } },
+          data: {
+            object: {
+              payment_status: 'paid',
+              amount_total: 16500,
+              currency: 'usd',
+              metadata: { intentId: intent.id },
+            },
+          },
         });
         const capSig = createHmac('sha256', webhookSecret).update(`${ts}.${capPayload}`).digest('hex');
         expect(
@@ -753,16 +814,9 @@ describe('Stage 4 · Sprint 4.2 Server SPKI Verification, HttpOnly Sessions, Sec
         ).json()) as { intent: { status: string } };
         expect(finalIntent.intent.status).toBe('captured');
 
-        // 8. Non-PII health audit summary exposes counts cleanly
-        const health = (await (await fetch(`${baseUrl}/api/health`)).json()) as {
-          ok: boolean;
-          stage: string;
-          auditSummary: { totalRecorded: number; recentRejectedCount: number };
-        };
-        expect(health.ok).toBe(true);
-        expect(health.stage).toBe('4.3-hardened-server-and-local-qr');
-        expect(health.auditSummary.totalRecorded).toBeGreaterThan(0);
-        expect(health.auditSummary.recentRejectedCount).toBeGreaterThan(0);
+        // 8. Public health probe returns strictly minimal { ok: true } (Q-06)
+        const health = (await (await fetch(`${baseUrl}/api/health`)).json()) as Record<string, unknown>;
+        expect(health).toEqual({ ok: true });
       }
     );
   });

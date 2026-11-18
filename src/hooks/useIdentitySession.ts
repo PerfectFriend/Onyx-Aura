@@ -147,13 +147,14 @@ export function useIdentitySession({
   );
 
   const handleRegisterPasskey = useCallback(
-    async (displayName: string, role: UserRole) => {
+    async (displayName: string, role: UserRole, masterInviteCode?: string) => {
       setIsBusy(true);
       setAuthError(null);
       try {
         const created = await registerWebAuthnPasskey({
           displayName,
           role,
+          masterInviteCode,
           existingCredentials: passkeys,
         });
 
@@ -181,7 +182,7 @@ export function useIdentitySession({
         onNotify?.(
           isServerBacked ? 'Passkey Server SPKI Active' : 'Passkey (WebAuthn) [LOCAL_ONLY]',
           isServerBacked
-            ? `Ключ «${created.displayName}» зарегистрирован в устройстве и на сервере (HttpOnly cookie).`
+            ? `Ключ «${created.displayName}» зарегистрирован (${created.role}) и закреплён HttpOnly cookie.`
             : `Ключ «${created.displayName}» сохранён в устройстве локально.`
         );
       } catch (err) {

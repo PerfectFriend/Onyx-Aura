@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { HeroSection } from './components/HeroSection';
@@ -109,6 +109,26 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     onBroadcastToSwarm: swarm.broadcastBlock,
     onPersistAppointments: bootstrap.persistAppointments,
   });
+
+  // Q-04: Reconcile Hosted Checkout return strictly via server GET /api/payments/intents/:id
+  const reconciledReturnRef = useRef<string | null>(null);
+  const { reconcileHostedCheckoutReturn } = booking;
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const intentId = params.get('intent_id');
+    const bookingRef = params.get('booking_ref');
+    if (!intentId || reconciledReturnRef.current === intentId) return;
+    reconciledReturnRef.current = intentId;
+
+    void reconcileHostedCheckoutReturn(intentId, bookingRef).finally(() => {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('checkout_status');
+      cleanUrl.searchParams.delete('intent_id');
+      cleanUrl.searchParams.delete('booking_ref');
+      window.history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+    });
+  }, [reconcileHostedCheckoutReturn]);
 
   // Chat & Concierge Drawer (Load-then-Mount)
   const chat = useChatConcierge({
@@ -580,6 +600,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
         onClose={() => booking.setIsCheckoutOpen(false)}
         bookingDetails={booking.pendingBookingDetails}
         onPaymentSuccess={booking.handlePaymentSuccess}
+        onHostedPendingCreated={booking.handleHostedPendingCreated}
       />
 
       <ErrorBoundary level="section" sectionName="Чат-консьерж [SIM]" theme={theme}>

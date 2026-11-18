@@ -38,7 +38,10 @@ export interface WebhookProcessResult {
   eventType?: string;
   updatedIntentId?: string;
   newStatus?: PaymentIntentStatus;
+  rejectedReason?: string;
 }
+
+const MAX_DEPOSIT_MINOR_CENTS = 1_000_000; // $10,000.00 USD upper cap
 
 export function verifyStripeWebhookSignature(params: {
   rawBody: Buffer | string;
@@ -149,14 +152,32 @@ export class StripeHostedCheckoutService {
     }
 
     const amountMinor = toMinorUnits(input.amountUsd);
-    if (amountMinor < 50) {
-      throw new Error('Stripe minimum deposit amount is $0.50 USD (50 cents).');
+    if (amountMinor < 50 || amountMinor > MAX_DEPOSIT_MINOR_CENTS) {
+      throw new Error('Stripe deposit amount must be between $0.50 and $10,000.00 USD.');
+    }
+
+    // Q-03: Booking-level idempotency (reuse open, unexpired checkout session if already created)
+    const existingForBooking = await this.store.getDepositIntentByBookingRef(input.bookingReferenceId);
+    if (
+      existingForBooking &&
+      existingForBooking.status === 'requires_action' &&
+      existingForBooking.amountMinor === amountMinor &&
+      existingForBooking.hostedCheckoutUrl &&
+      Date.parse(existingForBooking.expiresAt) > Date.now()
+    ) {
+      return existingForBooking;
     }
 
     const intentId = `intent_stripe_${randomUUID()}`;
     const origin = input.originUrl.replace(/\/+$/, '');
     const successUrl = `${origin}/?checkout_status=success&intent_id=${encodeURIComponent(intentId)}&booking_ref=${encodeURIComponent(input.bookingReferenceId)}`;
-    const cancelUrl = `${origin}/?checkout_status=canceled&intent_id=${encodeURIComponent(intentId)}`;
+    const cancelUrl = `${origin}/?checkout_status=canceled&intent_id=${encodeURIComponent(intentId)}&booking_ref=${encodeURIComponent(input.bookingReferenceId)}`;
+
+    const safeServiceName = input.serviceName.trim().slice(0, 80) || 'Haute Manicure';
+    const safeArtistName = input.artistName.trim().slice(0, 64) || 'Master Artist';
+    const safeBookingIdempotency = input.bookingReferenceId
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 64);
 
     const form = new URLSearchParams();
     form.set('mode', 'payment');
@@ -168,21 +189,27 @@ export class StripeHostedCheckoutService {
     form.set('line_items[0][price_data][unit_amount]', String(amountMinor));
     form.set(
       'line_items[0][price_data][product_data][name]',
-      `Nailix Deposit — ${input.serviceName} (${input.artistName})`
+      `Nailix Deposit — ${safeServiceName} (${safeArtistName})`
     );
     form.set('metadata[intentId]', intentId);
     form.set('metadata[bookingReferenceId]', input.bookingReferenceId);
     form.set('metadata[artistId]', input.artistId);
     form.set('metadata[serviceId]', input.serviceId);
+    // Q-09: Propagate metadata to PaymentIntent so payment_intent.* & charge.* webhooks correlate reliably
+    form.set('payment_intent_data[metadata][intentId]', intentId);
+    form.set('payment_intent_data[metadata][bookingReferenceId]', input.bookingReferenceId);
+    form.set('payment_intent_data[metadata][artistId]', input.artistId);
+    form.set('payment_intent_data[metadata][serviceId]', input.serviceId);
 
     const response = await this.fetchFn(`${this.apiBaseUrl}/v1/checkout/sessions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.secretKey.trim()}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': `checkout_${intentId}`,
+        'Idempotency-Key': `checkout_${safeBookingIdempotency}`,
       },
       body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -254,6 +281,10 @@ export class StripeHostedCheckoutService {
           id?: unknown;
           metadata?: Record<string, unknown>;
           payment_status?: unknown;
+          amount_total?: unknown;
+          amount_received?: unknown;
+          amount?: unknown;
+          currency?: unknown;
         };
       };
     };
@@ -272,26 +303,61 @@ export class StripeHostedCheckoutService {
     const intentId =
       obj?.metadata && typeof obj.metadata.intentId === 'string' ? obj.metadata.intentId : '';
 
-    let newStatus: PaymentIntentStatus | undefined;
+    let candidateStatus: PaymentIntentStatus | undefined;
+    let isRefundEvent = false;
     if (eventType === 'checkout.session.completed' || eventType === 'checkout.session.async_payment_succeeded') {
-      newStatus = obj?.payment_status === 'paid' ? 'captured' : 'authorized_hold';
+      candidateStatus = obj?.payment_status === 'paid' ? 'captured' : 'authorized_hold';
+    } else if (eventType === 'payment_intent.succeeded') {
+      candidateStatus = 'captured';
     } else if (eventType === 'checkout.session.expired' || eventType === 'payment_intent.canceled') {
-      newStatus = 'canceled';
+      candidateStatus = 'canceled';
     } else if (eventType === 'checkout.session.async_payment_failed' || eventType === 'payment_intent.payment_failed') {
-      newStatus = 'failed';
+      candidateStatus = 'failed';
+    } else if (eventType === 'charge.refunded' || eventType === 'charge.dispute.created') {
+      candidateStatus = 'released';
+      isRefundEvent = true;
     }
 
-    if (intentId && newStatus) {
+    let finalStatus: PaymentIntentStatus | undefined = candidateStatus;
+    let rejectedReason: string | undefined;
+
+    if (intentId && candidateStatus) {
       const existing = await this.store.getDepositIntent(intentId);
       if (existing) {
-        const isAlreadyCaptured = existing.status === 'captured';
-        if (!isAlreadyCaptured || newStatus === 'captured') {
+        if (candidateStatus === 'captured') {
+          const rawAmount = obj?.amount_total ?? obj?.amount_received ?? obj?.amount;
+          const incomingAmount = typeof rawAmount === 'number' ? rawAmount : Number.NaN;
+          const incomingCurrency =
+            typeof obj?.currency === 'string' ? obj.currency.toLowerCase() : '';
+
+          // Q-04 / Q-09: strictly verify paid amount & USD currency before marking captured
+          if (incomingAmount !== existing.amountMinor || incomingCurrency !== 'usd') {
+            rejectedReason = 'amount_or_currency_mismatch';
+            finalStatus = existing.status;
+          } else if (existing.status === 'released') {
+            finalStatus = existing.status;
+          } else {
+            await this.store.saveDepositIntent({
+              ...existing,
+              status: 'captured',
+            });
+            finalStatus = 'captured';
+          }
+        } else if (isRefundEvent) {
           await this.store.saveDepositIntent({
             ...existing,
-            status: newStatus,
+            status: 'released',
           });
+          finalStatus = 'released';
+        } else if (existing.status === 'captured' || existing.status === 'released') {
+          // Do not regress captured/released intents back to canceled/failed/hold on late events
+          finalStatus = existing.status;
         } else {
-          newStatus = existing.status;
+          await this.store.saveDepositIntent({
+            ...existing,
+            status: candidateStatus,
+          });
+          finalStatus = candidateStatus;
         }
       }
     }
@@ -302,7 +368,8 @@ export class StripeHostedCheckoutService {
       duplicate: false,
       eventType,
       updatedIntentId: intentId || undefined,
-      newStatus,
+      newStatus: finalStatus,
+      ...(rejectedReason ? { rejectedReason } : {}),
     };
   }
 }

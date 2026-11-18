@@ -342,5 +342,33 @@
 4. **Закрытие `N-10`: 100% локальный QR и вычищение `api.qrserver.com` (`src/utils/qrGenerator.ts`, `src/components/AndroidExperienceView.tsx`, `src/infrastructure/security/csp.ts`):**
    - Pairing QR-код генерируется оффлайн пакетом `qrcode` локально без отправки URL на внешний сервис; домен `https://api.qrserver.com` полностью удалён из `img-src` build-time и HTTP CSP (`img-src 'self' data: blob:`). Заодно в `CalendarSyncButtons.tsx` вызовы `window.open` заменены на безопасные `<a target="_blank" rel="noopener noreferrer">`.
 
+---
+
+## 🔒 16. Этап 4 · Спринт 4.4 «Закалка серверной идентичности и оплаты» (`Q-01 … Q-09`)
+
+1. **Единый изоморфный CBOR/COSE парсер и привязка регистрации (`src/domain/webauthnCbor.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/apiRouter.ts` · `Q-01`, `Q-08`):**
+   - Из `webAuthnService.ts` выделен изоморфный `webauthnCbor.ts`, используемый и клиентом, и сервером.
+   - `POST /api/auth/webauthn/register` больше не принимает голый `SPKI` без аттестационных данных аутентификатора: требуются `authenticatorDataBase64Url` или `attestationObjectBase64Url` с флагом `AT (0x40)` и COSE-ключом, совпадение извлечённых `credentialId` / DER `SPKI` / `algorithm`, а также безусловный `UV` для роли `master`.
+   - Повторная регистрация существующего `credentialId` или `rawId` от другого/анонимного источника отклоняется с **`HTTP 409 Conflict`**; перепривязка допускается только при действующей `server_spki_verified` cookie-сессии этого ключа.
+   - В `validateSpkiKeyForRegistration` кривая для `ES256 (-7)` сужена строго до `prime256v1` (`P-256`), а для `RS256 (-257)` отсекаются ключи `rsa-pss`.
+   - `ServerSessionService.extractCookieToken` обёрнут в `try/catch` (`decodeURIComponent`) и возвращает `null` при битом percent-encoding без генерации HTTP `500` (`URIError`).
+
+2. **Серверное назначение ролей по одноразовым инвайтам (`src/server/apiRouter.ts`, `src/hooks/useIdentitySession.ts`, `src/components/PasskeyAuthModal.tsx` · `Q-02`):**
+   - Клиентские поля `body.role` на `/challenge` и `/register` больше не повышают привилегии: базовой ролью всегда назначается `'client'`.
+   - Повышение до `'master'` выполняет строго сервер при предъявлении неиспользованного одноразового кода из `NAILIX_MASTER_INVITE_CODES` (при регистрации или через `POST /api/auth/webauthn/promote-master`); неверный/повторный код отклоняется `HTTP 403`.
+
+3. **Серверный каталог цен, идемпотентность и замкнутый цикл Hosted Checkout (`src/domain/serviceCatalog.ts`, `src/server/stripeProvider.ts`, `src/hooks/useBookingFlow.ts`, `src/App.tsx` · `Q-03`, `Q-04`, `Q-09`):**
+   - `/api/payments/checkout-session` игнорирует присланные клиентом `amountUsd`, `artistName` и `serviceName`, рассчитывая сумму строго из `CANONICAL_SERVICE_CATALOG` + разрешённых чаевых `[0, 15, 18, 22]%`.
+   - `StripeHostedCheckoutService` ограничивает верхний предел (`$10 000`), дедуплицирует открытый интент по `bookingReferenceId` с детерминированным `Idempotency-Key`, устанавливает `AbortSignal.timeout(10_000)` и пробрасывает `payment_intent_data[metadata][intentId]`.
+   - Вебхуки `checkout.session.*`, `payment_intent.succeeded` и `charge.refunded` / `charge.dispute.created` строго сверяют `amount_total`/`amount_received`/`amount` с `intent.amountMinor` и валюту `'usd'` перед переводом в `'captured'`, а при ошибке подписи отдают клиенту санитизированное `'Invalid Stripe webhook.'`.
+   - До редиректа `CheckoutModal` сохраняет локальную бронь со статусом `'pending'`, а при возврате по `?intent_id=...` приложение в `App.tsx` + `useBookingFlow.reconcileHostedCheckoutReturn` запрашивает фактический статус в `GET /api/payments/intents/:id` (не доверяя `?checkout_status=success`).
+
+4. **Прод-гигиена сервера, Rate Limiting и Quota Isolation (`server.ts`, `src/server/originPolicy.ts`, `src/server/securityHeaders.ts`, `src/server/challengeService.ts`, `src/server/rateLimiter.ts`, `src/server/serverStore.ts` · `Q-05`, `Q-06`, `Q-07`):**
+   - `originPolicy.ts` в production (`isProduction: true`) не добавляет `Host` / `X-Forwarded-Host` в доверенный список и блокирует кросс-сайтовые мутации (`validateMutationOriginHeader` → `403`).
+   - `server.ts` отказывается стартовать в production без `NAILIX_SESSION_SECRET` (`>= 16` символов), включает `trust proxy` только при `TRUST_PROXY=1|true` и отдаёт JSON `404` для неизвестных `/api/*`.
+   - В `securityHeaders.ts` default `NAILIX_FRAME_ANCESTORS` в production сужен до `'self'`, добавлен `Strict-Transport-Security`.
+   - Введён скользящий rate-limiter (`429 + Retry-After`), квота pending challenges на IP в `challengeService.ts` (исключая вытеснение чужих challenge), ограничены размеры коллекций в `ServerStateStore` (очистка истёкших интентов/сессий), а публичный `/api/health` свёрнут до `{ ok: true }`.
+
+
 
 

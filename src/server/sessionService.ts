@@ -1,7 +1,7 @@
 // =============================================================================
 // Stage 4 · Sprint 4.2 — HMAC-Signed HttpOnly Server Session Service
 // - Issues opaque HMAC-SHA256 signed cookies (`nailix_sid`) backed by ServerStateStore.
-// - Never trusts client-claimed roles; authoritative role comes strictly from stored session.
+// - Stores registered passkey roles server-side (master requires server invite).
 // =============================================================================
 
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -71,7 +71,11 @@ export class ServerSessionService {
       if (idx === -1) continue;
       const name = part.slice(0, idx).trim();
       if (name === SESSION_COOKIE_NAME) {
-        return decodeURIComponent(part.slice(idx + 1).trim());
+        try {
+          return decodeURIComponent(part.slice(idx + 1).trim());
+        } catch {
+          return null;
+        }
       }
     }
     return null;

@@ -29,6 +29,7 @@ interface CheckoutModalProps {
   onClose: () => void;
   bookingDetails: BookingDetailsPayload | null;
   onPaymentSuccess: (appointment: Appointment) => void;
+  onHostedPendingCreated?: (appointment: Appointment) => Promise<void> | void;
 }
 
 const RATES: Record<PaymentCurrency, { rate: number; symbol: string; isCrypto: boolean }> = {
@@ -46,6 +47,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onClose,
   bookingDetails,
   onPaymentSuccess,
+  onHostedPendingCreated,
 }) => {
   if (!isOpen || !bookingDetails) return null;
 
@@ -54,6 +56,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       onClose={onClose}
       bookingDetails={bookingDetails}
       onPaymentSuccess={onPaymentSuccess}
+      onHostedPendingCreated={onHostedPendingCreated}
     />
   );
 };
@@ -62,12 +65,14 @@ interface CheckoutModalContentProps {
   onClose: () => void;
   bookingDetails: BookingDetailsPayload;
   onPaymentSuccess: (appointment: Appointment) => void;
+  onHostedPendingCreated?: (appointment: Appointment) => Promise<void> | void;
 }
 
 const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
   onClose,
   bookingDetails,
   onPaymentSuccess,
+  onHostedPendingCreated,
 }) => {
   const [selectedCurrency, setSelectedCurrency] = useState<PaymentCurrency>('USDC');
   const [tipPercentage, setTipPercentage] = useState<number>(18);
@@ -118,15 +123,42 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
           : `apt-${Date.now()}`;
 
       if (isHostedStripeFlow) {
-        const { hostedCheckoutUrl } = await createServerHostedCheckoutSession({
+        const { intent, hostedCheckoutUrl } = await createServerHostedCheckoutSession({
           bookingReferenceId: bookingRefId,
           artistId: bookingDetails.artist.id,
-          artistName: bookingDetails.artist.name,
           serviceId: bookingDetails.service.id,
-          serviceName: bookingDetails.service.name,
-          amountUsd: totalUSD,
+          tipPercentage,
           displayCurrency: selectedCurrency,
         });
+
+        // Q-04: Save pending booking in IndexedDB BEFORE redirecting to Stripe Hosted Checkout
+        const pendingAppointment: Appointment = {
+          id: bookingRefId,
+          clientName: bookingDetails.clientName,
+          clientPhone: bookingDetails.clientPhone,
+          clientEmail: bookingDetails.clientEmail,
+          artistId: bookingDetails.artist.id,
+          artistName: bookingDetails.artist.name,
+          artistAvatar: bookingDetails.artist.avatar,
+          serviceId: bookingDetails.service.id,
+          serviceName: bookingDetails.service.name,
+          price: Number((intent.amountMinor / 100).toFixed(2)),
+          currency: selectedCurrency,
+          date: bookingDetails.date,
+          timeSlot: bookingDetails.timeSlot,
+          status: 'pending',
+          escrowTxHash: intent.id,
+          remindersEnabled: bookingDetails.enablePush || bookingDetails.enableSMS,
+          pushReminderScheduled: bookingDetails.enablePush,
+          smsReminderScheduled: bookingDetails.enableSMS,
+          referenceLookTitle: bookingDetails.referenceLook?.title,
+          referenceLookImage: bookingDetails.referenceLook?.image,
+          customNotes: bookingDetails.customNotes,
+          createdAt: intent.createdAt,
+          origin: 'user',
+        };
+        await onHostedPendingCreated?.(pendingAppointment);
+
         window.location.assign(hostedCheckoutUrl);
         return;
       }

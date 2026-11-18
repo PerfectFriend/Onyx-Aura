@@ -15,6 +15,9 @@ import {
   PasskeyCredentialRecord,
   WebAuthnCapabilityReport,
 } from '../../domain/identity';
+import {
+  extractAttestedCredentialFromAttestationObject,
+} from '../../domain/webauthnCbor';
 import { UserRole } from '../../types';
 import {
   assertNoSecretLikeFields,
@@ -47,206 +50,18 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * Minimal deterministic CBOR decoder supporting uint, nint, bstr, tstr, array, and map
- * needed to extract `authData` and COSE public keys from WebAuthn `attestationObject`.
- */
-function decodeCborValue(
-  bytes: Uint8Array,
-  offset = 0
-): { value: unknown; nextOffset: number } {
-  if (offset >= bytes.length) {
-    throw new Error('Unexpected end of CBOR buffer.');
-  }
-  const initial = bytes[offset];
-  const major = initial >> 5;
-  const additional = initial & 0x1f;
-  let cursor = offset + 1;
-
-  const readUint = (info: number): number => {
-    if (info < 24) return info;
-    if (info === 24) {
-      if (cursor >= bytes.length) throw new Error('Truncated CBOR uint8');
-      return bytes[cursor++];
-    }
-    if (info === 25) {
-      if (cursor + 2 > bytes.length) throw new Error('Truncated CBOR uint16');
-      const v = (bytes[cursor] << 8) | bytes[cursor + 1];
-      cursor += 2;
-      return v;
-    }
-    if (info === 26) {
-      if (cursor + 4 > bytes.length) throw new Error('Truncated CBOR uint32');
-      const v =
-        ((bytes[cursor] << 24) >>> 0) +
-        (bytes[cursor + 1] << 16) +
-        (bytes[cursor + 2] << 8) +
-        bytes[cursor + 3];
-      cursor += 4;
-      return v;
-    }
-    throw new Error(`Unsupported CBOR length info ${info}`);
-  };
-
-  if (major === 0) {
-    return { value: readUint(additional), nextOffset: cursor };
-  }
-  if (major === 1) {
-    return { value: -1 - readUint(additional), nextOffset: cursor };
-  }
-  if (major === 2) {
-    const len = readUint(additional);
-    const slice = bytes.slice(cursor, cursor + len);
-    return { value: slice, nextOffset: cursor + len };
-  }
-  if (major === 3) {
-    const len = readUint(additional);
-    const slice = bytes.slice(cursor, cursor + len);
-    return { value: new TextDecoder().decode(slice), nextOffset: cursor + len };
-  }
-  if (major === 4) {
-    const len = readUint(additional);
-    const arr: unknown[] = [];
-    for (let i = 0; i < len; i++) {
-      const item = decodeCborValue(bytes, cursor);
-      arr.push(item.value);
-      cursor = item.nextOffset;
-    }
-    return { value: arr, nextOffset: cursor };
-  }
-  if (major === 5) {
-    const len = readUint(additional);
-    const map = new Map<unknown, unknown>();
-    for (let i = 0; i < len; i++) {
-      const key = decodeCborValue(bytes, cursor);
-      const val = decodeCborValue(bytes, key.nextOffset);
-      map.set(key.value, val.value);
-      cursor = val.nextOffset;
-    }
-    return { value: map, nextOffset: cursor };
-  }
-  if (major === 7) {
-    if (additional === 20) return { value: false, nextOffset: cursor };
-    if (additional === 21) return { value: true, nextOffset: cursor };
-    if (additional === 22) return { value: null, nextOffset: cursor };
-    return { value: undefined, nextOffset: cursor };
-  }
-
-  throw new Error(`Unsupported CBOR major type ${major}`);
-}
-
-function encodeDerLength(len: number): Uint8Array {
-  if (len < 0x80) return new Uint8Array([len]);
-  if (len <= 0xff) return new Uint8Array([0x81, len]);
-  return new Uint8Array([0x82, (len >> 8) & 0xff, len & 0xff]);
-}
-
-function encodeDerSequence(contents: Uint8Array): Uint8Array {
-  const lenBytes = encodeDerLength(contents.length);
-  const out = new Uint8Array(1 + lenBytes.length + contents.length);
-  out[0] = 0x30;
-  out.set(lenBytes, 1);
-  out.set(contents, 1 + lenBytes.length);
-  return out;
-}
-
-function encodeDerUnsignedInteger(raw: Uint8Array): Uint8Array {
-  let start = 0;
-  while (start < raw.length - 1 && raw[start] === 0) start++;
-  let trimmed = raw.slice(start);
-  if ((trimmed[0] & 0x80) !== 0) {
-    const prefixed = new Uint8Array(trimmed.length + 1);
-    prefixed[0] = 0x00;
-    prefixed.set(trimmed, 1);
-    trimmed = prefixed;
-  }
-  const lenBytes = encodeDerLength(trimmed.length);
-  const out = new Uint8Array(1 + lenBytes.length + trimmed.length);
-  out[0] = 0x02;
-  out.set(lenBytes, 1);
-  out.set(trimmed, 1 + lenBytes.length);
-  return out;
-}
-
-function encodeDerBitString(bytes: Uint8Array): Uint8Array {
-  const lenBytes = encodeDerLength(bytes.length + 1);
-  const out = new Uint8Array(1 + lenBytes.length + 1 + bytes.length);
-  out[0] = 0x03;
-  out.set(lenBytes, 1);
-  out[1 + lenBytes.length] = 0x00; // unused bits
-  out.set(bytes, 1 + lenBytes.length + 1);
-  return out;
-}
-
-/**
  * Extracts a Base64URL SPKI public key + COSE algorithm from a raw WebAuthn
  * `attestationObject` if `AuthenticatorAttestationResponse.getPublicKey()` is unavailable (N-05).
  */
 export function extractSpkiFromAttestationObject(
   attestationObject: ArrayBuffer | Uint8Array
 ): { spkiBase64Url: string; algorithm: number } | null {
-  try {
-    const raw =
-      attestationObject instanceof Uint8Array
-        ? attestationObject
-        : new Uint8Array(attestationObject);
-    const decoded = decodeCborValue(raw, 0);
-    if (!(decoded.value instanceof Map)) return null;
-    const attestationMap = decoded.value as ReadonlyMap<unknown, unknown>;
-    const authData = attestationMap.get('authData');
-    if (!(authData instanceof Uint8Array) || authData.length < 55) return null;
-
-    const flags = authData[32];
-    const hasAttestedCredentialData = (flags & 0x40) !== 0;
-    if (!hasAttestedCredentialData) return null;
-
-    // 32 (rpIdHash) + 1 (flags) + 4 (signCount) + 16 (aaguid) = offset 53
-    const credIdLen = (authData[53] << 8) | authData[54];
-    const coseOffset = 55 + credIdLen;
-    if (coseOffset >= authData.length) return null;
-
-    const cose = decodeCborValue(authData, coseOffset);
-    if (!(cose.value instanceof Map)) return null;
-    const coseMap = cose.value as ReadonlyMap<unknown, unknown>;
-
-    const kty = coseMap.get(1);
-    const rawAlg = coseMap.get(3);
-    const alg = typeof rawAlg === 'number' ? rawAlg : -7;
-
-    // EC2 (kty = 2), P-256 (crv = 1)
-    if (kty === 2) {
-      const crv = coseMap.get(-1);
-      const x = coseMap.get(-2);
-      const y = coseMap.get(-3);
-      if (crv === 1 && x instanceof Uint8Array && y instanceof Uint8Array && x.length === 32 && y.length === 32) {
-        const spkiPrefix = new Uint8Array([
-          0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
-          0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
-        ]);
-        const spki = concatBytes(spkiPrefix, concatBytes(x, y));
-        return { spkiBase64Url: toBase64Url(spki), algorithm: alg };
-      }
-    }
-
-    // RSA (kty = 3, RS256)
-    if (kty === 3) {
-      const n = coseMap.get(-1);
-      const e = coseMap.get(-2);
-      if (n instanceof Uint8Array && e instanceof Uint8Array) {
-        const rsaAlgId = new Uint8Array([
-          0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
-        ]);
-        const pubKeySeq = encodeDerSequence(
-          concatBytes(encodeDerUnsignedInteger(n), encodeDerUnsignedInteger(e))
-        );
-        const spki = encodeDerSequence(concatBytes(rsaAlgId, encodeDerBitString(pubKeySeq)));
-        return { spkiBase64Url: toBase64Url(spki), algorithm: alg };
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
+  const parsed = extractAttestedCredentialFromAttestationObject(attestationObject);
+  if (!parsed) return null;
+  return {
+    spkiBase64Url: parsed.spkiBase64Url,
+    algorithm: parsed.algorithm,
+  };
 }
 
 /**
@@ -564,6 +379,7 @@ export interface ServerChallengeStubVerification {
   accepted: boolean;
   verificationTier: 'server_spki_verified' | 'challenge_stub_only' | 'not_attempted';
   cryptographicServerVerified: boolean;
+  serverRole?: UserRole;
   notice?: string;
 }
 
@@ -611,8 +427,7 @@ export async function logoutServerIdentitySession(): Promise<void> {
 }
 
 async function requestWebAuthnChallengeWithFallback(
-  ceremony: 'registration' | 'authentication',
-  role: UserRole
+  ceremony: 'registration' | 'authentication'
 ): Promise<{
   challengeBytes: Uint8Array;
   challengeBase64Url: string;
@@ -631,7 +446,7 @@ async function requestWebAuthnChallengeWithFallback(
       const res = await fetch('/api/auth/webauthn/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ceremony, role }),
+        body: JSON.stringify({ ceremony }),
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -708,16 +523,22 @@ async function submitChallengeServerVerification(params: {
       verificationTier?: unknown;
       cryptographicServerVerified?: unknown;
       notice?: unknown;
+      session?: { role?: unknown };
     };
     const tier =
       data.verificationTier === 'server_spki_verified'
         ? 'server_spki_verified'
         : 'challenge_stub_only';
+    const serverRole =
+      data.session?.role === 'master' || data.session?.role === 'client'
+        ? data.session.role
+        : undefined;
     return {
       attempted: true,
       accepted: res.ok && data.accepted === true,
       verificationTier: tier,
       cryptographicServerVerified: Boolean(res.ok && data.cryptographicServerVerified === true),
+      serverRole,
       notice: typeof data.notice === 'string' ? data.notice : undefined,
     };
   } catch {
@@ -733,12 +554,14 @@ async function submitChallengeServerVerification(params: {
 export interface RegisterPasskeyParams {
   displayName: string;
   role: UserRole;
+  masterInviteCode?: string;
   existingCredentials?: PasskeyCredentialRecord[];
 }
 
 export async function registerWebAuthnPasskey({
   displayName,
   role,
+  masterInviteCode,
   existingCredentials = [],
 }: RegisterPasskeyParams): Promise<PasskeyCredentialRecord> {
   const capability = await detectWebAuthnSupport();
@@ -747,7 +570,7 @@ export async function registerWebAuthnPasskey({
   }
 
   const cleanName = displayName.trim() || (role === 'master' ? 'Master Stylist' : 'Salon Guest');
-  const challengeResult = await requestWebAuthnChallengeWithFallback('registration', role);
+  const challengeResult = await requestWebAuthnChallengeWithFallback('registration');
   const challenge = challengeResult.challengeBytes;
   const userIdBytes = generateCryptographicChallenge(16);
   const rpId = window.location.hostname;
@@ -776,7 +599,7 @@ export async function registerWebAuthnPasskey({
     ],
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: role === 'master' ? 'required' : 'preferred',
+      userVerification: role === 'master' || Boolean(masterInviteCode) ? 'required' : 'preferred',
     },
     timeout: 60000,
     attestation: 'none',
@@ -819,33 +642,48 @@ export async function registerWebAuthnPasskey({
     typeof attestationResponse.getAuthenticatorData === 'function'
       ? attestationResponse.getAuthenticatorData()
       : undefined;
+  const attestationObjectBuf = attestationResponse.attestationObject;
+
+  // Authoritative role starts as server-assigned ('client' unless server grants via invite code)
+  let authoritativeRole: UserRole =
+    challengeResult.challengeSource === 'server_stub' ? 'client' : role;
 
   // Register public SPKI key + consume registration challenge on backend when available
   if (challengeResult.challengeSource === 'server_stub' && challengeResult.challengeId) {
-    if (publicKeySpkiBase64Url) {
-      try {
-        await fetch('/api/auth/webauthn/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            challengeId: challengeResult.challengeId,
-            credentialId: credential.id,
-            rawIdBase64Url: toBase64Url(credential.rawId),
-            publicKeySpkiBase64Url,
-            clientDataJSONBase64Url: toBase64Url(attestationResponse.clientDataJSON),
-            authenticatorDataBase64Url: authenticatorDataBuf
-              ? toBase64Url(authenticatorDataBuf)
-              : undefined,
-            expectedOrigin: window.location.origin,
-            rpId,
-            algorithm: alg,
-            displayName: cleanName,
-            role,
-          }),
-        });
-      } catch {
-        // Fallback to local-only registration if network interrupts mid-flight
+    if (publicKeySpkiBase64Url && (authenticatorDataBuf || attestationObjectBuf)) {
+      const regRes = await fetch('/api/auth/webauthn/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          challengeId: challengeResult.challengeId,
+          credentialId: credential.id,
+          rawIdBase64Url: toBase64Url(credential.rawId),
+          publicKeySpkiBase64Url,
+          clientDataJSONBase64Url: toBase64Url(attestationResponse.clientDataJSON),
+          authenticatorDataBase64Url: authenticatorDataBuf
+            ? toBase64Url(authenticatorDataBuf)
+            : undefined,
+          attestationObjectBase64Url: attestationObjectBuf
+            ? toBase64Url(attestationObjectBuf)
+            : undefined,
+          expectedOrigin: window.location.origin,
+          rpId,
+          algorithm: alg,
+          displayName: cleanName,
+          masterInviteCode: masterInviteCode?.trim() || undefined,
+        }),
+      });
+      if (regRes.ok) {
+        const regPayload = (await regRes.json()) as { session?: { role?: unknown } };
+        authoritativeRole = regPayload.session?.role === 'master' ? 'master' : 'client';
+      } else if ([400, 403, 409, 429].includes(regRes.status)) {
+        const errPayload = (await regRes.json().catch(() => ({}))) as { error?: unknown };
+        throw new Error(
+          typeof errPayload.error === 'string'
+            ? errPayload.error
+            : `Сервер отклонил регистрацию Passkey (${regRes.status}).`
+        );
       }
     } else {
       await submitChallengeServerVerification({
@@ -861,7 +699,7 @@ export async function registerWebAuthnPasskey({
     rawIdBase64Url: toBase64Url(credential.rawId),
     publicKeySpkiBase64Url,
     displayName: cleanName,
-    role,
+    role: authoritativeRole,
     rpId,
     algorithm: alg,
     createdAt: new Date().toISOString(),
@@ -903,10 +741,7 @@ export async function authenticateWebAuthnPasskey(
   }
 
   const hasMasterCandidate = realCredentials.some(c => c.role === 'master');
-  const challengeResult = await requestWebAuthnChallengeWithFallback(
-    'authentication',
-    hasMasterCandidate ? 'master' : 'client'
-  );
+  const challengeResult = await requestWebAuthnChallengeWithFallback('authentication');
   const challenge = challengeResult.challengeBytes;
   const expectedChallengeBase64Url = challengeResult.challengeBase64Url;
   const rpId = window.location.hostname;
@@ -967,6 +802,10 @@ export async function authenticateWebAuthnPasskey(
     return {
       credential: {
         ...matched,
+        role:
+          serverStubVerification.cryptographicServerVerified && serverStubVerification.serverRole
+            ? serverStubVerification.serverRole
+            : matched.role,
         lastUsedAt: nowIso,
         signCount: verifyResult.signCount,
       },
@@ -984,7 +823,10 @@ export async function authenticateWebAuthnPasskey(
     id: assertion.id,
     rawIdBase64Url: toBase64Url(assertion.rawId),
     displayName: 'Passkey Hardware Credential',
-    role: 'client',
+    role:
+      serverStubVerification.cryptographicServerVerified && serverStubVerification.serverRole
+        ? serverStubVerification.serverRole
+        : 'client',
     rpId,
     algorithm: -7,
     createdAt: nowIso,

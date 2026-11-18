@@ -63,11 +63,11 @@
 ## 🛠️ Стек технологий / Tech Stack
 
 - **Frontend Core**: [React 19](https://react.dev/), [TypeScript 6.0.3](https://www.typescriptlang.org/) (pinned)
-- **Server & Security (Этап 4.1 → 4.3)**: [Express 5](https://expressjs.com/) (`server.ts`, `src/server/*`) — серверная крипто-проверка WebAuthn SPKI (`ES256`/`RS256` + `HttpOnly` HMAC-сессии `nailix_sid`), серверная политика `origin`/`rpId` + анти-даунгрейд, env-driven Stripe Hosted Checkout SAQ-A + `Stripe-Signature` HMAC вебхуки, не содержащий ПДн аудит-лог, постоянное хранилище `.data/nailix-server.json`, HTTP-заголовки безопасности (`CSP` `img-src 'self' data: blob:` с `frame-ancestors`, `nosniff`, `Permissions-Policy`) и раздача Vite/static на порту `3000`
+- **Server & Security (Этап 4.1 → 4.4)**: [Express 5](https://expressjs.com/) (`server.ts`, `src/server/*`) — серверная крипто-проверка WebAuthn SPKI (`P-256`/`rsa`, обязательный COSE/AT, `409` анти-сквоттинг, роли строго по `NAILIX_MASTER_INVITE_CODES`, `HttpOnly` HMAC-сессии `nailix_sid`), политика `origin`/`rpId` для production, скользящий rate-limit + изоляция квот challenge, env-driven каталог цен депозита (`serviceCatalog.ts`) + Stripe Hosted Checkout SAQ-A и `Stripe-Signature` вебхуки (в т.ч. сверка суммы/валюты и возвраты), хранение в `.data/nailix-server.json`, HTTP HSTS + CSP (`frame-ancestors 'self'`, `img-src 'self' data: blob:`) и раздача Vite/static на порту `3000`
 - **Bundler & Tooling**: [Vite 8](https://vitejs.dev/), [Vitest](https://vitest.dev/) (+ `@vitest/coverage-v8`), [ESLint 9](https://eslint.org/) (`recommendedTypeChecked`, `no-floating-promises`, `react-hooks`, `jsx-a11y/recommended`)
 - **Styling & Typography**: [Tailwind CSS v4](https://tailwindcss.com/), Self-hosted `@fontsource/*` (Plus Jakarta Sans, Syne, JetBrains Mono)
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
-- **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials` + серверная и локальная SPKI-проверка ES256/RS256 + `HttpOnly` cookie), одноразовые server challenges, 100% локальный QR (`qrcode`, `N-10`), Schema Allowlists + `assertNoSecretLikeFields`, build-time + HTTP CSP без `script-src 'unsafe-inline'` и внешних доменов изображений
+- **Identity & Security**: FIDO2 `WebAuthn / Passkeys` (`navigator.credentials` + общий CBOR/COSE парсер `webauthnCbor.ts` + серверная и локальная SPKI-проверка + `HttpOnly` cookie), одноразовые server challenges по IP-квотам, 100% локальный QR (`qrcode`, `N-10`), Schema Allowlists + `assertNoSecretLikeFields`, build-time + HTTP CSP без `script-src 'unsafe-inline'` и внешних доменов изображений
 - **Local-First Storage**: Native `IndexedDB` (schema v3 + `v1 → v2 → v3` migration registry + quarantine export) via `ResilientStorageAdapter` + `SalonRepository` + Transactional Offline `OutboxMutation` Queue
 - **PWA & Offline Engine**: [Vite Plugin PWA](https://vite-pwa-org.netlify.app/), Workbox
 - **Calendar Engine**: RFC 5545 iCalendar generator + Google/Outlook Calendar URL builder
@@ -77,7 +77,7 @@
 ## 📂 Структура проекта / Project Structure
 
 ```bash
-├── docs/                    # Аудит-журнал, Карта Реальности v3.5, PAYMENTS_ADR, Архитектура, Runbook ротации ключа
+├── docs/                    # Аудит-журнал, Карта Реальности v3.6, PAYMENTS_ADR, Архитектура, Runbook ротации ключа
 ├── scripts/
 │   ├── build-apk.sh         # Локальная сборка APK в dist-apk/ (строго через env:NAILIX_KEYSTORE_PASS)
 │   └── ci.workflow.yml      # Шаблон GitHub Actions CI (копировать в .github/workflows/ci.yml под PAT со scope workflow)
@@ -85,14 +85,14 @@
 │   └── assets/images/       # Локальные изображения (портфолио, баннеры, аватары)
 ├── server.ts                # Точка входа Express 5 (Security Headers + /api + Vite dev / dist prod, порт 3000)
 ├── src/
-│   ├── __tests__/           # Vitest (honestyWatchdog, paymentFoundation, serverIdentityAndStripe, localFirstResilience, webAuthnIdentity, ...)
+│   ├── __tests__/           # Vitest (honestyWatchdog, paymentFoundation, serverIdentityAndStripe, serverHardening, ...)
 │   ├── components/          # UI-компоненты, модалки (вкл. PasskeyAuthModal, Zero-PCI CheckoutModal), ErrorBoundary
 │   ├── data/                # Начальные seed-фикстуры (origin: 'seed') для SalonRepository
-│   ├── domain/              # Чистые контракты Payments, Storage, Schema Validators, IdentitySession, Rating calculator
+│   ├── domain/              # Чистые контракты Payments, ServiceCatalog, WebAuthnCbor, Storage, Schema Validators, IdentitySession
 │   ├── hooks/               # Доменные хуки + useSalonBootstrap + useIdentitySession + useAppShell
 │   ├── i18n/                # Словарь переводов на 10 языков (LTR + RTL)
 │   ├── infrastructure/      # HostedCheckoutProvider & MockPaymentProvider [SIM], IndexedDBAdapter, SalonRepository v3, WebAuthnService, SecretHygiene, CSP
-│   ├── server/              # ServerStateStore, ServerSessionService, WebAuthnServerVerifier, OriginPolicy, AuditLog, StripeHostedCheckoutService, SecurityHeaders, API Router
+│   ├── server/              # ServerStateStore, ServerSessionService, WebAuthnServerVerifier, OriginPolicy, RateLimiter, AuditLog, StripeHostedCheckoutService, SecurityHeaders, API Router
 │   ├── services/            # geoDistance (REAL) и reminderService ([SIM])
 │   ├── simulation/          # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
 │   ├── test-utils/          # Экспортируемый сканер честности (honesty.ts) для мета-тестов

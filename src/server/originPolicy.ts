@@ -61,17 +61,23 @@ export function deriveRequestOrigin(req: Request): string | null {
 
 export function getAllowedOriginsForRequest(
   req: Request,
-  explicitOrigins?: string[]
+  explicitOrigins?: string[],
+  isProduction: boolean = process.env.NODE_ENV === 'production'
 ): string[] {
   const allowed = new Set<string>(resolveConfiguredOrigins(explicitOrigins));
+
+  // Q-05: In production, NEVER auto-trust request Host / X-Forwarded-Host headers.
+  // Require explicit NAILIX_ALLOWED_ORIGINS, APP_URL, or injected explicitOrigins.
+  if (isProduction) {
+    return Array.from(allowed);
+  }
 
   const requestDerived = deriveRequestOrigin(req);
   if (requestDerived) {
     allowed.add(requestDerived);
   }
 
-  // In HTTP reverse-proxy / dev environments, allow the HTTP Origin header ONLY when
-  // its hostname matches the Host / X-Forwarded-Host hostname (same host, e.g. TLS-terminated proxy).
+  // In non-production dev/proxy environments, allow Origin HTTP header when hostname matches Host.
   const originHeader = req.header('origin');
   const normalizedHeader = originHeader ? normalizeOrigin(originHeader) : null;
   if (normalizedHeader && requestDerived) {
@@ -90,6 +96,7 @@ export function validateWebAuthnOrigin(params: {
   bodyExpectedOrigin?: string;
   req: Request;
   explicitOrigins?: string[];
+  isProduction?: boolean;
 }): { ok: true; authoritativeOrigin: string } | { ok: false; error: string } {
   const normalizedClient = params.clientOrigin ? normalizeOrigin(params.clientOrigin) : null;
   if (!normalizedClient) {
@@ -119,15 +126,47 @@ export function validateWebAuthnOrigin(params: {
     }
   }
 
-  const allowed = getAllowedOriginsForRequest(params.req, params.explicitOrigins);
+  const isProd = params.isProduction ?? process.env.NODE_ENV === 'production';
+  const allowed = getAllowedOriginsForRequest(params.req, params.explicitOrigins, isProd);
   if (!allowed.includes(normalizedClient)) {
     return {
       ok: false,
-      error: `Untrusted WebAuthn origin (${normalizedClient}); configure NAILIX_ALLOWED_ORIGINS if behind a custom domain.`,
+      error: isProd && allowed.length === 0
+        ? 'No allowed origins configured in production (set NAILIX_ALLOWED_ORIGINS or APP_URL).'
+        : `Untrusted WebAuthn origin (${normalizedClient}); configure NAILIX_ALLOWED_ORIGINS if behind a custom domain.`,
     };
   }
 
   return { ok: true, authoritativeOrigin: normalizedClient };
+}
+
+export function validateMutationOriginHeader(params: {
+  req: Request;
+  explicitOrigins?: string[];
+  isProduction?: boolean;
+}): { ok: true } | { ok: false; error: string } {
+  const isProd = params.isProduction ?? process.env.NODE_ENV === 'production';
+  const secFetchSite = params.req.header('sec-fetch-site')?.trim().toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return { ok: false, error: 'Cross-site mutation request rejected (Sec-Fetch-Site).' };
+  }
+
+  const rawOrigin = params.req.header('origin');
+  if (!rawOrigin) {
+    return { ok: true };
+  }
+
+  const normalized = normalizeOrigin(rawOrigin);
+  if (!normalized) {
+    return { ok: false, error: 'Malformed HTTP Origin header.' };
+  }
+
+  const allowed = getAllowedOriginsForRequest(params.req, params.explicitOrigins, isProd);
+  if (!allowed.includes(normalized)) {
+    return { ok: false, error: `Untrusted mutation Origin (${normalized}).` };
+  }
+
+  return { ok: true };
 }
 
 export function isValidRpIdFormat(rpId: string): boolean {
@@ -165,8 +204,10 @@ export function resolveTrustedCheckoutOriginUrl(params: {
   candidateOriginUrl?: string;
   req: Request;
   explicitOrigins?: string[];
+  isProduction?: boolean;
 }): { ok: true; originUrl: string } | { ok: false; error: string } {
-  const allowed = getAllowedOriginsForRequest(params.req, params.explicitOrigins);
+  const isProd = params.isProduction ?? process.env.NODE_ENV === 'production';
+  const allowed = getAllowedOriginsForRequest(params.req, params.explicitOrigins, isProd);
   if (params.candidateOriginUrl) {
     const normalized = normalizeOrigin(params.candidateOriginUrl);
     if (!normalized || !allowed.includes(normalized)) {
@@ -178,7 +219,7 @@ export function resolveTrustedCheckoutOriginUrl(params: {
     return { ok: true, originUrl: normalized };
   }
 
-  const derived = deriveRequestOrigin(params.req) ?? allowed[0];
+  const derived = isProd ? allowed[0] : (deriveRequestOrigin(params.req) ?? allowed[0]);
   if (!derived) {
     return { ok: false, error: 'Unable to determine trusted origin for Stripe redirect.' };
   }
