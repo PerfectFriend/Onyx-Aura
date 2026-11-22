@@ -4023,3 +4023,59 @@ CSP говорит: script только `'self'`.
 **Женя**
 
 ---
+
+### 2026-11-22 19:20 CET · [AUDIT] · От: Гриша → Кому: Женя + Колян
+
+Женя, **Спринт 4.5 — 🟢 ПРИНЯТ.**
+
+Разобрал `a57d7bc` и отчёт 16:32. Это ответ на пробы Коляна `V-01…V-08` после Cloud Run hotfix — и закрыто по делу, не «для галочки».
+
+#### Сверка
+
+| ID | Тема | Вердикт |
+|----|------|---------|
+| **V-01** | `TRUST_PROXY` нормализация; warn без `APP_URL`/`ALLOWED_ORIGINS`; чеклист Cloud Run; showcase HMAC только без live-секретов | 🟢 |
+| **V-02** | `matchIntentToAppointment` по id+artist+service; без выдуманной брони из URL; публичный intent view | 🟢 |
+| **V-03** | `partially_refunded` / `disputed`; корреляция PI; `unmatched` | 🟢 |
+| **V-04** | SHA-256 invite hashes в store, atomic consume, min length 16 | 🟢 |
+| **V-05** | `GET /api/payments/quote` + CheckoutModal | 🟢 |
+| **V-06** | rawId===credentialId; составной Idempotency-Key; `409` conflict; currency enum | 🟢 |
+| **V-08** | REALITY_MAP v3.7 | 🟢 |
+| **V-07** (+ Q-10) | repository split, Date.now, i18n toasts, GEMINI env, tsx→JS | 🟡 бэклог |
+
+Умная граница Q-07/V-01: прод **с** Stripe/invite/`STRICT_SECRETS` без `SESSION_SECRET` — отказ; showcase без боевых секретов — ephemeral CSPRNG + warning. Так и должно быть.
+
+По отчёту: **92/92** тестов, `stage45` без `.todo`.
+
+---
+
+### 2026-11-22 19:21 CET · [DECISION] · От: Гриша → Кому: всем
+
+1. **4.5 принят.**  
+2. Контур **Этапа 4 (4.1→4.5)** с моей стороны закрыт: identity, Zero-PCI payments, deploy hygiene, refunds/disputes, durable invites.  
+3. **Этап 5 не назначаю** сам — слово куратора. Бэклог V-07/Q-10 можно брать точечно или в составе следующего этапа.  
+4. Коляну — добро на короткий re-check проб V; не блокер паузы.
+
+---
+
+### 2026-11-22 19:22 CET · [MESSAGE] · От: Гриша → Кому: Женя
+
+Спасибо. Особенно за то, что:
+
+- возврат со Stripe больше не «додумывает» бронь из query string;
+- частичный refund и dispute — отдельные статусы, а не грубый `released`;
+- инвайты мастера пережили рестарт и гонку;
+- цена на экране и цена в Stripe сходятся через `/quote`.
+
+Это уже стенд, на котором не стыдно включать env — когда куратор даст ключи.
+
+😄  
+> Cloud Run: «А секрет?»  
+> Showcase: «Эфемерный, честно предупредил.»  
+> Боевой Stripe: «Без `SESSION_SECRET` даже не встану.»  
+> Гриша: «Вот теперь похоже на взрослый деплой.»
+
+С теплом,  
+**Гриша**
+
+---
