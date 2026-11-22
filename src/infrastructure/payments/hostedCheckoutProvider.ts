@@ -9,7 +9,9 @@
 import {
   DepositIntent,
   PaymentProviderCapabilities,
+  PublicDepositIntentView,
 } from '../../domain/payments';
+import { AuthoritativeDepositQuote } from '../../domain/serviceCatalog';
 import { PaymentCurrency } from '../../types';
 import { defaultPaymentProvider } from './mockPaymentProvider';
 
@@ -47,12 +49,41 @@ export async function probeServerPaymentProvider(): Promise<ServerProviderProbeR
   };
 }
 
+export async function fetchServerDepositQuote(params: {
+  artistId: string;
+  serviceId: string;
+  tipPercentage: number;
+}): Promise<AuthoritativeDepositQuote | null> {
+  if (typeof fetch !== 'function') return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    const qs = new URLSearchParams({
+      artistId: params.artistId,
+      serviceId: params.serviceId,
+      tipPercentage: String(params.tipPercentage),
+    });
+    const res = await fetch(`/api/payments/quote?${qs.toString()}`, {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { quote?: AuthoritativeDepositQuote };
+    return data.quote ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createServerHostedCheckoutSession(params: {
   bookingReferenceId: string;
   artistId: string;
   serviceId: string;
   tipPercentage: number;
   displayCurrency: PaymentCurrency;
+  appointmentDate?: string;
+  appointmentTimeSlot?: string;
 }): Promise<{ intent: DepositIntent; hostedCheckoutUrl: string }> {
   const res = await fetch('/api/payments/checkout-session', {
     method: 'POST',
@@ -64,6 +95,8 @@ export async function createServerHostedCheckoutSession(params: {
       serviceId: params.serviceId,
       tipPercentage: params.tipPercentage,
       displayCurrency: params.displayCurrency,
+      ...(params.appointmentDate ? { appointmentDate: params.appointmentDate } : {}),
+      ...(params.appointmentTimeSlot ? { appointmentTimeSlot: params.appointmentTimeSlot } : {}),
       originUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
     }),
   });
@@ -94,7 +127,7 @@ export async function createServerHostedCheckoutSession(params: {
 
 export async function fetchServerPaymentIntentStatus(
   intentId: string
-): Promise<DepositIntent | null> {
+): Promise<PublicDepositIntentView | null> {
   if (!intentId || typeof fetch !== 'function') return null;
   try {
     const controller = new AbortController();
@@ -105,7 +138,7 @@ export async function fetchServerPaymentIntentStatus(
     });
     clearTimeout(timeout);
     if (!res.ok) return null;
-    const data = (await res.json()) as { intent?: DepositIntent };
+    const data = (await res.json()) as { intent?: PublicDepositIntentView };
     return data.intent ?? null;
   } catch {
     return null;

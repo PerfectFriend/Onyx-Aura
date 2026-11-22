@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet, ExternalLink } from 'lucide-react';
 import { Artist, NailService, PaymentCurrency, PortfolioItem, Appointment } from '../types';
 import { PaymentProviderCapabilities } from '../domain/payments';
+import { AuthoritativeDepositQuote } from '../domain/serviceCatalog';
 import {
   createServerHostedCheckoutSession,
+  fetchServerDepositQuote,
   resolveActivePaymentCapabilities,
 } from '../infrastructure/payments/hostedCheckoutProvider';
 import { defaultPaymentProvider } from '../infrastructure/payments/mockPaymentProvider';
@@ -81,6 +83,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
   const [capabilities, setCapabilities] = useState<PaymentProviderCapabilities>(() =>
     defaultPaymentProvider.getCapabilities()
   );
+  const [serverQuote, setServerQuote] = useState<AuthoritativeDepositQuote | null>(null);
   const [completedTx, setCompletedTx] = useState<{
     txHash: string;
     isRealSha256: boolean;
@@ -103,13 +106,41 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
 
   const demoWalletLabel = '0xSIM_WALLET_71cA9...8E29 (Demo Preview)';
 
-  const basePriceUSD = bookingDetails.service.priceUSD;
-  const tipAmountUSD = Math.round((basePriceUSD * tipPercentage) / 100);
-  const totalUSD = basePriceUSD + tipAmountUSD;
-
   const currencyInfo = RATES[selectedCurrency];
-  const convertedTotal = (totalUSD * currencyInfo.rate).toFixed(currencyInfo.isCrypto ? 4 : 2);
   const isHostedStripeFlow = !currencyInfo.isCrypto && !capabilities.isSimulated;
+
+  useEffect(() => {
+    if (!isHostedStripeFlow) {
+      setServerQuote(null);
+      return;
+    }
+    let active = true;
+    fetchServerDepositQuote({
+      artistId: bookingDetails.artist.id,
+      serviceId: bookingDetails.service.id,
+      tipPercentage,
+    })
+      .then(quote => {
+        if (active) setServerQuote(quote);
+      })
+      .catch(() => {
+        if (active) setServerQuote(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isHostedStripeFlow, bookingDetails.artist.id, bookingDetails.service.id, tipPercentage]);
+
+  const basePriceUSD =
+    isHostedStripeFlow && serverQuote ? serverQuote.basePriceUsd : bookingDetails.service.priceUSD;
+  const tipAmountUSD =
+    isHostedStripeFlow && serverQuote
+      ? serverQuote.tipAmountUsd
+      : Math.round((basePriceUSD * tipPercentage) / 100);
+  const totalUSD =
+    isHostedStripeFlow && serverQuote ? serverQuote.totalUsd : basePriceUSD + tipAmountUSD;
+
+  const convertedTotal = (totalUSD * currencyInfo.rate).toFixed(currencyInfo.isCrypto ? 4 : 2);
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,6 +160,8 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
           serviceId: bookingDetails.service.id,
           tipPercentage,
           displayCurrency: selectedCurrency,
+          appointmentDate: bookingDetails.date,
+          appointmentTimeSlot: bookingDetails.timeSlot,
         });
 
         // Q-04: Save pending booking in IndexedDB BEFORE redirecting to Stripe Hosted Checkout

@@ -22,6 +22,7 @@ export type ServerSecurityEventType =
   | 'payments.webhook.processed'
   | 'payments.webhook.duplicate'
   | 'payments.webhook.rejected'
+  | 'payments.webhook.unmatched'
   | 'payments.refund.processed'
   | 'security.rate_limited'
   | 'security.origin.rejected';

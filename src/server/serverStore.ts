@@ -40,6 +40,7 @@ export interface PersistedServerSnapshot {
   sessions: Record<string, ServerSessionRecord>;
   depositIntents: Record<string, DepositIntent>;
   processedWebhookEvents: string[];
+  consumedInviteHashes: string[];
 }
 
 function emptySnapshot(): PersistedServerSnapshot {
@@ -49,6 +50,7 @@ function emptySnapshot(): PersistedServerSnapshot {
     sessions: {},
     depositIntents: {},
     processedWebhookEvents: [],
+    consumedInviteHashes: [],
   };
 }
 
@@ -79,9 +81,12 @@ export interface ServerStateStore {
   deleteSession(sessionId: string): Promise<void>;
   getDepositIntent(intentId: string): Promise<DepositIntent | undefined>;
   getDepositIntentByBookingRef(bookingReferenceId: string): Promise<DepositIntent | undefined>;
+  getDepositIntentByPaymentIntentId(paymentIntentId: string): Promise<DepositIntent | undefined>;
   saveDepositIntent(intent: DepositIntent): Promise<void>;
   hasProcessedWebhookEvent(eventId: string): Promise<boolean>;
   markWebhookEventProcessed(eventId: string): Promise<void>;
+  consumeMasterInviteHash(hashHex: string): Promise<boolean>;
+  isMasterInviteHashConsumed(hashHex: string): Promise<boolean>;
 }
 
 const MAX_WEBHOOK_EVENT_HISTORY = 500;
@@ -182,6 +187,17 @@ export class InMemoryServerStateStore implements ServerStateStore {
     return candidates[candidates.length - 1];
   }
 
+  public async getDepositIntentByPaymentIntentId(
+    paymentIntentId: string
+  ): Promise<DepositIntent | undefined> {
+    if (!paymentIntentId) return undefined;
+    await this.ensureLoaded();
+    const candidates = Object.values(this.snapshot.depositIntents).filter(
+      item => item.stripePaymentIntentId === paymentIntentId
+    );
+    return candidates[candidates.length - 1];
+  }
+
   public async saveDepositIntent(intent: DepositIntent): Promise<void> {
     assertSafeRecordId(intent.id, 'deposit intent');
     await this.mutate(state => {
@@ -229,6 +245,29 @@ export class InMemoryServerStateStore implements ServerStateStore {
     });
   }
 
+  public async isMasterInviteHashConsumed(hashHex: string): Promise<boolean> {
+    if (!hashHex) return false;
+    await this.ensureLoaded();
+    return this.snapshot.consumedInviteHashes.includes(hashHex);
+  }
+
+  public async consumeMasterInviteHash(hashHex: string): Promise<boolean> {
+    if (!hashHex || FORBIDDEN_RECORD_KEYS.has(hashHex)) return false;
+    let newlyConsumed = false;
+    await this.mutate(state => {
+      if (state.consumedInviteHashes.includes(hashHex)) {
+        newlyConsumed = false;
+        return;
+      }
+      state.consumedInviteHashes.push(hashHex);
+      if (state.consumedInviteHashes.length > 500) {
+        state.consumedInviteHashes = state.consumedInviteHashes.slice(-500);
+      }
+      newlyConsumed = true;
+    });
+    return newlyConsumed;
+  }
+
   protected async ensureLoaded(): Promise<void> {
     // Base in-memory implementation needs no disk initialization
   }
@@ -264,6 +303,9 @@ export class FileServerStateStore extends InMemoryServerStateStore {
             : {},
         processedWebhookEvents: Array.isArray(parsed.processedWebhookEvents)
           ? parsed.processedWebhookEvents.filter((id): id is string => typeof id === 'string')
+          : [],
+        consumedInviteHashes: Array.isArray(parsed.consumedInviteHashes)
+          ? parsed.consumedInviteHashes.filter((h): h is string => typeof h === 'string')
           : [],
       };
     } catch {

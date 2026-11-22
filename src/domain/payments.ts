@@ -6,7 +6,7 @@
 //   Checkout / Elements; simulated mode must declare `isSimulated: true`.
 // =============================================================================
 
-import { PaymentCurrency } from '../types';
+import { Appointment, PaymentCurrency } from '../types';
 
 export type PaymentMode = 'hosted_psp' | 'simulated';
 
@@ -14,9 +14,28 @@ export type PaymentIntentStatus =
   | 'requires_action'
   | 'authorized_hold'
   | 'captured'
+  | 'partially_refunded'
   | 'released'
+  | 'disputed'
   | 'canceled'
   | 'failed';
+
+export const ALLOWED_PAYMENT_CURRENCIES: readonly PaymentCurrency[] = [
+  'USD',
+  'EUR',
+  'GBP',
+  'USDC',
+  'ETH',
+  'SOL',
+  'NAIL',
+] as const;
+
+export function isAllowedPaymentCurrency(value: unknown): value is PaymentCurrency {
+  return (
+    typeof value === 'string' &&
+    (ALLOWED_PAYMENT_CURRENCIES as readonly string[]).includes(value)
+  );
+}
 
 export interface DepositIntent {
   id: string;
@@ -25,6 +44,8 @@ export interface DepositIntent {
   serviceId: string;
   /** Authoritative deposit amount in integer USD cents to prevent IEEE-754 drift. */
   amountMinor: number;
+  /** Cumulative refunded amount in integer USD cents (V-03). */
+  amountRefundedMinor?: number;
   /** Settlement currency code (USD cents until real multi-currency PSP routing). */
   currency: 'USD';
   /** UI preview currency selected by the client. */
@@ -35,8 +56,68 @@ export interface DepositIntent {
   providerLabel: string;
   isSimulated: boolean;
   hostedCheckoutUrl?: string;
+  /** Internal Stripe PaymentIntent id for fallback webhook correlation (never exposed publicly). */
+  stripePaymentIntentId?: string;
+  /** Server-validated appointment slot stored with the intent (V-02). */
+  appointmentDate?: string;
+  appointmentTimeSlot?: string;
   createdAt: string;
   expiresAt: string;
+}
+
+/**
+ * Minimal non-sensitive projection returned by public GET /api/payments/intents/:id (V-02).
+ */
+export interface PublicDepositIntentView {
+  id: string;
+  bookingReferenceId: string;
+  artistId: string;
+  serviceId: string;
+  amountMinor: number;
+  amountRefundedMinor?: number;
+  currency: 'USD';
+  displayCurrency: PaymentCurrency;
+  status: PaymentIntentStatus;
+  appointmentDate?: string;
+  appointmentTimeSlot?: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export function toPublicDepositIntentView(intent: DepositIntent): PublicDepositIntentView {
+  return {
+    id: intent.id,
+    bookingReferenceId: intent.bookingReferenceId,
+    artistId: intent.artistId,
+    serviceId: intent.serviceId,
+    amountMinor: intent.amountMinor,
+    ...(typeof intent.amountRefundedMinor === 'number'
+      ? { amountRefundedMinor: intent.amountRefundedMinor }
+      : {}),
+    currency: intent.currency,
+    displayCurrency: intent.displayCurrency,
+    status: intent.status,
+    ...(intent.appointmentDate ? { appointmentDate: intent.appointmentDate } : {}),
+    ...(intent.appointmentTimeSlot ? { appointmentTimeSlot: intent.appointmentTimeSlot } : {}),
+    createdAt: intent.createdAt,
+    expiresAt: intent.expiresAt,
+  };
+}
+
+/**
+ * Strictly binds a server DepositIntent to a local Appointment without trusting URL query params (V-02).
+ */
+export function matchIntentToAppointment(
+  intent: Pick<PublicDepositIntentView, 'id' | 'bookingReferenceId' | 'artistId' | 'serviceId'>,
+  appointments: readonly Appointment[]
+): Appointment | undefined {
+  return appointments.find(
+    app =>
+      app.id === intent.bookingReferenceId &&
+      app.artistId === intent.artistId &&
+      app.serviceId === intent.serviceId &&
+      (!app.escrowTxHash || app.escrowTxHash === intent.id)
+  );
 }
 
 export interface DepositSession {

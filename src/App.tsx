@@ -110,18 +110,17 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     onPersistAppointments: bootstrap.persistAppointments,
   });
 
-  // Q-04: Reconcile Hosted Checkout return strictly via server GET /api/payments/intents/:id
+  // Q-04 & V-02: Reconcile Hosted Checkout return strictly via server GET /api/payments/intents/:id
   const reconciledReturnRef = useRef<string | null>(null);
   const { reconcileHostedCheckoutReturn } = booking;
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const intentId = params.get('intent_id');
-    const bookingRef = params.get('booking_ref');
     if (!intentId || reconciledReturnRef.current === intentId) return;
     reconciledReturnRef.current = intentId;
 
-    void reconcileHostedCheckoutReturn(intentId, bookingRef).finally(() => {
+    void reconcileHostedCheckoutReturn(intentId).finally(() => {
       const cleanUrl = new URL(window.location.href);
       cleanUrl.searchParams.delete('checkout_status');
       cleanUrl.searchParams.delete('intent_id');

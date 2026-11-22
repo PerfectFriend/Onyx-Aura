@@ -515,7 +515,8 @@ describe('Stage 4 · Sprint 4.4 Hardening Suite (Q-01 … Q-09)', () => {
       const first = await svc.createHostedCheckoutSession(input);
       const second = await svc.createHostedCheckoutSession(input);
       expect(second.id).toBe(first.id);
-      expect(sentKeys).toEqual(['checkout_b1']);
+      expect(sentKeys).toHaveLength(1);
+      expect(sentKeys[0]).toMatch(/^checkout_b1_[0-9a-f]{12}$/);
 
       // Direct service upper bound cap ($10,000 max) rejects 1e9
       await expect(
@@ -787,44 +788,88 @@ describe('Stage 4 · Sprint 4.4 Hardening Suite (Q-01 … Q-09)', () => {
     });
   });
 
-  describe('Q-07 · Production boot secret enforcement, frame-ancestors default, HSTS, trust proxy, and JSON 404 /api/*', () => {
-    it('refuses production startup without NAILIX_SESSION_SECRET, sets frame-ancestors self + HSTS, disables trust proxy by default, and returns JSON 404 on unknown /api/*', async () => {
+  describe('Q-07 · Production boot secret enforcement, showcase boot compatibility, frame-ancestors, HSTS, trust proxy, and JSON 404 /api/*', () => {
+    it('boots showcase production cleanly without external secrets, while refusing startup without NAILIX_SESSION_SECRET when Stripe/master/strict flags are enabled', async () => {
       const prevSecret = process.env.NAILIX_SESSION_SECRET;
+      const prevStrict = process.env.NAILIX_STRICT_SECRETS;
+      const prevStripe = process.env.STRIPE_SECRET_KEY;
+      const prevInvites = process.env.NAILIX_MASTER_INVITE_CODES;
       const prevFrames = process.env.NAILIX_FRAME_ANCESTORS;
       const prevTrustProxy = process.env.TRUST_PROXY;
+
       delete process.env.NAILIX_SESSION_SECRET;
+      delete process.env.NAILIX_STRICT_SECRETS;
+      delete process.env.STRIPE_SECRET_KEY;
+      delete process.env.NAILIX_MASTER_INVITE_CODES;
       delete process.env.NAILIX_FRAME_ANCESTORS;
       delete process.env.TRUST_PROXY;
 
       try {
-        await expect(createAppServer({ isProduction: true, mountFrontend: false })).rejects.toThrow(
-          /NAILIX_SESSION_SECRET/i
-        );
+        // Showcase Cloud Run deployment (no STRIPE_SECRET_KEY / master invites / strict flag) boots cleanly
+        const showcaseApp = await createAppServer({ isProduction: true, mountFrontend: false });
+        expect(showcaseApp.get('trust proxy')).toBe(false);
         expect(buildServerHttpCsp(true)).toContain("frame-ancestors 'self'");
         expect(buildServerHttpCsp(true)).not.toContain('google.com');
 
-        process.env.NAILIX_SESSION_SECRET = 'prod-strong-session-secret-32-chars!!';
-        const app = await createAppServer({ isProduction: true, mountFrontend: false });
-        expect(app.get('trust proxy')).toBe(false);
-
-        const server = http.createServer(app);
-        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+        const showcaseServer = http.createServer(showcaseApp);
+        await new Promise<void>(resolve => showcaseServer.listen(0, '127.0.0.1', () => resolve()));
         try {
-          const port = (server.address() as AddressInfo).port;
-          const missingApi = await fetch(`http://127.0.0.1:${port}/api/does-not-exist`);
+          const showcasePort = (showcaseServer.address() as AddressInfo).port;
+          const healthRes = await fetch(`http://127.0.0.1:${showcasePort}/api/health`);
+          expect(healthRes.status).toBe(200);
+          expect(await healthRes.json()).toEqual({ ok: true });
+
+          const missingApi = await fetch(`http://127.0.0.1:${showcasePort}/api/does-not-exist`);
           expect(missingApi.status).toBe(404);
           expect(missingApi.headers.get('content-type')).toContain('application/json');
           expect(missingApi.headers.get('strict-transport-security')).toContain('max-age=');
         } finally {
-          await new Promise<void>((res, rej) => server.close(e => (e ? rej(e) : res())));
+          await new Promise<void>((res, rej) => showcaseServer.close(e => (e ? rej(e) : res())));
         }
 
-        // securityHeadersMiddleware direct HSTS check
+        // Strict/live-secret modes STILL fail closed when NAILIX_SESSION_SECRET is missing
+        await expect(
+          createAppServer({
+            isProduction: true,
+            mountFrontend: false,
+            requirePersistentSessionSecret: true,
+          })
+        ).rejects.toThrow(/NAILIX_SESSION_SECRET/i);
+
+        process.env.NAILIX_STRICT_SECRETS = '1';
+        await expect(createAppServer({ isProduction: true, mountFrontend: false })).rejects.toThrow(
+          /NAILIX_SESSION_SECRET/i
+        );
+        delete process.env.NAILIX_STRICT_SECRETS;
+
+        process.env.STRIPE_SECRET_KEY = 'sk_test_live_payment_requires_session_secret';
+        await expect(createAppServer({ isProduction: true, mountFrontend: false })).rejects.toThrow(
+          /NAILIX_SESSION_SECRET/i
+        );
+        delete process.env.STRIPE_SECRET_KEY;
+
+        process.env.NAILIX_MASTER_INVITE_CODES = 'NAILIX-INVITE-01';
+        await expect(createAppServer({ isProduction: true, mountFrontend: false })).rejects.toThrow(
+          /NAILIX_SESSION_SECRET/i
+        );
+
+        // Once NAILIX_SESSION_SECRET is provided alongside live secrets, startup succeeds cleanly
+        process.env.NAILIX_SESSION_SECRET = 'prod-strong-session-secret-32-chars!!';
+        process.env.STRIPE_SECRET_KEY = 'sk_test_live_payment_requires_session_secret';
+        const strictApp = await createAppServer({ isProduction: true, mountFrontend: false });
+        expect(strictApp.get('trust proxy')).toBe(false);
+
         const hstsRes = await withServerReturnHeader();
         expect(hstsRes).toContain('max-age=');
       } finally {
         if (prevSecret !== undefined) process.env.NAILIX_SESSION_SECRET = prevSecret;
         else delete process.env.NAILIX_SESSION_SECRET;
+        if (prevStrict !== undefined) process.env.NAILIX_STRICT_SECRETS = prevStrict;
+        else delete process.env.NAILIX_STRICT_SECRETS;
+        if (prevStripe !== undefined) process.env.STRIPE_SECRET_KEY = prevStripe;
+        else delete process.env.STRIPE_SECRET_KEY;
+        if (prevInvites !== undefined) process.env.NAILIX_MASTER_INVITE_CODES = prevInvites;
+        else delete process.env.NAILIX_MASTER_INVITE_CODES;
         if (prevFrames !== undefined) process.env.NAILIX_FRAME_ANCESTORS = prevFrames;
         if (prevTrustProxy !== undefined) process.env.TRUST_PROXY = prevTrustProxy;
       }

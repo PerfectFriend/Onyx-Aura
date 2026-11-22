@@ -6,10 +6,17 @@
 // - Honestly reports unconfigured state so client falls back to [SIM] explicitly.
 // =============================================================================
 
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { DepositIntent, PaymentIntentStatus, toMinorUnits } from '../domain/payments';
 import { PaymentCurrency } from '../types';
 import { ServerStateStore } from './serverStore';
+
+export class StripeCheckoutConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StripeCheckoutConflictError';
+  }
+}
 
 export interface ServerPaymentProviderStatus {
   activeProviderId: 'stripe_hosted' | 'mock_sim';
@@ -30,11 +37,14 @@ export interface CreateHostedCheckoutSessionInput {
   amountUsd: number;
   displayCurrency: PaymentCurrency;
   originUrl: string;
+  appointmentDate?: string;
+  appointmentTimeSlot?: string;
 }
 
 export interface WebhookProcessResult {
   received: boolean;
   duplicate?: boolean;
+  unmatched?: boolean;
   eventType?: string;
   updatedIntentId?: string;
   newStatus?: PaymentIntentStatus;
@@ -156,16 +166,25 @@ export class StripeHostedCheckoutService {
       throw new Error('Stripe deposit amount must be between $0.50 and $10,000.00 USD.');
     }
 
-    // Q-03: Booking-level idempotency (reuse open, unexpired checkout session if already created)
+    // Q-03 & V-06: Booking-level idempotency (reuse open session only when service/artist/amount match)
     const existingForBooking = await this.store.getDepositIntentByBookingRef(input.bookingReferenceId);
     if (
       existingForBooking &&
       existingForBooking.status === 'requires_action' &&
-      existingForBooking.amountMinor === amountMinor &&
-      existingForBooking.hostedCheckoutUrl &&
       Date.parse(existingForBooking.expiresAt) > Date.now()
     ) {
-      return existingForBooking;
+      if (
+        existingForBooking.artistId !== input.artistId ||
+        existingForBooking.serviceId !== input.serviceId ||
+        existingForBooking.amountMinor !== amountMinor
+      ) {
+        throw new StripeCheckoutConflictError(
+          'Booking reference already has an active checkout session with different service or amount.'
+        );
+      }
+      if (existingForBooking.hostedCheckoutUrl) {
+        return existingForBooking;
+      }
     }
 
     const intentId = `intent_stripe_${randomUUID()}`;
@@ -177,7 +196,11 @@ export class StripeHostedCheckoutService {
     const safeArtistName = input.artistName.trim().slice(0, 64) || 'Master Artist';
     const safeBookingIdempotency = input.bookingReferenceId
       .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .slice(0, 64);
+      .slice(0, 48);
+    const paramsDigest = createHash('sha256')
+      .update(`${input.bookingReferenceId}|${input.artistId}|${input.serviceId}|${amountMinor}`)
+      .digest('hex')
+      .slice(0, 12);
 
     const form = new URLSearchParams();
     form.set('mode', 'payment');
@@ -206,7 +229,7 @@ export class StripeHostedCheckoutService {
       headers: {
         Authorization: `Bearer ${this.secretKey.trim()}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Idempotency-Key': `checkout_${safeBookingIdempotency}`,
+        'Idempotency-Key': `checkout_${safeBookingIdempotency}_${paramsDigest}`,
       },
       body: form.toString(),
       signal: AbortSignal.timeout(10_000),
@@ -221,6 +244,7 @@ export class StripeHostedCheckoutService {
       id?: unknown;
       url?: unknown;
       expires_at?: unknown;
+      payment_intent?: unknown;
     };
 
     if (typeof sessionPayload.url !== 'string' || !sessionPayload.url.startsWith('https://')) {
@@ -232,6 +256,10 @@ export class StripeHostedCheckoutService {
       typeof sessionPayload.expires_at === 'number'
         ? new Date(sessionPayload.expires_at * 1000).toISOString()
         : new Date(now + 30 * 60 * 1000).toISOString();
+    const stripePaymentIntentId =
+      typeof sessionPayload.payment_intent === 'string' && sessionPayload.payment_intent.trim()
+        ? sessionPayload.payment_intent.trim()
+        : undefined;
 
     const intent: DepositIntent = {
       id: intentId,
@@ -247,6 +275,9 @@ export class StripeHostedCheckoutService {
       providerLabel: 'Stripe Hosted Checkout (SAQ-A)',
       isSimulated: false,
       hostedCheckoutUrl: sessionPayload.url,
+      ...(stripePaymentIntentId ? { stripePaymentIntentId } : {}),
+      ...(input.appointmentDate ? { appointmentDate: input.appointmentDate } : {}),
+      ...(input.appointmentTimeSlot ? { appointmentTimeSlot: input.appointmentTimeSlot } : {}),
       createdAt: new Date(now).toISOString(),
       expiresAt: expiresAtIso,
     };
@@ -279,11 +310,13 @@ export class StripeHostedCheckoutService {
       data?: {
         object?: {
           id?: unknown;
+          payment_intent?: unknown;
           metadata?: Record<string, unknown>;
           payment_status?: unknown;
           amount_total?: unknown;
           amount_received?: unknown;
           amount?: unknown;
+          amount_refunded?: unknown;
           currency?: unknown;
         };
       };
@@ -300,65 +333,136 @@ export class StripeHostedCheckoutService {
     }
 
     const obj = event.data?.object;
-    const intentId =
+    const metadataIntentId =
       obj?.metadata && typeof obj.metadata.intentId === 'string' ? obj.metadata.intentId : '';
+    const objectPaymentIntentId =
+      eventType.startsWith('payment_intent.') && typeof obj?.id === 'string'
+        ? obj.id
+        : typeof obj?.payment_intent === 'string'
+          ? obj.payment_intent
+          : '';
 
-    let candidateStatus: PaymentIntentStatus | undefined;
-    let isRefundEvent = false;
-    if (eventType === 'checkout.session.completed' || eventType === 'checkout.session.async_payment_succeeded') {
-      candidateStatus = obj?.payment_status === 'paid' ? 'captured' : 'authorized_hold';
-    } else if (eventType === 'payment_intent.succeeded') {
-      candidateStatus = 'captured';
-    } else if (eventType === 'checkout.session.expired' || eventType === 'payment_intent.canceled') {
-      candidateStatus = 'canceled';
-    } else if (eventType === 'checkout.session.async_payment_failed' || eventType === 'payment_intent.payment_failed') {
-      candidateStatus = 'failed';
-    } else if (eventType === 'charge.refunded' || eventType === 'charge.dispute.created') {
-      candidateStatus = 'released';
-      isRefundEvent = true;
+    let existing = metadataIntentId
+      ? await this.store.getDepositIntent(metadataIntentId)
+      : undefined;
+    if (!existing && objectPaymentIntentId) {
+      existing = await this.store.getDepositIntentByPaymentIntentId(objectPaymentIntentId);
     }
 
-    let finalStatus: PaymentIntentStatus | undefined = candidateStatus;
+    if (!existing) {
+      await this.store.markWebhookEventProcessed(eventId);
+      return {
+        received: true,
+        duplicate: false,
+        unmatched: true,
+        eventType,
+      };
+    }
+
+    const resolvedPaymentIntentId = objectPaymentIntentId || existing.stripePaymentIntentId;
+    let finalStatus: PaymentIntentStatus = existing.status;
     let rejectedReason: string | undefined;
 
-    if (intentId && candidateStatus) {
-      const existing = await this.store.getDepositIntent(intentId);
-      if (existing) {
-        if (candidateStatus === 'captured') {
-          const rawAmount = obj?.amount_total ?? obj?.amount_received ?? obj?.amount;
-          const incomingAmount = typeof rawAmount === 'number' ? rawAmount : Number.NaN;
-          const incomingCurrency =
-            typeof obj?.currency === 'string' ? obj.currency.toLowerCase() : '';
+    if (
+      eventType === 'checkout.session.completed' ||
+      eventType === 'checkout.session.async_payment_succeeded' ||
+      eventType === 'payment_intent.succeeded'
+    ) {
+      const candidateStatus: PaymentIntentStatus =
+        eventType === 'payment_intent.succeeded' || obj?.payment_status === 'paid'
+          ? 'captured'
+          : 'authorized_hold';
 
-          // Q-04 / Q-09: strictly verify paid amount & USD currency before marking captured
-          if (incomingAmount !== existing.amountMinor || incomingCurrency !== 'usd') {
-            rejectedReason = 'amount_or_currency_mismatch';
-            finalStatus = existing.status;
-          } else if (existing.status === 'released') {
-            finalStatus = existing.status;
-          } else {
-            await this.store.saveDepositIntent({
-              ...existing,
-              status: 'captured',
-            });
-            finalStatus = 'captured';
-          }
-        } else if (isRefundEvent) {
-          await this.store.saveDepositIntent({
-            ...existing,
-            status: 'released',
-          });
-          finalStatus = 'released';
-        } else if (existing.status === 'captured' || existing.status === 'released') {
-          // Do not regress captured/released intents back to canceled/failed/hold on late events
+      if (candidateStatus === 'captured') {
+        const rawAmount = obj?.amount_total ?? obj?.amount_received ?? obj?.amount;
+        const incomingAmount = typeof rawAmount === 'number' ? rawAmount : Number.NaN;
+        const incomingCurrency =
+          typeof obj?.currency === 'string' ? obj.currency.toLowerCase() : '';
+
+        if (incomingAmount !== existing.amountMinor || incomingCurrency !== 'usd') {
+          rejectedReason = 'amount_or_currency_mismatch';
+          finalStatus = existing.status;
+        } else if (
+          existing.status === 'released' ||
+          existing.status === 'partially_refunded' ||
+          existing.status === 'disputed'
+        ) {
           finalStatus = existing.status;
         } else {
           await this.store.saveDepositIntent({
             ...existing,
-            status: candidateStatus,
+            status: 'captured',
+            ...(resolvedPaymentIntentId ? { stripePaymentIntentId: resolvedPaymentIntentId } : {}),
           });
-          finalStatus = candidateStatus;
+          finalStatus = 'captured';
         }
+      } else if (
+        existing.status !== 'captured' &&
+        existing.status !== 'partially_refunded' &&
+        existing.status !== 'released' &&
+        existing.status !== 'disputed'
+      ) {
+        await this.store.saveDepositIntent({
+          ...existing,
+          status: candidateStatus,
+          ...(resolvedPaymentIntentId ? { stripePaymentIntentId: resolvedPaymentIntentId } : {}),
+        });
+        finalStatus = candidateStatus;
+      }
+    } else if (eventType === 'charge.refunded') {
+      const rawRefunded = obj?.amount_refunded;
+      const refundedMinor =
+        typeof rawRefunded === 'number' && Number.isFinite(rawRefunded) && rawRefunded >= 0
+          ? Math.min(existing.amountMinor, Math.round(rawRefunded))
+          : existing.amountMinor;
+
+      if (refundedMinor > 0) {
+        const nextRefundStatus: PaymentIntentStatus =
+          refundedMinor < existing.amountMinor
+            ? existing.status === 'disputed'
+              ? 'disputed'
+              : 'partially_refunded'
+            : 'released';
+
+        await this.store.saveDepositIntent({
+          ...existing,
+          status: nextRefundStatus,
+          amountRefundedMinor: Math.max(existing.amountRefundedMinor ?? 0, refundedMinor),
+          ...(resolvedPaymentIntentId ? { stripePaymentIntentId: resolvedPaymentIntentId } : {}),
+        });
+        finalStatus = nextRefundStatus;
+      }
+    } else if (eventType === 'charge.dispute.created') {
+      const nextDisputeStatus: PaymentIntentStatus =
+        existing.status === 'released' ? 'released' : 'disputed';
+      await this.store.saveDepositIntent({
+        ...existing,
+        status: nextDisputeStatus,
+        ...(resolvedPaymentIntentId ? { stripePaymentIntentId: resolvedPaymentIntentId } : {}),
+      });
+      finalStatus = nextDisputeStatus;
+    } else if (
+      eventType === 'checkout.session.expired' ||
+      eventType === 'payment_intent.canceled' ||
+      eventType === 'checkout.session.async_payment_failed' ||
+      eventType === 'payment_intent.payment_failed'
+    ) {
+      const candidate: PaymentIntentStatus =
+        eventType === 'checkout.session.expired' || eventType === 'payment_intent.canceled'
+          ? 'canceled'
+          : 'failed';
+      if (
+        existing.status !== 'captured' &&
+        existing.status !== 'partially_refunded' &&
+        existing.status !== 'released' &&
+        existing.status !== 'disputed'
+      ) {
+        await this.store.saveDepositIntent({
+          ...existing,
+          status: candidate,
+          ...(resolvedPaymentIntentId ? { stripePaymentIntentId: resolvedPaymentIntentId } : {}),
+        });
+        finalStatus = candidate;
       }
     }
 
@@ -367,7 +471,7 @@ export class StripeHostedCheckoutService {
       received: true,
       duplicate: false,
       eventType,
-      updatedIntentId: intentId || undefined,
+      updatedIntentId: existing.id,
       newStatus: finalStatus,
       ...(rejectedReason ? { rejectedReason } : {}),
     };

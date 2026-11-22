@@ -63,7 +63,7 @@
 ## 🛠️ Стек технологий / Tech Stack
 
 - **Frontend Core**: [React 19](https://react.dev/), [TypeScript 6.0.3](https://www.typescriptlang.org/) (pinned)
-- **Server & Security (Этап 4.1 → 4.4)**: [Express 5](https://expressjs.com/) (`server.ts`, `src/server/*`) — серверная крипто-проверка WebAuthn SPKI (`P-256`/`rsa`, обязательный COSE/AT, `409` анти-сквоттинг, роли строго по `NAILIX_MASTER_INVITE_CODES`, `HttpOnly` HMAC-сессии `nailix_sid`), политика `origin`/`rpId` для production, скользящий rate-limit + изоляция квот challenge, env-driven каталог цен депозита (`serviceCatalog.ts`) + Stripe Hosted Checkout SAQ-A и `Stripe-Signature` вебхуки (в т.ч. сверка суммы/валюты и возвраты), хранение в `.data/nailix-server.json`, HTTP HSTS + CSP (`frame-ancestors 'self'`, `img-src 'self' data: blob:`) и раздача Vite/static на порту `3000`
+- **Server & Security (Этап 4.1 → 4.5)**: [Express 5](https://expressjs.com/) (`server.ts`, `src/server/*`) — серверная крипто-проверка WebAuthn SPKI (`P-256`/`rsa`, обязательный COSE/AT, `credentialId === rawIdBase64Url`, `409` анти-сквоттинг, долговечные хэшированные одноразовые инвайты `>= 16` символов `NAILIX_MASTER_INVITE_CODES`, `HttpOnly` HMAC-сессии `nailix_sid`), политика `origin`/`rpId` для production, `TRUST_PROXY` с числом хопов, скользящий rate-limit + изоляция квот challenge, эндпоинт котировок `/api/payments/quote` + Stripe Hosted Checkout SAQ-A и `Stripe-Signature` вебхуки (включая частичные возвраты, споры, корреляцию по `payment_intent`), хранение в `.data/nailix-server.json`, HTTP HSTS + CSP (`frame-ancestors 'self'`, `img-src 'self' data: blob:`) и раздача Vite/static на порту `3000`
 - **Bundler & Tooling**: [Vite 8](https://vitejs.dev/), [Vitest](https://vitest.dev/) (+ `@vitest/coverage-v8`), [ESLint 9](https://eslint.org/) (`recommendedTypeChecked`, `no-floating-promises`, `react-hooks`, `jsx-a11y/recommended`)
 - **Styling & Typography**: [Tailwind CSS v4](https://tailwindcss.com/), Self-hosted `@fontsource/*` (Plus Jakarta Sans, Syne, JetBrains Mono)
 - **Motion & Icons**: [Motion](https://motion.dev/), [Lucide React](https://lucide.dev/)
@@ -77,7 +77,7 @@
 ## 📂 Структура проекта / Project Structure
 
 ```bash
-├── docs/                    # Аудит-журнал, Карта Реальности v3.6, PAYMENTS_ADR, Архитектура, Runbook ротации ключа
+├── docs/                    # Аудит-журнал, Карта Реальности v3.7, PAYMENTS_ADR, Архитектура, Runbook ротации ключа
 ├── scripts/
 │   ├── build-apk.sh         # Локальная сборка APK в dist-apk/ (строго через env:NAILIX_KEYSTORE_PASS)
 │   └── ci.workflow.yml      # Шаблон GitHub Actions CI (копировать в .github/workflows/ci.yml под PAT со scope workflow)
@@ -85,7 +85,7 @@
 │   └── assets/images/       # Локальные изображения (портфолио, баннеры, аватары)
 ├── server.ts                # Точка входа Express 5 (Security Headers + /api + Vite dev / dist prod, порт 3000)
 ├── src/
-│   ├── __tests__/           # Vitest (honestyWatchdog, paymentFoundation, serverIdentityAndStripe, serverHardening, ...)
+│   ├── __tests__/           # Vitest (honestyWatchdog, paymentFoundation, serverIdentityAndStripe, serverHardening, stage45, ...)
 │   ├── components/          # UI-компоненты, модалки (вкл. PasskeyAuthModal, Zero-PCI CheckoutModal), ErrorBoundary
 │   ├── data/                # Начальные seed-фикстуры (origin: 'seed') для SalonRepository
 │   ├── domain/              # Чистые контракты Payments, ServiceCatalog, WebAuthnCbor, Storage, Schema Validators, IdentitySession
@@ -128,6 +128,11 @@ npm run build
 > **Примечание по покрытию (`vitest.config.ts`)**: `npm run test:coverage` рассчитывает V8-метрики строго по доменному, инфраструктурному, серверному слоям и утилитам (`src/domain/**/*.ts`, `src/infrastructure/**/*.ts`, `src/server/**/*.ts`, `src/utils/**/*.ts`), не включая UI-компоненты, React-хуки и `[SIM]`-модули.
 
 Локальная сборка APK выполняется по инструкции в [`docs/KEY_ROTATION_RUNBOOK.md`](./docs/KEY_ROTATION_RUNBOOK.md).
+
+### ☁️ Чек-лист деплоя в Cloud Run (`V-01`)
+- **`APP_URL` / `NAILIX_ALLOWED_ORIGINS`:** задать реальный `https://...` адрес сервиса — иначе в `production` браузерные `POST` (`/api/auth/webauthn/*`, `/api/payments/checkout-session`) получат `HTTP 403` (сервер выведет громкое предупреждение при старте).
+- **`TRUST_PROXY=1`:** включить (или указать точное число прокси-хопов), чтобы за балансировщиком Cloud Run лимитер частоты и квоты challenge разделялись по реальному IP клиента из `X-Forwarded-For`.
+- **Один экземпляр (`min=1, max=1`) и эфемерное состояние:** файл `.data/nailix-server.json` живёт в контейнере и теряется при редеплое/рестарте; в showcase-режиме без `NAILIX_SESSION_SECRET` ключ HMAC cookie создаётся заново при старте процесса. Для боевого запуска со Stripe и инвайт-кодами (`>= 16` символов) `NAILIX_SESSION_SECRET` строго обязателен.
 
 ---
 

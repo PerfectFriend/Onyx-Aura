@@ -365,10 +365,25 @@
 
 4. **Прод-гигиена сервера, Rate Limiting и Quota Isolation (`server.ts`, `src/server/originPolicy.ts`, `src/server/securityHeaders.ts`, `src/server/challengeService.ts`, `src/server/rateLimiter.ts`, `src/server/serverStore.ts` · `Q-05`, `Q-06`, `Q-07`):**
    - `originPolicy.ts` в production (`isProduction: true`) не добавляет `Host` / `X-Forwarded-Host` в доверенный список и блокирует кросс-сайтовые мутации (`validateMutationOriginHeader` → `403`).
-   - `server.ts` отказывается стартовать в production без `NAILIX_SESSION_SECRET` (`>= 16` символов), включает `trust proxy` только при `TRUST_PROXY=1|true` и отдаёт JSON `404` для неизвестных `/api/*`.
+   - `server.ts` отказывается стартовать в production без `NAILIX_SESSION_SECRET` (`>= 16` символов), если включены реальные внешние секреты/роли (`STRIPE_SECRET_KEY`, `NAILIX_MASTER_INVITE_CODES`) или `NAILIX_STRICT_SECRETS=1`; для showcase-деплоя в Cloud Run без этих секретов сервер поднимается с эфемерным 32-байтовым CSPRNG-ключом сессий, включает `trust proxy` только при `TRUST_PROXY=1|true` и отдаёт JSON `404` для неизвестных `/api/*`.
    - В `securityHeaders.ts` default `NAILIX_FRAME_ANCESTORS` в production сужен до `'self'`, добавлен `Strict-Transport-Security`.
    - Введён скользящий rate-limiter (`429 + Retry-After`), квота pending challenges на IP в `challengeService.ts` (исключая вытеснение чужих challenge), ограничены размеры коллекций в `ServerStateStore` (очистка истёкших интентов/сессий), а публичный `/api/health` свёрнут до `{ ok: true }`.
 
+---
 
+## ☁️ 17. Этап 4 · Спринт 4.5 «Деплой, возврат Stripe и атомарность без сюрпризов» (`V-01 … V-08`)
 
-
+1. **Чек-лист продакшен-деплоя в Cloud Run (`V-01`):**
+   - `APP_URL` (`https://...`) или `NAILIX_ALLOWED_ORIGINS` обязателен: при их отсутствии в `production` сервер теперь громко предупреждает в консоль при старте (`console.warn`), т.к. браузерные POST-запросы с `Origin` получат `HTTP 403`.
+   - `TRUST_PROXY=1` (или точное число доверенных прокси-хопов) обязателен за балансировщиком Cloud Run, чтобы `req.ip` корректно разделял бакеты `rateLimiter` и квоты `challengeService` между реальными клиентами.
+   - Инстанс должен работать в 1 экземпляре (`min=1, max=1`): состояние `.data/nailix-server.json` эфемерно в файловой системе контейнера, а в showcase-режиме без `NAILIX_SESSION_SECRET` ключ HMAC cookie генерируется на старт процесса.
+2. **Строгая привязка возврата Stripe и минимальный ответ инспекции (`V-02`, `V-05`):**
+   - Из `useBookingFlow.ts` удалена привязка по URL-параметру `booking_ref`; логика вынесена в чистую функцию `matchIntentToAppointment(intent, appointments)` в `src/domain/payments.ts` (`app.id === intent.bookingReferenceId && app.artistId === intent.artistId && app.serviceId === intent.serviceId && (!app.escrowTxHash || app.escrowTxHash === intent.id)`).
+   - При отсутствии локальной брони в `IndexedDB` приложение больше не синтезирует фиктивную запись на `'14:00'` / сегодня — честно показывает тост подтверждения с суммой, ID и сохранёнными `appointmentDate`/`appointmentTimeSlot`.
+   - Добавлен `GET /api/payments/quote` (`V-05`), на который опирается `CheckoutModal` в Stripe-ветке, а публичный `GET /api/payments/intents/:id` возвращает суженную проекцию `PublicDepositIntentView` без `hostedCheckoutUrl` и `providerId`.
+3. **Частичные возвраты, споры и корреляция вебхуков (`V-03`, `V-06`):**
+   - Статусы расширены значениями `'partially_refunded'` и `'disputed'` + полем `amountRefundedMinor`. Частичный `charge.refunded` больше не переводит intent в терминальный `'released'`, а `charge.dispute.created` фиксируется как `'disputed'`.
+   - Добавлена запасная корреляция вебхуков по `stripePaymentIntentId` (`getDepositIntentByPaymentIntentId`); события без найденного intent честно возвращают `{ received: true, duplicate: false, unmatched: true }`.
+   - На `/checkout-session` проверяются формат `appointmentDate`/`appointmentTimeSlot`, enum `displayCurrency` и составной `Idempotency-Key` от `(bookingReferenceId, artistId, serviceId, amountMinor)` с `409 Conflict` при конфликте активной брони. На `/register` введена проверка `credentialId === rawIdBase64Url`.
+4. **Долговечные атомарные хэшированные инвайты мастера (`V-04`):**
+   - `NAILIX_MASTER_INVITE_CODES` требует длины не менее **16 символов**, при загрузке коды сразу хэшируются через `SHA-256`, а одноразовое потребление (`consumeMasterInviteHash`) выполняется атомарно через сериализованную очередь записи `ServerStateStore` (`consumedInviteHashes` в `.data/nailix-server.json`), защищая и от рестарта сервера, и от конкурентных запросов `/promote-master`.

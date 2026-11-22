@@ -11,10 +11,14 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import express, { NextFunction, Request, Response, Router } from 'express';
 import {
+  isAllowedPaymentCurrency,
+  toPublicDepositIntentView,
+} from '../domain/payments';
+import {
   CanonicalServiceCatalogEntry,
   resolveAuthoritativeDepositQuote,
 } from '../domain/serviceCatalog';
-import { PaymentCurrency, UserRole } from '../types';
+import { UserRole } from '../types';
 import { ServerSecurityAuditLog } from './auditLog';
 import {
   defaultChallengeStubStore,
@@ -29,7 +33,10 @@ import {
 import { createSlidingWindowRateLimiter, getClientIpKey } from './rateLimiter';
 import { InMemoryServerStateStore, ServerStateStore } from './serverStore';
 import { ServerSessionService } from './sessionService';
-import { StripeHostedCheckoutService } from './stripeProvider';
+import {
+  StripeCheckoutConflictError,
+  StripeHostedCheckoutService,
+} from './stripeProvider';
 import {
   verifyAssertionSignatureOnServer,
   verifyRegistrationBindingOnServer,
@@ -55,13 +62,11 @@ function extractClientDataOrigin(clientDataJSONBase64Url: string): string | unde
   }
 }
 
-function constantTimeCodeEqual(a: string, b: string): boolean {
-  const hashA = createHash('sha256').update(a, 'utf8').digest();
-  const hashB = createHash('sha256').update(b, 'utf8').digest();
-  return timingSafeEqual(hashA, hashB);
+function hashInviteCode(code: string): string {
+  return createHash('sha256').update(code, 'utf8').digest('hex');
 }
 
-function resolveConfiguredInviteCodes(explicit?: string[]): string[] {
+function resolveConfiguredInviteHashes(explicit?: string[]): string[] {
   const envRaw = process.env.NAILIX_MASTER_INVITE_CODES ?? '';
   const combined = [
     ...(explicit ?? []),
@@ -70,7 +75,9 @@ function resolveConfiguredInviteCodes(explicit?: string[]): string[] {
       .map(s => s.trim())
       .filter(Boolean),
   ];
-  return Array.from(new Set(combined.filter(code => code.length >= 6)));
+  return Array.from(
+    new Set(combined.filter(code => code.length >= 16).map(code => hashInviteCode(code)))
+  );
 }
 
 export interface FoundationRouterDependencies {
@@ -106,16 +113,22 @@ export function createFoundationApiRouter(
   const auditLog = deps.auditLog ?? new ServerSecurityAuditLog();
   const isProduction = deps.isProduction ?? process.env.NODE_ENV === 'production';
 
-  const validInviteCodes = resolveConfiguredInviteCodes(deps.masterInviteCodes);
-  const consumedInviteCodes = new Set<string>();
+  const validInviteHashes = resolveConfiguredInviteHashes(deps.masterInviteCodes);
 
-  const matchUnusedInviteCode = (candidate: string): string | null => {
-    for (const code of validInviteCodes) {
-      if (!consumedInviteCodes.has(code) && constantTimeCodeEqual(candidate, code)) {
-        return code;
+  const matchConfiguredInviteHash = (candidate: string): string | null => {
+    if (candidate.length < 16) return null;
+    const candidateBuf = Buffer.from(hashInviteCode(candidate), 'hex');
+    let matched: string | null = null;
+    for (const configuredHash of validInviteHashes) {
+      const configuredBuf = Buffer.from(configuredHash, 'hex');
+      if (
+        configuredBuf.length === candidateBuf.length &&
+        timingSafeEqual(candidateBuf, configuredBuf)
+      ) {
+        matched = configuredHash;
       }
     }
-    return null;
+    return matched;
   };
 
   const windowMs = deps.rateLimits?.windowMs ?? 60_000;
@@ -171,8 +184,10 @@ export function createFoundationApiRouter(
         });
         if (result.rejectedReason) {
           auditLog.record('payments.webhook.rejected', 'rejected', result.rejectedReason);
-        } else if (result.newStatus === 'released') {
-          auditLog.record('payments.refund.processed', 'ok', result.eventType);
+        } else if (result.unmatched) {
+          auditLog.record('payments.webhook.unmatched', 'rejected', result.eventType);
+        } else if (result.newStatus === 'released' || result.newStatus === 'partially_refunded') {
+          auditLog.record('payments.refund.processed', 'ok', `${result.eventType}:${result.newStatus}`);
         } else {
           auditLog.record(
             result.duplicate ? 'payments.webhook.duplicate' : 'payments.webhook.processed',
@@ -204,6 +219,31 @@ export function createFoundationApiRouter(
     res.json(stripeService.getProviderStatus());
   });
 
+  // V-05: Server-authoritative catalog pricing quote endpoint
+  router.get('/payments/quote', (req, res) => {
+    const artistId = typeof req.query.artistId === 'string' ? req.query.artistId.trim() : '';
+    const serviceId = typeof req.query.serviceId === 'string' ? req.query.serviceId.trim() : '';
+    const rawTip = typeof req.query.tipPercentage === 'string' ? Number(req.query.tipPercentage) : 0;
+
+    if (!artistId || !serviceId || !Number.isFinite(rawTip)) {
+      res.status(400).json({ error: 'Valid artistId, serviceId, and tipPercentage query parameters are required.' });
+      return;
+    }
+
+    const quoteRes = resolveAuthoritativeDepositQuote({
+      artistId,
+      serviceId,
+      tipPercentage: rawTip,
+      catalog: deps.serviceCatalog,
+    });
+    if (!quoteRes.ok) {
+      res.status(400).json({ error: quoteRes.error });
+      return;
+    }
+
+    res.status(200).json({ ok: true, quote: quoteRes.quote });
+  });
+
   router.post(
     '/payments/checkout-session',
     checkoutRateLimiter,
@@ -226,8 +266,27 @@ export function createFoundationApiRouter(
       const artistId = typeof body.artistId === 'string' ? body.artistId.trim() : '';
       const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
       const tipPercentage = typeof body.tipPercentage === 'number' ? body.tipPercentage : 0;
+
+      if (body.displayCurrency !== undefined && !isAllowedPaymentCurrency(body.displayCurrency)) {
+        res.status(400).json({ error: 'Unsupported displayCurrency.' });
+        return;
+      }
       const displayCurrency =
-        typeof body.displayCurrency === 'string' ? (body.displayCurrency as PaymentCurrency) : 'USD';
+        body.displayCurrency !== undefined && isAllowedPaymentCurrency(body.displayCurrency)
+          ? body.displayCurrency
+          : 'USD';
+
+      const rawDate = typeof body.appointmentDate === 'string' ? body.appointmentDate.trim() : undefined;
+      const rawTimeSlot =
+        typeof body.appointmentTimeSlot === 'string' ? body.appointmentTimeSlot.trim() : undefined;
+      if (rawDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+        res.status(400).json({ error: 'Invalid appointmentDate format (expected YYYY-MM-DD).' });
+        return;
+      }
+      if (rawTimeSlot !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(rawTimeSlot)) {
+        res.status(400).json({ error: 'Invalid appointmentTimeSlot format (expected HH:MM).' });
+        return;
+      }
 
       if (
         !bookingReferenceId ||
@@ -280,10 +339,17 @@ export function createFoundationApiRouter(
           amountUsd: quoteRes.quote.totalUsd,
           displayCurrency,
           originUrl: originResolution.originUrl,
+          appointmentDate: rawDate,
+          appointmentTimeSlot: rawTimeSlot,
         });
         auditLog.record('payments.checkout.created', 'ok', intent.providerId);
         res.status(201).json({ intent, hostedCheckoutUrl: intent.hostedCheckoutUrl });
       } catch (err) {
+        if (err instanceof StripeCheckoutConflictError) {
+          auditLog.record('payments.checkout.rejected', 'rejected', err.message);
+          res.status(409).json({ error: err.message });
+          return;
+        }
         const msg =
           err instanceof Error ? err.message : 'Unable to create Stripe Hosted Checkout session.';
         auditLog.record('payments.checkout.rejected', 'rejected', msg);
@@ -292,6 +358,7 @@ export function createFoundationApiRouter(
     })
   );
 
+  // V-02: Return minimal non-sensitive intent status view (no hostedCheckoutUrl / providerId)
   router.get(
     '/payments/intents/:intentId',
     asyncRoute(async (req, res) => {
@@ -305,7 +372,7 @@ export function createFoundationApiRouter(
         res.status(404).json({ error: 'Deposit intent not found.' });
         return;
       }
-      res.json({ intent });
+      res.json({ intent: toPublicDepositIntentView(intent) });
     })
   );
 
@@ -334,10 +401,16 @@ export function createFoundationApiRouter(
 
       const challengeId = typeof body.challengeId === 'string' ? body.challengeId : '';
       const credentialId = typeof body.credentialId === 'string' ? body.credentialId.trim() : '';
-      const rawIdBase64Url =
-        typeof body.rawIdBase64Url === 'string' && body.rawIdBase64Url.trim()
-          ? body.rawIdBase64Url.trim()
-          : credentialId;
+      const rawIdInput =
+        typeof body.rawIdBase64Url === 'string' ? body.rawIdBase64Url.trim() : '';
+      if (rawIdInput && rawIdInput !== credentialId) {
+        res.status(400).json({
+          registered: false,
+          error: 'credentialId must match rawIdBase64Url.',
+        });
+        return;
+      }
+      const rawIdBase64Url = rawIdInput || credentialId;
       const publicKeySpkiBase64Url =
         typeof body.publicKeySpkiBase64Url === 'string' ? body.publicKeySpkiBase64Url.trim() : '';
       const clientDataJSONBase64Url =
@@ -426,12 +499,15 @@ export function createFoundationApiRouter(
         }
       }
 
-      // Q-02: Role is NEVER taken from client body/challenge. Default is 'client'.
+      // Q-02 & V-04: Role is NEVER taken from client body/challenge. Default is 'client'.
       let assignedRole: UserRole = existingCred?.role ?? 'client';
-      let matchedInvite: string | null = null;
+      let matchedInviteHash: string | null = null;
       if (masterInviteCode) {
-        matchedInvite = matchUnusedInviteCode(masterInviteCode);
-        if (!matchedInvite) {
+        const candidateHash = matchConfiguredInviteHash(masterInviteCode);
+        const alreadyConsumed = candidateHash
+          ? await stateStore.isMasterInviteHashConsumed(candidateHash)
+          : false;
+        if (!candidateHash || alreadyConsumed) {
           auditLog.record('auth.master.rejected', 'rejected', 'invalid-invite-code');
           res.status(403).json({
             registered: false,
@@ -439,6 +515,7 @@ export function createFoundationApiRouter(
           });
           return;
         }
+        matchedInviteHash = candidateHash;
         assignedRole = 'master';
       }
 
@@ -482,8 +559,16 @@ export function createFoundationApiRouter(
         return;
       }
 
-      if (matchedInvite) {
-        consumedInviteCodes.add(matchedInvite);
+      if (matchedInviteHash) {
+        const consumedOk = await stateStore.consumeMasterInviteHash(matchedInviteHash);
+        if (!consumedOk) {
+          auditLog.record('auth.master.rejected', 'rejected', 'concurrent-invite-consume');
+          res.status(403).json({
+            registered: false,
+            error: 'Invalid or already consumed master invite code.',
+          });
+          return;
+        }
         auditLog.record('auth.master.promoted', 'ok', 'registration-invite');
       }
 
@@ -536,20 +621,21 @@ export function createFoundationApiRouter(
       const inviteCode =
         typeof body.masterInviteCode === 'string' ? body.masterInviteCode.trim() : '';
 
-      const matched = inviteCode ? matchUnusedInviteCode(inviteCode) : null;
-      if (!matched) {
-        auditLog.record('auth.master.rejected', 'rejected', 'promote-invalid-invite');
-        res.status(403).json({ error: 'Invalid or already consumed master invite code.' });
-        return;
-      }
-
       const stored = await stateStore.getPasskey(activeSession.credentialId);
       if (!stored) {
         res.status(404).json({ error: 'Registered credential for session not found.' });
         return;
       }
 
-      consumedInviteCodes.add(matched);
+      // V-04: Match hash and consume atomically via durable store BEFORE role elevation
+      const matchedHash = inviteCode ? matchConfiguredInviteHash(inviteCode) : null;
+      const consumedOk = matchedHash ? await stateStore.consumeMasterInviteHash(matchedHash) : false;
+      if (!consumedOk) {
+        auditLog.record('auth.master.rejected', 'rejected', 'promote-invalid-invite');
+        res.status(403).json({ error: 'Invalid or already consumed master invite code.' });
+        return;
+      }
+
       await stateStore.upsertPasskey({
         ...stored,
         role: 'master',

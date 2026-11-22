@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import express, { Express } from 'express';
 import { createFoundationApiRouter, FoundationRouterDependencies } from './src/server/apiRouter';
 import { defaultChallengeStubStore } from './src/server/challengeService';
+import { resolveConfiguredOrigins } from './src/server/originPolicy';
 import { securityHeadersMiddleware } from './src/server/securityHeaders';
 import { FileServerStateStore } from './src/server/serverStore';
 import { ServerSessionService } from './src/server/sessionService';
@@ -20,16 +21,23 @@ import { StripeHostedCheckoutService } from './src/server/stripeProvider';
 export interface CreateServerAppOptions {
   isProduction?: boolean;
   sessionSecret?: string;
-  trustProxy?: boolean;
+  requirePersistentSessionSecret?: boolean;
+  trustProxy?: boolean | number;
   mountFrontend?: boolean;
   routerDeps?: FoundationRouterDependencies;
 }
 
 export async function createAppServer(options: CreateServerAppOptions = {}): Promise<Express> {
   const isProduction = options.isProduction ?? process.env.NODE_ENV === 'production';
-  const trustProxyEnv = process.env.TRUST_PROXY?.trim().toLowerCase();
-  const trustProxy =
-    options.trustProxy ?? (trustProxyEnv === '1' || trustProxyEnv === 'true');
+  const trustProxyRaw = process.env.TRUST_PROXY?.trim().toLowerCase();
+  let parsedTrustProxy: boolean | number = false;
+  if (trustProxyRaw === 'true') {
+    parsedTrustProxy = 1;
+  } else if (trustProxyRaw && /^\d+$/.test(trustProxyRaw)) {
+    const hops = Number.parseInt(trustProxyRaw, 10);
+    parsedTrustProxy = hops > 0 ? hops : false;
+  }
+  const trustProxy = options.trustProxy ?? parsedTrustProxy;
 
   const stateStore = options.routerDeps?.stateStore ?? new FileServerStateStore();
   const sessionService =
@@ -41,16 +49,42 @@ export async function createAppServer(options: CreateServerAppOptions = {}): Pro
   const stripeService =
     options.routerDeps?.stripeService ?? new StripeHostedCheckoutService({ store: stateStore });
 
-  // Q-07: Refuse production startup without persistent HMAC session secret
-  if (isProduction && !sessionService.hasPersistentSecretConfigured()) {
+  const strictSecretsEnv = process.env.NAILIX_STRICT_SECRETS?.trim().toLowerCase();
+  const hasLiveExternalSecrets =
+    Boolean(process.env.STRIPE_SECRET_KEY?.trim()) ||
+    Boolean(process.env.NAILIX_MASTER_INVITE_CODES?.trim()) ||
+    strictSecretsEnv === '1' ||
+    strictSecretsEnv === 'true';
+  const requirePersistentSecret =
+    options.requirePersistentSessionSecret ?? (isProduction && hasLiveExternalSecrets);
+
+  // Q-07 + Cloud Run deploy compatibility:
+  // Refuse startup without NAILIX_SESSION_SECRET whenever live payment keys,
+  // master invite codes, or NAILIX_STRICT_SECRETS=1 are active in production.
+  // Showcase Cloud Run deployments without custom secrets boot cleanly with
+  // a per-instance 32-byte CSPRNG session key and emit an honest warning.
+  if (requirePersistentSecret && !sessionService.hasPersistentSecretConfigured()) {
     throw new Error(
-      '[Nailix Server] Refusing production startup: NAILIX_SESSION_SECRET (>= 16 chars) is required.'
+      '[Nailix Server] Refusing production startup: NAILIX_SESSION_SECRET (>= 16 chars) is required when Stripe/master secrets or NAILIX_STRICT_SECRETS are enabled.'
+    );
+  }
+  if (isProduction && !sessionService.hasPersistentSecretConfigured()) {
+    console.warn(
+      '[Nailix Server] Starting in showcase production mode without NAILIX_SESSION_SECRET; HttpOnly sessions use an ephemeral per-instance CSPRNG key.'
+    );
+  }
+
+  // V-01: Emit loud startup warning in production if neither APP_URL nor NAILIX_ALLOWED_ORIGINS is configured
+  const configuredOrigins = resolveConfiguredOrigins(options.routerDeps?.allowedOrigins);
+  if (isProduction && configuredOrigins.length === 0) {
+    console.warn(
+      '[Nailix Server] WARNING: Production started with no allowed origins configured (APP_URL / NAILIX_ALLOWED_ORIGINS unset). Same-origin browser POST requests to WebAuthn and Checkout will be rejected with HTTP 403.'
     );
   }
 
   const app = express();
-  if (trustProxy) {
-    app.set('trust proxy', 1);
+  if (trustProxy !== false && trustProxy !== 0) {
+    app.set('trust proxy', trustProxy === true ? 1 : trustProxy);
   }
   app.use(securityHeadersMiddleware(isProduction));
 
@@ -84,7 +118,13 @@ export async function createAppServer(options: CreateServerAppOptions = {}): Pro
       const distDir = path.resolve(import.meta.dirname, 'dist');
       app.use(express.static(distDir));
       app.get('{*path}', (_req, res) => {
-        res.sendFile(path.join(distDir, 'index.html'));
+        res.sendFile(path.join(distDir, 'index.html'), err => {
+          if (err && !res.headersSent) {
+            res.status(503).json({
+              error: 'Frontend bundle not built. Run npm run build first.',
+            });
+          }
+        });
       });
     }
   }
@@ -93,7 +133,8 @@ export async function createAppServer(options: CreateServerAppOptions = {}): Pro
 }
 
 export async function startServer() {
-  const port = Number(process.env.PORT ?? 3000);
+  const parsedPort = Number(process.env.PORT || 3000);
+  const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
   const isProduction = process.env.NODE_ENV === 'production';
   const app = await createAppServer({ isProduction, mountFrontend: true });
 

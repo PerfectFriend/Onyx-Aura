@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Appointment, Artist, PortfolioItem, NailService } from '../types';
+import { matchIntentToAppointment } from '../domain/payments';
 import { fetchServerPaymentIntentStatus } from '../infrastructure/payments/hostedCheckoutProvider';
 import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 import { reminderService, ReminderNotificationEvent } from '../services/reminderService';
@@ -47,7 +48,7 @@ export interface UseBookingFlowReturn {
   handleProceedToCheckout: (details: PendingBookingDetails) => void;
   handlePaymentSuccess: (newAppointment: Appointment) => void;
   handleHostedPendingCreated: (pendingAppointment: Appointment) => Promise<void>;
-  reconcileHostedCheckoutReturn: (intentId: string, bookingRef?: string | null) => Promise<void>;
+  reconcileHostedCheckoutReturn: (intentId: string) => Promise<void>;
   handleReleaseEscrow: (appointmentId: string) => void;
   handleTriggerAppointmentReminder: (appointment: Appointment) => void;
 }
@@ -201,7 +202,7 @@ export function useBookingFlow({
   );
 
   const reconcileHostedCheckoutReturn = useCallback(
-    async (intentId: string, bookingRef?: string | null) => {
+    async (intentId: string) => {
       const serverIntent = await fetchServerPaymentIntentStatus(intentId);
       if (!serverIntent) {
         onNotifyToast?.({
@@ -216,59 +217,40 @@ export function useBookingFlow({
       }
 
       const currentList = appointmentsRef.current;
-      const target = currentList.find(
-        app =>
-          app.escrowTxHash === serverIntent.id ||
-          app.id === serverIntent.bookingReferenceId ||
-          (Boolean(bookingRef) && app.id === bookingRef)
-      );
+      const target = matchIntentToAppointment(serverIntent, currentList);
 
       if (serverIntent.status === 'captured') {
         const authoritativePrice = Number((serverIntent.amountMinor / 100).toFixed(2));
-        let updatedAppointment: Appointment | undefined;
-        let nextAppointments: Appointment[];
-
-        if (target) {
-          if (target.status === 'escrow_locked' && target.escrowTxHash === serverIntent.id) {
-            return;
-          }
-          updatedAppointment = {
-            ...target,
-            status: 'escrow_locked',
-            price: authoritativePrice,
-            escrowTxHash: serverIntent.id,
-            origin: 'user',
-          };
-          nextAppointments = currentList.map(app =>
-            app.id === target.id ? updatedAppointment! : app
-          );
-        } else {
-          const matchedArtist = artists.find(a => a.id === serverIntent.artistId);
-          const matchedService = matchedArtist?.services.find(s => s.id === serverIntent.serviceId);
-          updatedAppointment = {
-            id: serverIntent.bookingReferenceId,
-            clientName: 'Client',
-            clientPhone: '',
-            clientEmail: '',
-            artistId: serverIntent.artistId,
-            artistName: matchedArtist?.name ?? serverIntent.artistId,
-            artistAvatar: matchedArtist?.avatar ?? '',
-            serviceId: serverIntent.serviceId,
-            serviceName: matchedService?.name ?? serverIntent.serviceId,
-            price: authoritativePrice,
-            currency: serverIntent.displayCurrency,
-            date: new Date().toISOString().slice(0, 10),
-            timeSlot: '14:00',
-            status: 'escrow_locked',
-            escrowTxHash: serverIntent.id,
-            remindersEnabled: true,
-            pushReminderScheduled: true,
-            smsReminderScheduled: false,
-            createdAt: serverIntent.createdAt,
-            origin: 'user',
-          };
-          nextAppointments = [updatedAppointment, ...currentList];
+        if (!target) {
+          const slotInfo =
+            serverIntent.appointmentDate && serverIntent.appointmentTimeSlot
+              ? ` (${serverIntent.appointmentDate} ${serverIntent.appointmentTimeSlot})`
+              : '';
+          onNotifyToast?.({
+            id: `toast-unmatched-capture-${crypto.randomUUID?.() ?? Date.now()}`,
+            type: 'push',
+            title: 'Платёж получен — подтвердите время в салоне',
+            message: `Депозит $${authoritativePrice} USD подтверждён (${serverIntent.id.slice(0, 18)}...)${slotInfo}, но локальная бронь на этом устройстве не найдена.`,
+            timestamp: new Date().toLocaleTimeString(),
+            phoneOrTarget: 'Stripe Server Intent',
+          });
+          return;
         }
+
+        if (target.status === 'escrow_locked' && target.escrowTxHash === serverIntent.id) {
+          return;
+        }
+
+        const updatedAppointment: Appointment = {
+          ...target,
+          status: 'escrow_locked',
+          price: authoritativePrice,
+          escrowTxHash: serverIntent.id,
+          origin: 'user',
+        };
+        const nextAppointments = currentList.map(app =>
+          app.id === target.id ? updatedAppointment : app
+        );
 
         appointmentsRef.current = nextAppointments;
         setAppointments(nextAppointments);
@@ -296,6 +278,25 @@ export function useBookingFlow({
           message: `${updatedAppointment.artistName} · $${authoritativePrice} USD (${serverIntent.id.slice(0, 18)}...)`,
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Stripe Webhook',
+        });
+        return;
+      }
+
+      if (serverIntent.status === 'partially_refunded' || serverIntent.status === 'disputed') {
+        const refundedUsd = Number(((serverIntent.amountRefundedMinor ?? 0) / 100).toFixed(2));
+        onNotifyToast?.({
+          id: `toast-adjust-${crypto.randomUUID?.() ?? Date.now()}`,
+          type: 'push',
+          title:
+            serverIntent.status === 'disputed'
+              ? 'По платежу открыт спор (Dispute)'
+              : 'Выполнен частичный возврат',
+          message:
+            serverIntent.status === 'disputed'
+              ? `Бронь ${serverIntent.bookingReferenceId} ожидает разбора спора Stripe.`
+              : `Возвращено $${refundedUsd} USD по брони ${serverIntent.bookingReferenceId}; остаток депозита активен.`,
+          timestamp: new Date().toLocaleTimeString(),
+          phoneOrTarget: 'Stripe Server Intent',
         });
         return;
       }
@@ -346,7 +347,7 @@ export function useBookingFlow({
         phoneOrTarget: 'Stripe Webhook',
       });
     },
-    [artists, onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
+    [onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
   );
 
   const handleReleaseEscrow = useCallback(
