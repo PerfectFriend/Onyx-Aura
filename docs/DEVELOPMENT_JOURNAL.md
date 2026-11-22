@@ -4277,3 +4277,40 @@ CSP говорит: script только `'self'`.
 **Гриша**
 
 ---
+
+### 2026-11-22 22:05 CET · [REPORT] · От: Женя → Кому: Гриша
+
+**Спринт 5.2 «Отзывы, привязанные к реальности» — выполнен и проверен.**
+
+#### Что сделано
+
+1. **Серверная привязка владения бронью и API отзывов (`src/domain/reviews.ts`, `src/domain/payments.ts`, `src/server/stripeProvider.ts`, `src/server/serverStore.ts`, `src/server/apiRouter.ts`, `src/server/auditLog.ts`):**
+   - В `POST /api/payments/checkout-session` при активной `server_spki_verified` Passkey-сессии на создаваемый `DepositIntent` записывается `ownerCredentialId` (не возвращается в публичный `PublicDepositIntentView`, а при попытке другого владельца переоткрыть открытую бронь возвращается `409 checkout_conflict`). Обратная совместимость со Stage 4 неавторизованными тестами checkout полностью сохранена.
+   - `ServerStateStore` (`.data/nailix-server.json`) расширен полями `reviews` и `artistRatings` с обратной совместимостью при чтении Stage 4-снимков, проверкой на prototype pollution (`__proto__`/`constructor`/`prototype`), лимитом хранения (`2000`) и атомарным `createOrReplayReview`, пересчитывающим рейтинг мастера строго на сервере через `computeExactArtistRatingUpdate` (`src/domain/rating.ts`).
+   - Реализованы маршруты:
+     - `POST /api/reviews` (`reviewRateLimiter` + `requireTrustedOrigin`): требует `server_spki_verified` cookie `nailix_sid` (`401 session_required`), наличие `captured` депозита у текущего `ownerCredentialId` (`403 booking_not_eligible`), совпадение `artistId` с бронью (`403 review_artist_mismatch`), корректный диапазон оценок `1..5` и текста `5..1500` (`400 invalid_request`), идемпотентный повтор (`200 OK` без повторного инкремента `totalReviews`) и `409 review_duplicate` при изменённом payload.
+     - `GET /api/reviews` (`?artistId=`): публичная лента без `authorCredentialId` и `intentId` + `artistRatings`.
+     - `GET /api/reviews/eligible`: перечень доступных к отзыву `captured`-броней текущей сессии (`401` без сессии).
+
+2. **Клиентский адаптер и честный UI (`src/infrastructure/reviews/reviewsService.ts`, `src/components/ReputationLedger.tsx`, `src/i18n/messages.ts`, `src/App.tsx`):**
+   - При доступном `/api/reviews` лента показывает реальные подтверждённые отзывы с бейджем **«Confirmed after completed booking» / «Подтверждено после завершённой брони»** и серверный рейтинг мастеров отдельно от `[SIM]` seed-примеров (без on-chain/immutable театра), а форма публикации отзыва открывается только при активном Passkey + eligible `captured`-брони с заблокированным выбором мастера.
+   - При недоступности API (офлайн / статическая сборка) интерфейс честно переходит в `[SIM] LOCAL_ONLY`.
+
+3. **Тесты и документация честности (`src/__tests__/stage52.test.ts`, `docs/REALITY_MAP.md`, `docs/ARCHITECTURE_NOTES.md`, `docs/CURRENT_ASSIGNMENT.md`):**
+   - `stage52.test.ts` (6 сценариев): валидаторы и анти-polluting ключи, полный E2E (`register` -> checkout -> webhook `captured` -> `eligible` -> `POST /reviews` `201` -> идемпотентный повтор `200` без двойного инкремента -> 2-й отзыв + точный sum-preserving расчёт `4.5`), негативная матрица (`401`, `400`, `403` unpaid/refunded/disputed/foreign/wrong-artist, `409` duplicate/checkout-steal, `429`), перезапуск `FileServerStateStore` со Stage 4 snapshot и тесты адаптера `reviewsService.ts`.
+   - `docs/REALITY_MAP.md` обновлён до **v3.8**: добавлена строка `Booking-Gated Server Reviews & Ratings` (`REAL`), а строка «Репутационный реестр мастеров» переведена на честный сплит `REAL` (API + бронь) / `[SIM]` (офлайн и демо-блоки).
+
+#### Верификация
+
+- `npx eslint src server.ts --quiet`: **0 errors**
+- `npm run typecheck` (`tsc --noEmit`): **0 errors**
+- `npm run test:coverage`: **16/16 файлов, 105/105 тестов (GREEN)**, включая `honestyWatchdog.test.ts` (0 нарушений без ослабления правил `honesty.ts`); покрытие V8: **73.33% Stmts / 67.00% Branch / 76.72% Funcs / 76.87% Lines** (`domain/reviews.ts`: **89.18%**, `server/`: **84.27%**).
+- `npm run build`: **Vite 8.3.0 + PWA `dist/` собраны за 1.58s**.
+- Live-сервер (`127.0.0.1:3000`): `GET /api/health` → `{"ok":true}`, `GET /api/reviews` → `200 OK`, `GET /api/reviews/eligible` → `401`.
+
+😄  
+> Теперь в Nailix чтобы написать «мастер огонь» без оплаченной брони — нужно сначала договориться с `Stripe`, а потом с криптоподписью `P-256`.  
+> Зато бот-фермы, которые раньше накручивали 5★ по кнопке «Add Demo Review», уволены по статье `403 booking_not_eligible`.
+
+Готов к приёмке **Спринта 5.2** и постановке **Спринта 5.3**, Гриша.  
+**Женя**

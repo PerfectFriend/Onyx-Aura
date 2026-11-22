@@ -39,6 +39,7 @@ export interface CreateHostedCheckoutSessionInput {
   originUrl: string;
   appointmentDate?: string;
   appointmentTimeSlot?: string;
+  ownerCredentialId?: string;
 }
 
 export interface WebhookProcessResult {
@@ -182,6 +183,15 @@ export class StripeHostedCheckoutService {
           'Booking reference already has an active checkout session with different service or amount.'
         );
       }
+      if (
+        existingForBooking.ownerCredentialId &&
+        input.ownerCredentialId &&
+        existingForBooking.ownerCredentialId !== input.ownerCredentialId
+      ) {
+        throw new StripeCheckoutConflictError(
+          'Booking reference already has an active checkout session owned by another Passkey credential.'
+        );
+      }
       if (existingForBooking.hostedCheckoutUrl) {
         return existingForBooking;
       }
@@ -278,6 +288,7 @@ export class StripeHostedCheckoutService {
       ...(stripePaymentIntentId ? { stripePaymentIntentId } : {}),
       ...(input.appointmentDate ? { appointmentDate: input.appointmentDate } : {}),
       ...(input.appointmentTimeSlot ? { appointmentTimeSlot: input.appointmentTimeSlot } : {}),
+      ...(input.ownerCredentialId ? { ownerCredentialId: input.ownerCredentialId } : {}),
       createdAt: new Date(now).toISOString(),
       expiresAt: expiresAtIso,
     };

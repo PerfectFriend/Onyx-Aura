@@ -458,10 +458,12 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
         )}
 
         {shell.activeTab === 'ledger' && (
-          <ErrorBoundary level="section" sectionName="Реестр отзывов [SIM]" theme={theme}>
+          <ErrorBoundary level="section" sectionName="Реестр отзывов" theme={theme}>
             <ReputationLedger
               reviews={bootstrap.reviews}
               artists={bootstrap.artists}
+              session={identity.session}
+              language={currentLanguage}
               onAddReview={(rev) => {
                 void handleAddReview(rev);
               }}

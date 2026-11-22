@@ -8,7 +8,18 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createId } from '../domain/ids';
 import { DepositIntent } from '../domain/payments';
+import { computeExactArtistRatingUpdate } from '../domain/rating';
+import {
+  NormalizedCreateReviewInput,
+  PublicReviewView,
+  resolveCanonicalArtistName,
+  reviewsMatchIdempotently,
+  ServerArtistRatingSummary,
+  ServerReviewRecord,
+  toPublicReviewView,
+} from '../domain/reviews';
 import { UserRole } from '../types';
 
 export interface ServerPasskeyRecord {
@@ -41,6 +52,8 @@ export interface PersistedServerSnapshot {
   depositIntents: Record<string, DepositIntent>;
   processedWebhookEvents: string[];
   consumedInviteHashes: string[];
+  reviews: Record<string, ServerReviewRecord>;
+  artistRatings: Record<string, ServerArtistRatingSummary>;
 }
 
 function emptySnapshot(): PersistedServerSnapshot {
@@ -51,6 +64,8 @@ function emptySnapshot(): PersistedServerSnapshot {
     depositIntents: {},
     processedWebhookEvents: [],
     consumedInviteHashes: [],
+    reviews: {},
+    artistRatings: {},
   };
 }
 
@@ -87,12 +102,30 @@ export interface ServerStateStore {
   markWebhookEventProcessed(eventId: string): Promise<void>;
   consumeMasterInviteHash(hashHex: string): Promise<boolean>;
   isMasterInviteHashConsumed(hashHex: string): Promise<boolean>;
+  listReviews(artistId?: string): Promise<PublicReviewView[]>;
+  listArtistRatingSummaries(artistId?: string): Promise<Record<string, ServerArtistRatingSummary>>;
+  listEligibleIntentsForCredential(credentialId: string): Promise<DepositIntent[]>;
+  createOrReplayReview(params: {
+    intent: DepositIntent;
+    input: NormalizedCreateReviewInput;
+    authorCredentialId: string;
+    authorDisplayName: string;
+    authorRole: UserRole;
+  }): Promise<
+    | {
+        outcome: 'created' | 'replayed';
+        review: PublicReviewView;
+        artistRating: ServerArtistRatingSummary;
+      }
+    | { outcome: 'conflict' }
+  >;
 }
 
 const MAX_WEBHOOK_EVENT_HISTORY = 500;
 const MAX_PASSKEYS_STORE = 1000;
 const MAX_SESSIONS_STORE = 2000;
 const MAX_DEPOSIT_INTENTS = 500;
+const MAX_REVIEWS_STORE = 2000;
 
 export class InMemoryServerStateStore implements ServerStateStore {
   protected snapshot: PersistedServerSnapshot = emptySnapshot();
@@ -268,6 +301,156 @@ export class InMemoryServerStateStore implements ServerStateStore {
     return newlyConsumed;
   }
 
+  public async listReviews(artistId?: string): Promise<PublicReviewView[]> {
+    if (artistId !== undefined && FORBIDDEN_RECORD_KEYS.has(artistId)) return [];
+    await this.ensureLoaded();
+    const records = Object.values(this.snapshot.reviews)
+      .filter(rec => !artistId || rec.artistId === artistId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return records.map(toPublicReviewView);
+  }
+
+  public async listArtistRatingSummaries(
+    artistId?: string
+  ): Promise<Record<string, ServerArtistRatingSummary>> {
+    if (artistId !== undefined && FORBIDDEN_RECORD_KEYS.has(artistId)) return {};
+    await this.ensureLoaded();
+    if (artistId) {
+      return Object.prototype.hasOwnProperty.call(this.snapshot.artistRatings, artistId)
+        ? { [artistId]: { ...this.snapshot.artistRatings[artistId] } }
+        : {};
+    }
+    const result: Record<string, ServerArtistRatingSummary> = {};
+    for (const [key, summary] of Object.entries(this.snapshot.artistRatings)) {
+      if (!FORBIDDEN_RECORD_KEYS.has(key)) {
+        result[key] = { ...summary };
+      }
+    }
+    return result;
+  }
+
+  public async listEligibleIntentsForCredential(credentialId: string): Promise<DepositIntent[]> {
+    if (!credentialId || FORBIDDEN_RECORD_KEYS.has(credentialId)) return [];
+    await this.ensureLoaded();
+    return Object.values(this.snapshot.depositIntents)
+      .filter(
+        intent =>
+          intent.status === 'captured' &&
+          intent.ownerCredentialId === credentialId &&
+          !Object.prototype.hasOwnProperty.call(this.snapshot.reviews, intent.bookingReferenceId)
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  public async createOrReplayReview(params: {
+    intent: DepositIntent;
+    input: NormalizedCreateReviewInput;
+    authorCredentialId: string;
+    authorDisplayName: string;
+    authorRole: UserRole;
+  }): Promise<
+    | {
+        outcome: 'created' | 'replayed';
+        review: PublicReviewView;
+        artistRating: ServerArtistRatingSummary;
+      }
+    | { outcome: 'conflict' }
+  > {
+    const { intent, input, authorCredentialId, authorDisplayName, authorRole } = params;
+    assertSafeRecordId(input.bookingReferenceId, 'bookingReferenceId');
+    assertSafeRecordId(input.artistId, 'artistId');
+    assertSafeRecordId(authorCredentialId, 'credentialId');
+
+    let result:
+      | {
+          outcome: 'created' | 'replayed';
+          review: PublicReviewView;
+          artistRating: ServerArtistRatingSummary;
+        }
+      | { outcome: 'conflict' } = { outcome: 'conflict' };
+
+    await this.mutate(state => {
+      if (Object.prototype.hasOwnProperty.call(state.reviews, input.bookingReferenceId)) {
+        const existing = state.reviews[input.bookingReferenceId];
+        if (!reviewsMatchIdempotently(existing, input, authorCredentialId)) {
+          result = { outcome: 'conflict' };
+          return;
+        }
+        const existingSummary: ServerArtistRatingSummary = Object.prototype.hasOwnProperty.call(
+          state.artistRatings,
+          existing.artistId
+        )
+          ? { ...state.artistRatings[existing.artistId] }
+          : {
+              artistId: existing.artistId,
+              artistName: existing.artistName,
+              rating: existing.rating,
+              totalReviews: 1,
+              ratingSum: existing.rating,
+              updatedAt: existing.createdAt,
+            };
+        result = {
+          outcome: 'replayed',
+          review: toPublicReviewView(existing),
+          artistRating: existingSummary,
+        };
+        return;
+      }
+
+      if (Object.keys(state.reviews).length >= MAX_REVIEWS_STORE) {
+        throw new Error('Server review store capacity limit reached.');
+      }
+
+      const nowIso = new Date().toISOString();
+      const artistName = resolveCanonicalArtistName(input.artistId);
+      const record: ServerReviewRecord = {
+        id: createId('rev_srv'),
+        bookingReferenceId: input.bookingReferenceId,
+        intentId: intent.id,
+        artistId: input.artistId,
+        artistName,
+        authorCredentialId,
+        authorDisplayName,
+        authorRole,
+        rating: input.rating,
+        breakdown: { ...input.breakdown },
+        text: input.text,
+        createdAt: nowIso,
+        bookingConfirmed: true,
+        ...(intent.appointmentDate ? { appointmentDate: intent.appointmentDate } : {}),
+        ...(intent.appointmentTimeSlot ? { appointmentTimeSlot: intent.appointmentTimeSlot } : {}),
+      };
+      state.reviews[input.bookingReferenceId] = record;
+
+      const prevSummary = Object.prototype.hasOwnProperty.call(state.artistRatings, input.artistId)
+        ? state.artistRatings[input.artistId]
+        : undefined;
+      const calc = computeExactArtistRatingUpdate({
+        currentRating: prevSummary?.rating ?? 0,
+        totalReviews: prevSummary?.totalReviews ?? 0,
+        ratingSum: prevSummary?.ratingSum ?? 0,
+        newRating: input.rating,
+      });
+      const nextSummary: ServerArtistRatingSummary = {
+        artistId: input.artistId,
+        artistName,
+        rating: calc.rating,
+        totalReviews: calc.totalReviews,
+        ratingSum: calc.ratingSum,
+        updatedAt: nowIso,
+      };
+      state.artistRatings[input.artistId] = nextSummary;
+
+      result = {
+        outcome: 'created',
+        review: toPublicReviewView(record),
+        artistRating: { ...nextSummary },
+      };
+    });
+
+    return result;
+  }
+
   protected async ensureLoaded(): Promise<void> {
     // Base in-memory implementation needs no disk initialization
   }
@@ -307,6 +490,9 @@ export class FileServerStateStore extends InMemoryServerStateStore {
         consumedInviteHashes: Array.isArray(parsed.consumedInviteHashes)
           ? parsed.consumedInviteHashes.filter((h): h is string => typeof h === 'string')
           : [],
+        reviews: parsed.reviews && typeof parsed.reviews === 'object' ? parsed.reviews : {},
+        artistRatings:
+          parsed.artistRatings && typeof parsed.artistRatings === 'object' ? parsed.artistRatings : {},
       };
     } catch {
       this.snapshot = emptySnapshot();

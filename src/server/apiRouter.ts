@@ -15,6 +15,11 @@ import {
   toPublicDepositIntentView,
 } from '../domain/payments';
 import {
+  isSafeReviewIdentifier,
+  toEligibleBookingView,
+  validateCreateReviewPayload,
+} from '../domain/reviews';
+import {
   CanonicalServiceCatalogEntry,
   resolveAuthoritativeDepositQuote,
 } from '../domain/serviceCatalog';
@@ -95,6 +100,7 @@ export interface FoundationRouterDependencies {
     windowMs?: number;
     authMax?: number;
     checkoutMax?: number;
+    reviewMax?: number;
   };
 }
 
@@ -145,6 +151,14 @@ export function createFoundationApiRouter(
     windowMs,
     maxRequests: deps.rateLimits?.checkoutMax ?? 20,
     bucketLabel: 'checkout',
+    onRateLimited: (_key, label) => {
+      auditLog.record('security.rate_limited', 'rejected', label);
+    },
+  });
+  const reviewRateLimiter = createSlidingWindowRateLimiter({
+    windowMs,
+    maxRequests: deps.rateLimits?.reviewMax ?? 20,
+    bucketLabel: 'review',
     onRateLimited: (_key, label) => {
       auditLog.record('security.rate_limited', 'rejected', label);
     },
@@ -355,6 +369,12 @@ export function createFoundationApiRouter(
         return;
       }
 
+      const activeSession = await sessionService.getActiveSessionFromRequest(req);
+      const ownerCredentialId =
+        activeSession?.verificationLevel === 'server_spki_verified'
+          ? activeSession.credentialId
+          : undefined;
+
       try {
         const intent = await stripeService.createHostedCheckoutSession({
           bookingReferenceId,
@@ -367,6 +387,7 @@ export function createFoundationApiRouter(
           originUrl: originResolution.originUrl,
           appointmentDate: rawDate,
           appointmentTimeSlot: rawTimeSlot,
+          ...(ownerCredentialId ? { ownerCredentialId } : {}),
         });
         auditLog.record('payments.checkout.created', 'ok', intent.providerId);
         res.status(201).json({ intent, hostedCheckoutUrl: intent.hostedCheckoutUrl });
@@ -924,6 +945,152 @@ export function createFoundationApiRouter(
       await sessionService.revokeSessionFromRequest(req, res);
       auditLog.record('auth.session.revoked', 'ok');
       res.status(200).json({ signedOut: true });
+    })
+  );
+
+  // ===========================================================================
+  // Sprint 5.2 — Booking-Gated Reviews & Sum-Preserving Server Artist Ratings
+  // ===========================================================================
+  router.get(
+    '/reviews',
+    asyncRoute(async (req, res) => {
+      let artistFilter: string | undefined;
+      if (req.query.artistId !== undefined) {
+        if (!isSafeReviewIdentifier(req.query.artistId, 64)) {
+          res.status(400).json({
+            code: 'invalid_request' satisfies ServerErrorCode,
+            error: 'Invalid artistId query parameter.',
+          });
+          return;
+        }
+        artistFilter = req.query.artistId.trim();
+      }
+
+      const [reviews, artistRatings] = await Promise.all([
+        stateStore.listReviews(artistFilter),
+        stateStore.listArtistRatingSummaries(artistFilter),
+      ]);
+      res.status(200).json({
+        ok: true,
+        reviews,
+        artistRatings,
+      });
+    })
+  );
+
+  router.get(
+    '/reviews/eligible',
+    asyncRoute(async (req, res) => {
+      const activeSession = await sessionService.getActiveSessionFromRequest(req);
+      if (!activeSession || activeSession.verificationLevel !== 'server_spki_verified') {
+        res.status(401).json({
+          code: 'session_required' satisfies ServerErrorCode,
+          error: 'Active server_spki_verified session required.',
+        });
+        return;
+      }
+
+      const eligibleIntents = await stateStore.listEligibleIntentsForCredential(
+        activeSession.credentialId
+      );
+      const eligibleBookings = eligibleIntents.map(intent =>
+        toEligibleBookingView(intent, deps.serviceCatalog)
+      );
+      res.status(200).json({
+        ok: true,
+        eligibleBookings,
+      });
+    })
+  );
+
+  router.post(
+    '/reviews',
+    reviewRateLimiter,
+    asyncRoute(async (req, res) => {
+      if (!requireTrustedOrigin(req, res)) return;
+
+      const activeSession = await sessionService.getActiveSessionFromRequest(req);
+      if (!activeSession || activeSession.verificationLevel !== 'server_spki_verified') {
+        auditLog.record('reviews.rejected', 'rejected', 'session_required');
+        res.status(401).json({
+          code: 'session_required' satisfies ServerErrorCode,
+          error: 'Active server_spki_verified session required.',
+        });
+        return;
+      }
+
+      const parsed = validateCreateReviewPayload(req.body);
+      if (!parsed.ok) {
+        auditLog.record('reviews.rejected', 'rejected', parsed.error);
+        res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
+          error: parsed.error,
+        });
+        return;
+      }
+
+      const intent = await stateStore.getDepositIntentByBookingRef(
+        parsed.value.bookingReferenceId
+      );
+      if (
+        !intent ||
+        intent.status !== 'captured' ||
+        !intent.ownerCredentialId ||
+        intent.ownerCredentialId !== activeSession.credentialId
+      ) {
+        auditLog.record('reviews.rejected', 'rejected', 'booking_not_eligible');
+        res.status(403).json({
+          code: 'booking_not_eligible' satisfies ServerErrorCode,
+          error:
+            'No captured booking owned by the active Passkey session matches this bookingReferenceId.',
+        });
+        return;
+      }
+
+      if (intent.artistId !== parsed.value.artistId) {
+        auditLog.record('reviews.rejected', 'rejected', 'review_artist_mismatch');
+        res.status(403).json({
+          code: 'review_artist_mismatch' satisfies ServerErrorCode,
+          error: 'Selected artistId does not match the booked appointment.',
+        });
+        return;
+      }
+
+      const persisted = await stateStore.createOrReplayReview({
+        intent,
+        input: parsed.value,
+        authorCredentialId: activeSession.credentialId,
+        authorDisplayName: activeSession.displayName,
+        authorRole: activeSession.role,
+      });
+
+      if (persisted.outcome === 'conflict') {
+        auditLog.record('reviews.rejected', 'rejected', 'review_duplicate');
+        res.status(409).json({
+          code: 'review_duplicate' satisfies ServerErrorCode,
+          error: 'A conflicting review already exists for this bookingReferenceId.',
+        });
+        return;
+      }
+
+      if (persisted.outcome === 'replayed') {
+        auditLog.record('reviews.idempotent_replay', 'ok', persisted.review.artistId);
+        res.status(200).json({
+          ok: true,
+          idempotentReplay: true,
+          review: persisted.review,
+          artistRating: persisted.artistRating,
+        });
+        return;
+      }
+
+      auditLog.record('reviews.created', 'ok', persisted.review.artistId);
+      res.status(201).json({
+        ok: true,
+        idempotentReplay: false,
+        review: persisted.review,
+        artistRating: persisted.artistRating,
+      });
     })
   );
 

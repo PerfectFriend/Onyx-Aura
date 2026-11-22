@@ -61,6 +61,8 @@ export interface DepositIntent {
   /** Server-validated appointment slot stored with the intent (V-02). */
   appointmentDate?: string;
   appointmentTimeSlot?: string;
+  /** Server Passkey credentialId owning this booking deposit when created under an active session (Sprint 5.2). */
+  ownerCredentialId?: string;
   createdAt: string;
   expiresAt: string;
 }

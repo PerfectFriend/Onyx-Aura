@@ -24,6 +24,9 @@ export type ServerSecurityEventType =
   | 'payments.webhook.rejected'
   | 'payments.webhook.unmatched'
   | 'payments.refund.processed'
+  | 'reviews.created'
+  | 'reviews.idempotent_replay'
+  | 'reviews.rejected'
   | 'security.rate_limited'
   | 'security.origin.rejected';
 

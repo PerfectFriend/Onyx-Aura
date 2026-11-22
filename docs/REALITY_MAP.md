@@ -1,7 +1,7 @@
 # ✦ NAILIX / ONYX-AURA — КАРТА РЕАЛЬНОСТИ (REALITY MAP) ✦
 
-> **Статус**: Канонический документ честности (актуализирован в Этапе 4 · Спринт 4.5 «Деплой, возврат Stripe и атомарность без сюрпризов»)  
-> **Версия**: 3.7  
+> **Статус**: Канонический документ честности (актуализирован в Этапе 5 · Спринт 5.2 «Отзывы, привязанные к реальности»)  
+> **Версия**: 3.8  
 > **Дата обновления**: 22 ноября 2026 г.  
 > **Исполнитель**: Женя (Сеньор-разработчик)  
 > **Аудиторы**: Гриша (Архитектор эволюции) & Колян (Cross-Model Auditor, Claude Sonnet 5.5)  
@@ -26,6 +26,7 @@
 | Подсистема / Возможность | Файлы реализации | Статус | Доказательство и ограничения |
 | :--- | :--- | :---: | :--- |
 | **Server WebAuthn SPKI Crypto, COSE Binding, Durable Invite Roles & `HttpOnly` Sessions** | `server.ts`, `src/domain/webauthnCbor.ts`, `src/server/originPolicy.ts`, `src/server/rateLimiter.ts`, `src/server/challengeService.ts`, `src/server/serverStore.ts`, `src/server/webAuthnServerVerifier.ts`, `src/server/sessionService.ts`, `src/server/apiRouter.ts` | 🟢 **`REAL`** | Одноразовые 32-байтовые challenge (TTL `120 с`, изолированные квоты на IP с поддержкой хопов `TRUST_PROXY` + HTTP `429`), обязательный `authenticatorData`/`attestationObject` со сверкой COSE-ключа и `credentialId === rawIdBase64Url`, `409` анти-сквоттинг, строгие `P-256`/`rsa`, серверное назначение ролей (`client` по умолчанию; `master` только по одноразовому коду `>= 16` символов `NAILIX_MASTER_INVITE_CODES` с атомарным сохранением SHA-256 хэша в `.data/nailix-server.json`), HMAC-SHA256 `HttpOnly` cookie `nailix_sid`. Отказ старта production без `NAILIX_SESSION_SECRET` при активных `STRIPE_SECRET_KEY` / `NAILIX_MASTER_INVITE_CODES` / `NAILIX_STRICT_SECRETS=1` (в showcase Cloud Run без внешних секретов — эфемерный 32-байтовый CSPRNG-ключ + громкое предупреждение при пустых `APP_URL`/`NAILIX_ALLOWED_ORIGINS`). |
+| **Booking-Gated Server Reviews & Ratings** | `src/domain/reviews.ts`, `src/domain/rating.ts`, `src/server/serverStore.ts`, `src/server/apiRouter.ts`, `src/infrastructure/reviews/reviewsService.ts` | 🟢 **`REAL`** *(1-экземплярное `.data`)* | Серверный `POST /api/reviews` принимает отзыв строго при действующей `server_spki_verified` Passkey cookie `nailix_sid` (`401`), наличии депозита `captured` у `ownerCredentialId` (`403 booking_not_eligible`), совпадении `artistId` (`403 review_artist_mismatch`), корректном диапазоне оценок `1..5` и текста `5..1500` (`400`) и защите ключей от prototype pollution. Идемпотентный повтор отдаёт `200`, конфликтный — `409`. `GET /api/reviews/eligible` перечисляет открытые к отзыву брони владельца; `GET /api/reviews` фильтрует ПДн и отдаёт sum-preserving рейтинг мастера (`computeExactArtistRatingUpdate`). |
 | **HTTP Security Headers, HSTS & Strict Offline CSP** | `src/server/securityHeaders.ts`, `server.ts`, `src/infrastructure/security/csp.ts`, `src/utils/qrGenerator.ts` | 🟢 **`REAL`** | Express выдаёт `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` в production/HTTPS, HTTP `Content-Security-Policy` (`frame-ancestors 'self'` по умолчанию в production, `img-src 'self' data: blob:` с локальным оффлайн-QR `qrcode`), проверку `Origin`/`Sec-Fetch-Site` на мутирующих запросах и JSON `404` для неизвестных `/api/*`. |
 | **Stripe Hosted Checkout Adapter (SAQ-A), Catalog Pricing & Webhooks** | `src/domain/serviceCatalog.ts`, `src/server/stripeProvider.ts`, `src/infrastructure/payments/hostedCheckoutProvider.ts`, `src/hooks/useBookingFlow.ts` | 🟡 **`PROTOTYPE`** (Ожидает реальные ключи Stripe) | Сервер отдаёт котировки через `GET /api/payments/quote`, игнорирует клиентский `amountUsd`, ограничивает `$10 000`, строит составной `Idempotency-Key` (`409` при конфликте параметров на открытой брони), сохраняет `appointmentDate`/`appointmentTimeSlot`, отдаёт минимальный `GET /api/payments/intents/:id` (без URL сессии и провайдера), различает `partially_refunded` / `released` / `disputed` + запасную корреляцию по `payment_intent` и помечает сироты `unmatched`. Клиент привязывает возврат строго через `matchIntentToAppointment` (без `booking_ref` из URL) и не выдумывает бронь при её отсутствии локально. Без `STRIPE_*` в env честно переключается на `[SIM] MockPaymentProvider`. |
 | **Payment Domain Port & Zero-PCI Boundary** | `src/domain/payments.ts`, `src/domain/serviceCatalog.ts`, `docs/PAYMENTS_ADR.md`, `src/components/CheckoutModal.tsx` | 🟢 **`REAL`** | Чистый контракт `PaymentProvider` (`DepositIntent`, `DepositSession`, целые центы `toMinorUnits`), серверный каталог цен (`CANONICAL_SERVICE_CATALOG`) и ноль карточных `<input>` (`PAN` / `MM/YY` / `CVC`) в DOM (контролируется тестом Zero-PCI Watchdog). |
@@ -55,7 +56,7 @@
 | **Аналитика студии** | `src/components/AdminAnalyticsDashboard.tsx` | 🔵 **`LOCAL_ONLY`** | Локальные записи + seed baseline; криптовалютные блоки помечены `[SIM]`. |
 | **CryptoCloud & Экспорт сессии** | `src/simulation/cryptocloud.ts`, `src/hooks/useCryptoSwarm.ts`, `src/components/CryptoCloudPanel.tsx` | 🔴 **`SIMULATED`** | **[SIM]** Локальный `BroadcastChannel` и открытый `.sim.json` с SHA-256. |
 | **Жюри круга друзей (Friend Jury)** | `src/components/FriendModerationSection.tsx` | 🔴 **`SIMULATED`** | **[SIM]** Локальное голосование в `useState`; сеть — Этап 5. |
-| **Репутационный реестр мастеров** | `src/simulation/cryptoLedger.ts`, `src/components/ReputationLedger.tsx` | 🔴 **`SIMULATED`** | **[SIM]** Локальный расчёт рейтинга, но подтверждение визитов и `$NAIL` — симуляция. |
+| **Репутационный реестр мастеров** | `src/domain/reviews.ts`, `src/infrastructure/reviews/reviewsService.ts`, `src/components/ReputationLedger.tsx`, `src/simulation/cryptoLedger.ts` | 🟢 **`REAL`** *(API + бронь)* / 🔴 **`[SIM]`** *(офлайн и демо-блоки)* | При доступном `/api/reviews` реальные отзывы с бейджем `Confirmed after completed booking` и серверный sum-preserving рейтинг отображаются отдельно от `[SIM]` seed-примеров, а форма публикации разблокируется только при активном Passkey + `captured`-брони владельца (мастер привязан к брони). Бейджи `$NAIL` и офлайн/статический fallback помечены `[SIM]` `LOCAL_ONLY`. |
 | **Чат с ателье (Concierge Chat)** | `src/hooks/useChatConcierge.ts`, `src/components/ChatDrawer.tsx` | 🔴 **`SIMULATED`** | **[SIM]** IndexedDB-сообщения + локальный бот на `setTimeout`. |
 | **Напоминания (Push & SMS)** | `src/services/reminderService.ts` | 🔴 **`SIMULATED`** | **[SIM]** Локальный toast + опциональный `Notification` без SMS-шлюза. |
 | **Виртуальная AR-примерка ногтей** | `src/components/AndroidExperienceView.tsx` | 🔴 **`SIMULATED`** | **[SIM]** WebRTC-камера + 2D Canvas сетка; MediaPipe 3D — Этап 6. |
@@ -64,17 +65,17 @@
 
 ---
 
-## 📊 Итоговая сводка честности (v3.7)
+## 📊 Итоговая сводка честности (v3.8)
 
-- 🟢 **`REAL` (Технические возможности):** **13 подсистем** — **Server WebAuthn SPKI Crypto + COSE Binding + Durable Hashed Invite Roles & `HttpOnly` Sessions**, **HTTP Security Headers (HSTS + `frame-ancestors 'self'`) & Strict Offline CSP**, **100% Local Offline QR (`N-10`)**, Resilient Storage v3, Transactional Outbox, Payment Domain Port + Server Quote/Catalog Pricing & Zero-PCI Boundary, Load-then-Mount, Client WebAuthn SPKI + Secret Hygiene, `.ics` Export, Geo + Haptics, PWA/Workbox, Local APK Script, Non-PII Security Audit Log.
+- 🟢 **`REAL` (Технические возможности):** **14 подсистем** — **Server WebAuthn SPKI Crypto + COSE Binding + Durable Hashed Invite Roles & `HttpOnly` Sessions**, **Booking-Gated Server Reviews & Sum-Preserving Ratings**, **HTTP Security Headers (HSTS + `frame-ancestors 'self'`) & Strict Offline CSP**, **100% Local Offline QR (`N-10`)**, Resilient Storage v3, Transactional Outbox, Payment Domain Port + Server Quote/Catalog Pricing & Zero-PCI Boundary, Load-then-Mount, Client WebAuthn SPKI + Secret Hygiene, `.ics` Export, Geo + Haptics, PWA/Workbox, Local APK Script, Non-PII Security Audit Log.
 - 🟡 **`PROTOTYPE`:** **2 каркаса** — **Stripe Hosted Checkout SAQ-A Loop (`stripeProvider.ts` + строгая реконсиляция возврата + частичные возвраты/споры, ждёт реальные `STRIPE_*` ключи в env)** и Android WebView Shell (`K-18`).
 - 🔵 **`LOCAL_ONLY` (Продуктовые функции):** **6 функций** (+ локальный FIDO2 fallback без сервера).
-- 🔴 **`SIMULATED`:** **7 модулей** (+ `[SIM] Демо Passkey` и `[SIM] MockPaymentProvider` без env-ключей Stripe).
-- ⚪ **`PLANNED`:** Multi-User Network (Этап 5), 3D AR MediaPipe (Этап 6).
+- 🔴 **`SIMULATED`:** **6 модулей** (+ `[SIM] Демо Passkey`, `[SIM] MockPaymentProvider` без ключей Stripe и `[SIM]` офлайн-лента/блоки отзывов).
+- ⚪ **`PLANNED`:** Multi-User Network (Этап 5.3–5.5), 3D AR MediaPipe (Этап 6).
 - 🧪 **Область V8-покрытия (`vitest.config.ts`):** Строго по слоям **`src/domain/**/*.ts` + `src/infrastructure/**/*.ts` + `src/server/**/*.ts` + `src/utils/**/*.ts`**.
 
 ---
 
 *«Честность в коде — честность перед миром.»*  
-*Версия 3.7 (Этап 4 · Спринт 4.5 «Деплой, возврат Stripe и атомарность без сюрпризов»): закрыты `V-01…V-08` — `TRUST_PROXY` по хопам и громкое предупреждение про пустые origin, строгая привязка `matchIntentToAppointment` без `booking_ref` из URL, хранение `appointmentDate`/`appointmentTimeSlot`, минимальный `GET /intents/:id`, `partially_refunded` / `disputed` / `payment_intent` fallback / `unmatched`, долговечные атомарные SHA-256 инвайты (`>= 16` символов), `GET /api/payments/quote`, `credentialId === rawIdBase64Url`, составной `Idempotency-Key` и разделённые строки Passkey в карте.*
+*Версия 3.8 (Этап 5 · Спринт 5.2 «Отзывы, привязанные к реальности»): добавлены серверные booking-gated отзывы (`POST /api/reviews`, `GET /api/reviews`, `GET /api/reviews/eligible`) с привязкой `ownerCredentialId` к оплаченному Stripe-депозиту (`captured`), идемпотентностью `200`/`409`, sum-preserving пересчётом рейтинга через `domain/rating.ts` и честным разделением подтверждённых отзывов от `[SIM]` seed-примеров в UI.*
 

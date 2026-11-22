@@ -21,7 +21,10 @@ export type ServerErrorCode =
   | 'checkout_conflict'
   | 'intent_not_found'
   | 'webhook_invalid'
-  | 'stripe_unavailable';
+  | 'stripe_unavailable'
+  | 'booking_not_eligible'
+  | 'review_artist_mismatch'
+  | 'review_duplicate';
 
 export type MessageLocale = 'en' | 'ru';
 
@@ -92,7 +95,13 @@ export type AppMessageKey =
   | 'app.review_save_error'
   | 'app.anchor_save_error'
   | 'app.salon_save_error'
-  | 'app.reset_error';
+  | 'app.reset_error'
+  | 'reviews.badge_confirmed_booking'
+  | 'reviews.server_banner_title'
+  | 'reviews.server_banner_desc'
+  | 'reviews.gate_signin_required'
+  | 'reviews.gate_no_booking'
+  | 'reviews.submit_error';
 
 type MessageDictionary = Record<AppMessageKey, string>;
 
@@ -186,6 +195,15 @@ const MESSAGE_BUNDLES: Record<MessageLocale, MessageDictionary> = {
     'app.anchor_save_error': 'Failed to save map anchor.',
     'app.salon_save_error': 'Failed to update salon address.',
     'app.reset_error': 'Failed to reset local database.',
+    'reviews.badge_confirmed_booking': 'Confirmed after completed booking',
+    'reviews.server_banner_title': 'Server-Confirmed Reviews',
+    'reviews.server_banner_desc':
+      'Every server review requires an active Passkey session and a captured booking deposit owned by that session.',
+    'reviews.gate_signin_required':
+      'Sign in with a Server Passkey and complete a studio booking deposit to post a review.',
+    'reviews.gate_no_booking':
+      'No captured studio bookings without a review were found for your active Passkey session.',
+    'reviews.submit_error': 'Unable to submit booking review.',
   },
   ru: {
     'booking.artist_missing.title': '[SIM] Профиль мастера не выбран',
@@ -276,6 +294,15 @@ const MESSAGE_BUNDLES: Record<MessageLocale, MessageDictionary> = {
     'app.anchor_save_error': 'Не удалось сохранить точку карты.',
     'app.salon_save_error': 'Не удалось обновить адрес салона.',
     'app.reset_error': 'Ошибка сброса локальной базы.',
+    'reviews.badge_confirmed_booking': 'Подтверждено после завершённой брони',
+    'reviews.server_banner_title': 'Отзывы с серверной привязкой к брони',
+    'reviews.server_banner_desc':
+      'Сервер принимает отзыв только при активной Passkey-сессии и оплаченном/завершённом депозите владельца.',
+    'reviews.gate_signin_required':
+      'Войдите через серверный Passkey и завершите оплату брони, чтобы оставить отзыв мастеру.',
+    'reviews.gate_no_booking':
+      'Для вашей Passkey-сессии пока нет оплаченных броней без оставленного отзыва.',
+    'reviews.submit_error': 'Не удалось отправить отзыв на сервер.',
   },
 };
 
@@ -296,6 +323,10 @@ const SERVER_ERROR_TRANSLATIONS: Record<MessageLocale, Record<ServerErrorCode, s
     intent_not_found: 'Deposit payment intent was not found.',
     webhook_invalid: 'Invalid Stripe webhook signature or payload.',
     stripe_unavailable: 'Stripe Hosted Checkout is currently unavailable on the server.',
+    booking_not_eligible:
+      'No captured or completed booking owned by your active Passkey session was found.',
+    review_artist_mismatch: 'Selected artist does not match the booked appointment.',
+    review_duplicate: 'A review has already been recorded for this booking reference.',
   },
   ru: {
     origin_untrusted: 'Источник запроса не разрешён политикой безопасности сервера.',
@@ -313,6 +344,10 @@ const SERVER_ERROR_TRANSLATIONS: Record<MessageLocale, Record<ServerErrorCode, s
     intent_not_found: 'Платёжный intent депозита не найден.',
     webhook_invalid: 'Неверная подпись или формат webhook Stripe.',
     stripe_unavailable: 'Серверная оплата Stripe Hosted Checkout сейчас недоступна.',
+    booking_not_eligible:
+      'Для текущей Passkey-сессии не найдена оплаченная или завершённая бронь.',
+    review_artist_mismatch: 'Выбранный мастер не совпадает с указанной бронью.',
+    review_duplicate: 'Отзыв для этой брони уже был опубликован ранее.',
   },
 };
 
