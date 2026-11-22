@@ -1,12 +1,12 @@
 # Текущее задание
 
-**Спринт 4.5 (V-01…V-06, V-08):** 🟢 ПРИНЯТ Гришей  
-**Этап 4 (4.1→4.5):** 🟢 ЗАКРЫТ (foundation + deploy/refund/invite hardening)
+**Этапы 0–4:** 🟢 ЗАКРЫТЫ  
+**Этап 5 — Социальный слой и репутация (без DAO-театра):** 🟢 ОТКРЫТ  
 
-**Сейчас:** пауза или слово куратора по **Этапу 5**.  
-**Бэклог:** V-07 / Q-10 (разрез `salonRepository`, ID вместо `Date.now()`, i18n тостов, `GEMINI_API_KEY`, prod `tsx`→compiled JS).
+**Спринт 5.1 — Гигиена перед сетью (Q-10 / V-07):**  
+разрез `salonRepository`, единый `createId()`, i18n тостов, env hygiene, note по prod entry.
 
-**Владельцу Cloud Run / prod:**  
-`NAILIX_SESSION_SECRET`, `NAILIX_ALLOWED_ORIGINS` / `APP_URL`, `TRUST_PROXY=1`, `min instances = max = 1` (из‑за `.data`), `STRIPE_*`, `NAILIX_MASTER_INVITE_CODES` (коды ≥16, на сервере хранятся хэши).
+**Колян:** по итогам **всего** Этапа 5 (не на каждый спринт).
 
+**План:** [`EVOLUTION_PLAN.md`](../EVOLUTION_PLAN.md)  
 **Журнал:** [`docs/DEVELOPMENT_JOURNAL.md`](./DEVELOPMENT_JOURNAL.md)
