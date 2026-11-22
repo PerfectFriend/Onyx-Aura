@@ -18,6 +18,7 @@ import {
   CanonicalServiceCatalogEntry,
   resolveAuthoritativeDepositQuote,
 } from '../domain/serviceCatalog';
+import { ServerErrorCode } from '../i18n/messages';
 import { UserRole } from '../types';
 import { ServerSecurityAuditLog } from './auditLog';
 import {
@@ -153,7 +154,8 @@ export function createFoundationApiRouter(
     const check = validateMutationOriginHeader({ req, explicitOrigins, isProduction });
     if (!check.ok) {
       auditLog.record('security.origin.rejected', 'rejected', check.error);
-      res.status(403).json({ error: check.error });
+      const code: ServerErrorCode = 'origin_untrusted';
+      res.status(403).json({ code, error: check.error });
       return false;
     }
     return true;
@@ -202,6 +204,7 @@ export function createFoundationApiRouter(
         // Q-09: never reflect raw internal parser/signature details to untrusted callers
         res.status(400).json({
           received: false,
+          code: 'webhook_invalid' satisfies ServerErrorCode,
           error: 'Invalid Stripe webhook.',
         });
       }
@@ -226,7 +229,10 @@ export function createFoundationApiRouter(
     const rawTip = typeof req.query.tipPercentage === 'string' ? Number(req.query.tipPercentage) : 0;
 
     if (!artistId || !serviceId || !Number.isFinite(rawTip)) {
-      res.status(400).json({ error: 'Valid artistId, serviceId, and tipPercentage query parameters are required.' });
+      res.status(400).json({
+        code: 'invalid_request' satisfies ServerErrorCode,
+        error: 'Valid artistId, serviceId, and tipPercentage query parameters are required.',
+      });
       return;
     }
 
@@ -237,7 +243,10 @@ export function createFoundationApiRouter(
       catalog: deps.serviceCatalog,
     });
     if (!quoteRes.ok) {
-      res.status(400).json({ error: quoteRes.error });
+      res.status(400).json({
+        code: 'quote_invalid' satisfies ServerErrorCode,
+        error: quoteRes.error,
+      });
       return;
     }
 
@@ -255,6 +264,7 @@ export function createFoundationApiRouter(
 
       if (!stripeService.isConfigured()) {
         res.status(503).json({
+          code: 'stripe_unavailable' satisfies ServerErrorCode,
           error: 'Stripe Hosted Checkout is not configured on the server; use [SIM] demo preview.',
           providerStatus: stripeService.getProviderStatus(),
         });
@@ -268,7 +278,10 @@ export function createFoundationApiRouter(
       const tipPercentage = typeof body.tipPercentage === 'number' ? body.tipPercentage : 0;
 
       if (body.displayCurrency !== undefined && !isAllowedPaymentCurrency(body.displayCurrency)) {
-        res.status(400).json({ error: 'Unsupported displayCurrency.' });
+        res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
+          error: 'Unsupported displayCurrency.',
+        });
         return;
       }
       const displayCurrency =
@@ -280,11 +293,17 @@ export function createFoundationApiRouter(
       const rawTimeSlot =
         typeof body.appointmentTimeSlot === 'string' ? body.appointmentTimeSlot.trim() : undefined;
       if (rawDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
-        res.status(400).json({ error: 'Invalid appointmentDate format (expected YYYY-MM-DD).' });
+        res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
+          error: 'Invalid appointmentDate format (expected YYYY-MM-DD).',
+        });
         return;
       }
       if (rawTimeSlot !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(rawTimeSlot)) {
-        res.status(400).json({ error: 'Invalid appointmentTimeSlot format (expected HH:MM).' });
+        res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
+          error: 'Invalid appointmentTimeSlot format (expected HH:MM).',
+        });
         return;
       }
 
@@ -297,6 +316,7 @@ export function createFoundationApiRouter(
         serviceId.length > 64
       ) {
         res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
           error: 'Valid bookingReferenceId, artistId, and serviceId (max 64 chars) are required.',
         });
         return;
@@ -312,7 +332,10 @@ export function createFoundationApiRouter(
 
       if (!quoteRes.ok) {
         auditLog.record('payments.checkout.rejected', 'rejected', quoteRes.error);
-        res.status(400).json({ error: quoteRes.error });
+        res.status(400).json({
+          code: 'quote_invalid' satisfies ServerErrorCode,
+          error: quoteRes.error,
+        });
         return;
       }
 
@@ -325,7 +348,10 @@ export function createFoundationApiRouter(
 
       if (!originResolution.ok) {
         auditLog.record('payments.checkout.rejected', 'rejected', originResolution.error);
-        res.status(400).json({ error: originResolution.error });
+        res.status(400).json({
+          code: 'origin_untrusted' satisfies ServerErrorCode,
+          error: originResolution.error,
+        });
         return;
       }
 
@@ -347,13 +373,19 @@ export function createFoundationApiRouter(
       } catch (err) {
         if (err instanceof StripeCheckoutConflictError) {
           auditLog.record('payments.checkout.rejected', 'rejected', err.message);
-          res.status(409).json({ error: err.message });
+          res.status(409).json({
+            code: 'checkout_conflict' satisfies ServerErrorCode,
+            error: err.message,
+          });
           return;
         }
         const msg =
           err instanceof Error ? err.message : 'Unable to create Stripe Hosted Checkout session.';
         auditLog.record('payments.checkout.rejected', 'rejected', msg);
-        res.status(502).json({ error: 'Unable to initialize Stripe Hosted Checkout session.' });
+        res.status(502).json({
+          code: 'stripe_unavailable' satisfies ServerErrorCode,
+          error: 'Unable to initialize Stripe Hosted Checkout session.',
+        });
       }
     })
   );
@@ -364,12 +396,18 @@ export function createFoundationApiRouter(
     asyncRoute(async (req, res) => {
       const intentId = typeof req.params.intentId === 'string' ? req.params.intentId : '';
       if (!intentId || intentId.length > 96) {
-        res.status(400).json({ error: 'Missing or invalid intentId.' });
+        res.status(400).json({
+          code: 'invalid_request' satisfies ServerErrorCode,
+          error: 'Missing or invalid intentId.',
+        });
         return;
       }
       const intent = await stateStore.getDepositIntent(intentId);
       if (!intent) {
-        res.status(404).json({ error: 'Deposit intent not found.' });
+        res.status(404).json({
+          code: 'intent_not_found' satisfies ServerErrorCode,
+          error: 'Deposit intent not found.',
+        });
         return;
       }
       res.json({ intent: toPublicDepositIntentView(intent) });
@@ -406,6 +444,7 @@ export function createFoundationApiRouter(
       if (rawIdInput && rawIdInput !== credentialId) {
         res.status(400).json({
           registered: false,
+          code: 'invalid_request' satisfies ServerErrorCode,
           error: 'credentialId must match rawIdBase64Url.',
         });
         return;
@@ -444,6 +483,7 @@ export function createFoundationApiRouter(
       ) {
         res.status(400).json({
           registered: false,
+          code: 'invalid_request' satisfies ServerErrorCode,
           error:
             'challengeId, credentialId, publicKeySpkiBase64Url, clientDataJSONBase64Url, rpId, and authenticatorData/attestationObject are required.',
         });
@@ -456,15 +496,21 @@ export function createFoundationApiRouter(
           consumed.status === 'expired'
             ? 'Registration challenge expired (TTL exceeded).'
             : 'Unknown or already-consumed registration challenge.';
+        const code: ServerErrorCode =
+          consumed.status === 'expired' ? 'challenge_expired' : 'challenge_invalid';
         auditLog.record('auth.register.rejected', 'rejected', err);
-        res.status(400).json({ registered: false, error: err });
+        res.status(400).json({ registered: false, code, error: err });
         return;
       }
 
       if (consumed.record.ceremony !== 'registration') {
         const err = 'Challenge was not issued for WebAuthn registration.';
         auditLog.record('auth.register.rejected', 'rejected', err);
-        res.status(400).json({ registered: false, error: err });
+        res.status(400).json({
+          registered: false,
+          code: 'challenge_invalid' satisfies ServerErrorCode,
+          error: err,
+        });
         return;
       }
 
@@ -478,6 +524,7 @@ export function createFoundationApiRouter(
         auditLog.record('auth.register.conflict', 'rejected', 'rawId-conflict');
         res.status(409).json({
           registered: false,
+          code: 'credential_conflict' satisfies ServerErrorCode,
           error: 'Credential rawId is already registered.',
         });
         return;
@@ -493,6 +540,7 @@ export function createFoundationApiRouter(
           auditLog.record('auth.register.conflict', 'rejected', 'credentialId-conflict');
           res.status(409).json({
             registered: false,
+            code: 'credential_conflict' satisfies ServerErrorCode,
             error: 'Credential ID is already registered.',
           });
           return;
@@ -511,6 +559,7 @@ export function createFoundationApiRouter(
           auditLog.record('auth.master.rejected', 'rejected', 'invalid-invite-code');
           res.status(403).json({
             registered: false,
+            code: 'invite_invalid' satisfies ServerErrorCode,
             error: 'Invalid or already consumed master invite code.',
           });
           return;
@@ -529,14 +578,22 @@ export function createFoundationApiRouter(
       });
       if (!originCheck.ok) {
         auditLog.record('auth.register.rejected', 'rejected', originCheck.error);
-        res.status(400).json({ registered: false, error: originCheck.error });
+        res.status(400).json({
+          registered: false,
+          code: 'origin_untrusted' satisfies ServerErrorCode,
+          error: originCheck.error,
+        });
         return;
       }
 
       if (!validateRpIdForOrigin(rpId, originCheck.authoritativeOrigin)) {
         const err = `WebAuthn rpId "${rpId}" is not permitted for origin ${originCheck.authoritativeOrigin}.`;
         auditLog.record('auth.register.rejected', 'rejected', err);
-        res.status(400).json({ registered: false, error: err });
+        res.status(400).json({
+          registered: false,
+          code: 'origin_untrusted' satisfies ServerErrorCode,
+          error: err,
+        });
         return;
       }
 
@@ -555,7 +612,11 @@ export function createFoundationApiRouter(
 
       if (!check.ok) {
         auditLog.record('auth.register.rejected', 'rejected', check.error);
-        res.status(400).json({ registered: false, error: check.error });
+        res.status(400).json({
+          registered: false,
+          code: 'signature_invalid' satisfies ServerErrorCode,
+          error: check.error,
+        });
         return;
       }
 
@@ -565,6 +626,7 @@ export function createFoundationApiRouter(
           auditLog.record('auth.master.rejected', 'rejected', 'concurrent-invite-consume');
           res.status(403).json({
             registered: false,
+            code: 'invite_invalid' satisfies ServerErrorCode,
             error: 'Invalid or already consumed master invite code.',
           });
           return;
@@ -612,7 +674,10 @@ export function createFoundationApiRouter(
 
       const activeSession = await sessionService.getActiveSessionFromRequest(req);
       if (!activeSession || activeSession.verificationLevel !== 'server_spki_verified') {
-        res.status(401).json({ error: 'Active server_spki_verified session required.' });
+        res.status(401).json({
+          code: 'session_required' satisfies ServerErrorCode,
+          error: 'Active server_spki_verified session required.',
+        });
         return;
       }
 
@@ -623,7 +688,10 @@ export function createFoundationApiRouter(
 
       const stored = await stateStore.getPasskey(activeSession.credentialId);
       if (!stored) {
-        res.status(404).json({ error: 'Registered credential for session not found.' });
+        res.status(404).json({
+          code: 'credential_not_found' satisfies ServerErrorCode,
+          error: 'Registered credential for session not found.',
+        });
         return;
       }
 
@@ -632,7 +700,10 @@ export function createFoundationApiRouter(
       const consumedOk = matchedHash ? await stateStore.consumeMasterInviteHash(matchedHash) : false;
       if (!consumedOk) {
         auditLog.record('auth.master.rejected', 'rejected', 'promote-invalid-invite');
-        res.status(403).json({ error: 'Invalid or already consumed master invite code.' });
+        res.status(403).json({
+          code: 'invite_invalid' satisfies ServerErrorCode,
+          error: 'Invalid or already consumed master invite code.',
+        });
         return;
       }
 
@@ -683,6 +754,7 @@ export function createFoundationApiRouter(
       if (!challengeId || !clientDataJSONBase64Url) {
         res.status(400).json({
           accepted: false,
+          code: 'invalid_request' satisfies ServerErrorCode,
           verificationTier: 'challenge_stub_only',
           cryptographicServerVerified: false,
           challengeConsumed: false,
@@ -700,7 +772,11 @@ export function createFoundationApiRouter(
 
       if (!stubCheck.accepted) {
         auditLog.record('auth.verify.spki_rejected', 'rejected', stubCheck.error);
-        res.status(400).json(stubCheck);
+        const errText = stubCheck.error ?? '';
+        const stubCode: ServerErrorCode = /expired/i.test(errText)
+          ? 'challenge_expired'
+          : 'challenge_invalid';
+        res.status(400).json({ ...stubCheck, code: stubCode });
         return;
       }
 
@@ -709,6 +785,7 @@ export function createFoundationApiRouter(
         auditLog.record('auth.verify.spki_rejected', 'rejected', err);
         res.status(400).json({
           accepted: false,
+          code: 'challenge_invalid' satisfies ServerErrorCode,
           verificationTier: 'challenge_stub_only',
           cryptographicServerVerified: false,
           challengeConsumed: true,
@@ -730,6 +807,7 @@ export function createFoundationApiRouter(
         auditLog.record('auth.verify.spki_rejected', 'rejected', originCheck.error);
         res.status(400).json({
           accepted: false,
+          code: 'origin_untrusted' satisfies ServerErrorCode,
           verificationTier: 'challenge_stub_only',
           cryptographicServerVerified: false,
           challengeConsumed: true,
@@ -748,6 +826,7 @@ export function createFoundationApiRouter(
           auditLog.record('auth.verify.downgrade_blocked', 'rejected', err);
           res.status(401).json({
             accepted: false,
+            code: 'signature_invalid' satisfies ServerErrorCode,
             verificationTier: 'server_spki_verified',
             cryptographicServerVerified: false,
             challengeConsumed: true,
@@ -768,6 +847,7 @@ export function createFoundationApiRouter(
           auditLog.record('auth.verify.spki_rejected', 'rejected', cryptoCheck.error);
           res.status(401).json({
             accepted: false,
+            code: 'signature_invalid' satisfies ServerErrorCode,
             verificationTier: 'server_spki_verified',
             cryptographicServerVerified: false,
             challengeConsumed: true,

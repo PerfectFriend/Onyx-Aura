@@ -18,6 +18,8 @@ import {
 import {
   extractAttestedCredentialFromAttestationObject,
 } from '../../domain/webauthnCbor';
+import { formatAppMessage, translateServerErrorCode } from '../../i18n/messages';
+import { SupportedLanguage } from '../../i18n/translations';
 import { UserRole } from '../../types';
 import {
   assertNoSecretLikeFields,
@@ -556,6 +558,7 @@ export interface RegisterPasskeyParams {
   role: UserRole;
   masterInviteCode?: string;
   existingCredentials?: PasskeyCredentialRecord[];
+  language?: SupportedLanguage;
 }
 
 export async function registerWebAuthnPasskey({
@@ -563,6 +566,7 @@ export async function registerWebAuthnPasskey({
   role,
   masterInviteCode,
   existingCredentials = [],
+  language,
 }: RegisterPasskeyParams): Promise<PasskeyCredentialRecord> {
   const capability = await detectWebAuthnSupport();
   if (!capability.isSupported) {
@@ -678,11 +682,22 @@ export async function registerWebAuthnPasskey({
         const regPayload = (await regRes.json()) as { session?: { role?: unknown } };
         authoritativeRole = regPayload.session?.role === 'master' ? 'master' : 'client';
       } else if ([400, 403, 409, 429].includes(regRes.status)) {
-        const errPayload = (await regRes.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(
+        const errPayload = (await regRes.json().catch(() => ({}))) as {
+          code?: unknown;
+          error?: unknown;
+        };
+        const fallback =
           typeof errPayload.error === 'string'
             ? errPayload.error
-            : `Сервер отклонил регистрацию Passkey (${regRes.status}).`
+            : formatAppMessage(
+                'identity.server_rejected_status',
+                { status: regRes.status },
+                language
+              );
+        throw new Error(
+          errPayload.code
+            ? translateServerErrorCode(errPayload.code, fallback, language)
+            : fallback
         );
       }
     } else {
@@ -879,11 +894,12 @@ export function createSimulatedDemoPasskey(
  */
 export function authenticateDemoPasskeySim(
   credentials: PasskeyCredentialRecord[],
-  preferredId?: string
+  preferredId?: string,
+  language?: SupportedLanguage
 ): PasskeyCredentialRecord {
   const simCredentials = credentials.filter(c => c.isSimulatedFallback);
   if (simCredentials.length === 0) {
-    throw new Error('Нет сохранённого [SIM] демо-ключа. Создайте [SIM] Passkey один раз.');
+    throw new Error(formatAppMessage('identity.sim_missing_error', {}, language));
   }
   const matched =
     (preferredId ? simCredentials.find(c => c.id === preferredId) : undefined) || simCredentials[0];

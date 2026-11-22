@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { PortfolioItem, ServiceCategory } from '../types';
+import { createShortId } from '../domain/ids';
 import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UsePortfolioGalleryOptions {
@@ -162,10 +163,7 @@ export function usePortfolioGallery({
 
   const handleImportInstagramPost = useCallback(
     (post: InstagramImportPayload) => {
-      const uniqueSuffix =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID().slice(0, 8).toUpperCase()
-          : `${Date.now()}`;
+      const uniqueSuffix = createShortId().toUpperCase();
 
       const newLook: PortfolioItem = {
         id: `port-ig-${uniqueSuffix}`,

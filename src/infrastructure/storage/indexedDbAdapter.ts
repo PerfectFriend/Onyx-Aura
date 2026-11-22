@@ -16,6 +16,7 @@ import {
   StorageKey,
   StorageReadResult,
 } from '../../domain/storage';
+import { formatAppMessage } from '../../i18n/messages';
 
 export const DEFAULT_DB_NAME = 'nailix_local_first_v1';
 const DEFAULT_STORE_NAME = 'salon_kv';
@@ -292,18 +293,14 @@ export class ResilientStorageAdapter implements StorageAdapter {
     this.fatalFallback = true;
     this.health = 'memory_only';
     this.lastError = reason;
-    this.recordWarning(
-      `IndexedDB недоступна (${reason}). Включён временный режим памяти до конца сеанса.`
-    );
+    this.recordWarning(formatAppMessage('storage.idb_unavailable', { reason }));
   }
 
   private markDegraded(key: StorageKey | 'batch', reason: string): void {
     if (this.fatalFallback) return;
     this.health = 'degraded';
     this.lastError = reason;
-    this.recordWarning(
-      `Сбой чтения/записи (${key}): ${reason}. Данные на диске защищены от перезаписи.`
-    );
+    this.recordWarning(formatAppMessage('storage.rw_degraded', { key, reason }));
   }
 
   private async runWithRetry<T>(fn: () => Promise<T>): Promise<T> {

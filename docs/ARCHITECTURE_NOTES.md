@@ -387,3 +387,19 @@
    - На `/checkout-session` проверяются формат `appointmentDate`/`appointmentTimeSlot`, enum `displayCurrency` и составной `Idempotency-Key` от `(bookingReferenceId, artistId, serviceId, amountMinor)` с `409 Conflict` при конфликте активной брони. На `/register` введена проверка `credentialId === rawIdBase64Url`.
 4. **Долговечные атомарные хэшированные инвайты мастера (`V-04`):**
    - `NAILIX_MASTER_INVITE_CODES` требует длины не менее **16 символов**, при загрузке коды сразу хэшируются через `SHA-256`, а одноразовое потребление (`consumeMasterInviteHash`) выполняется атомарно через сериализованную очередь записи `ServerStateStore` (`consumedInviteHashes` в `.data/nailix-server.json`), защищая и от рестарта сервера, и от конкурентных запросов `/promote-master`.
+
+---
+
+## 🧹 18. Этап 5 · Спринт 5.1 «Гигиена перед социальным слоем» (`Q-10` / `V-07`)
+
+1. **Модульный разрез `salonRepository.ts` (`Q-10`):**
+   - Монолит (1 267 строк) разрезан на фасад `src/infrastructure/storage/salonRepository.ts` (784 строки) и четыре сфокусированных модуля: `repositorySeed.ts` (seed-фикстуры и множества ID), `repositoryMigrations.ts` (`SALON_SCHEMA_VERSION = 3`, миграции `v1 → v2 → v3`, аннотация `origin`), `repositoryOutbox.ts` (allowlist санитизации, UUID-ключи, bounded история) и `repositoryCollections.ts` (дискриминированное чтение `ok | missing | unreadable`, поэлементный карантин, batch write планировщик).
+   - Публичные методы и re-export контракты `SalonRepository` полностью сохранены; добавлена опция `language` для локализации предупреждений деградации.
+
+2. **Единый генератор ID (`src/domain/ids.ts`) и i18n сообщений (`src/i18n/messages.ts` · `V-07`):**
+   - Введены `createRawUuid()`, `createId(prefix?)` и `createShortId(prefix?, length?)` на `crypto.randomUUID()` с честным fallback через `crypto.getRandomValues()` и монотонным счётчиком без `Math.random()`. Все генераторы ID новых записей, outbox, карантина, чата, рекламы, отзывов, модерации и тостов переведены на `domain/ids.ts`.
+   - Из `src/hooks/*` и `src/infrastructure/*` убраны захардкоженные кириллические строки через словарь `src/i18n/messages.ts` (`en` / `ru`) и `formatAppMessage(...)` / `translateServerErrorCode(...)`. `src/server/apiRouter.ts` и `rateLimiter.ts` добавляют машинный `code?: ServerErrorCode` на JSON-ошибках без изменения HTTP-статусов и обратной совместимости поля `error`.
+
+3. **Env-гигиена и заметка по Production Entrypoint (`tsx` vs compiled JS):**
+   - Из `.env.example` удалена неиспользуемая переменная `GEMINI_API_KEY` (в проекте нет runtime LLM-интеграций).
+   - **Production entrypoint note:** сейчас `package.json` (`"start": "NODE_ENV=production tsx server.ts"`) запускает сервер в Cloud Run напрямую через runtime-транспилятор `tsx`, чтобы не менять проверенный деплой-пайплайн. Целевой шаг при вынесении в отдельный Docker/CI образ — компиляция `server.ts` + `src/server/*` + `src/domain/*` через `tsc`/бандлер в `dist-server/server.js` и переключение `"start"` на чистый `node dist-server/server.js` без runtime-компилятора.

@@ -32,7 +32,9 @@ import {
 } from './data/initialData';
 
 import { ClientAnchorPoint } from './types';
+import { createId } from './domain/ids';
 import { HydratedSalonData } from './domain/storage';
+import { formatAppMessage } from './i18n/messages';
 
 import { blockchainLedger } from './simulation/cryptoLedger';
 import { reminderService } from './services/reminderService';
@@ -81,6 +83,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
 
   // Stage 3 WebAuthn / Passkey Identity & Public-Only Session Registry (Load-then-Mount)
   const identity = useIdentitySession({
+    language: currentLanguage,
     initialPasskeys: initialData.passkeys,
     initialSession: initialData.identitySession,
     externalRevision: bootstrap.externalRevision,
@@ -89,7 +92,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     onPersistSession: bootstrap.persistIdentitySession,
     onNotify: (title, message) => {
       shell.pushToast({
-        id: `toast-id-${Date.now()}`,
+        id: createId('toast-id'),
         type: 'push',
         title,
         message,
@@ -102,6 +105,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
   // Booking, Checkout & Appointments Flow (Load-then-Mount)
   const booking = useBookingFlow({
     artists: bootstrap.artists,
+    language: currentLanguage,
     initialBookingOpen: shell.deepLinkAction === 'book',
     initialAppointments: initialData.appointments,
     externalRevision: bootstrap.externalRevision,
@@ -154,7 +158,7 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     },
     onNotify: (title, message) => {
       shell.pushToast({
-        id: `toast-ig-${Date.now()}`,
+        id: createId('toast-ig'),
         type: 'push',
         title,
         message,
@@ -189,14 +193,22 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
         blockHash: newReview.blockHash,
       });
     } catch (err) {
-      onReportError(err instanceof Error ? err.message : 'Не удалось сохранить отзыв локально.');
+      onReportError(
+        err instanceof Error
+          ? err.message
+          : formatAppMessage('app.review_save_error', {}, currentLanguage)
+      );
     }
   };
 
   // Client Anchor Point Update Handler (persisted locally in IndexedDB)
   const handleUpdateAnchorPoint = (updatedPoint: ClientAnchorPoint) => {
     void bootstrap.updateAnchorPoint(updatedPoint).catch(err => {
-      onReportError(err instanceof Error ? err.message : 'Не удалось сохранить точку карты.');
+      onReportError(
+        err instanceof Error
+          ? err.message
+          : formatAppMessage('app.anchor_save_error', {}, currentLanguage)
+      );
     });
   };
 
@@ -209,7 +221,11 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
     lng: number
   ) => {
     void bootstrap.updateMasterSalon(artistId, salonName, salonAddress, lat, lng).catch(err => {
-      onReportError(err instanceof Error ? err.message : 'Не удалось обновить адрес салона.');
+      onReportError(
+        err instanceof Error
+          ? err.message
+          : formatAppMessage('app.salon_save_error', {}, currentLanguage)
+      );
     });
   };
 
@@ -219,18 +235,24 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
       .resetAllToSeed(options)
       .then(() => {
         shell.pushToast({
-          id: `toast-reset-${Date.now()}`,
+          id: createId('toast-reset'),
           type: 'push',
-          title: 'Локальная база сброшена',
-          message: options.preserveIdentity
-            ? 'Демо-данные восстановлены до исходных значений. Ключи Passkey сохранены.'
-            : 'Демо-данные и локальные ключи Passkey очищены до исходного состояния.',
+          title: formatAppMessage('app.reset_toast_title', {}, currentLanguage),
+          message: formatAppMessage(
+            options.preserveIdentity ? 'app.reset_keep_identity' : 'app.reset_clear_all',
+            {},
+            currentLanguage
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'IndexedDB',
         });
       })
       .catch(err => {
-        onReportError(err instanceof Error ? err.message : 'Ошибка сброса локальной базы.');
+        onReportError(
+          err instanceof Error
+            ? err.message
+            : formatAppMessage('app.reset_error', {}, currentLanguage)
+        );
       });
   };
 
@@ -648,13 +670,14 @@ function SalonApp({ initialData, bootstrap, chrome, onReportError }: SalonAppPro
         pendingOutboxCount={bootstrap.pendingOutboxCount}
         theme={theme}
         onNotification={(msg) => {
+          const calLabel = formatAppMessage('app.calendar_toast_title', {}, currentLanguage);
           shell.pushToast({
-            id: `toast-cal-${Date.now()}`,
+            id: createId('toast-cal'),
             type: 'push',
-            title: 'Календарь',
+            title: calLabel,
             message: msg,
             timestamp: new Date().toLocaleTimeString(),
-            phoneOrTarget: 'Календарь',
+            phoneOrTarget: calLabel,
           });
         }}
       />

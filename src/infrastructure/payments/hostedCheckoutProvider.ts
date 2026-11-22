@@ -12,6 +12,8 @@ import {
   PublicDepositIntentView,
 } from '../../domain/payments';
 import { AuthoritativeDepositQuote } from '../../domain/serviceCatalog';
+import { translateServerErrorCode } from '../../i18n/messages';
+import { SupportedLanguage } from '../../i18n/translations';
 import { PaymentCurrency } from '../../types';
 import { defaultPaymentProvider } from './mockPaymentProvider';
 
@@ -84,6 +86,7 @@ export async function createServerHostedCheckoutSession(params: {
   displayCurrency: PaymentCurrency;
   appointmentDate?: string;
   appointmentTimeSlot?: string;
+  language?: SupportedLanguage;
 }): Promise<{ intent: DepositIntent; hostedCheckoutUrl: string }> {
   const res = await fetch('/api/payments/checkout-session', {
     method: 'POST',
@@ -102,11 +105,13 @@ export async function createServerHostedCheckoutSession(params: {
   });
 
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: unknown };
-    throw new Error(
+    const err = (await res.json().catch(() => ({}))) as { code?: unknown; error?: unknown };
+    const fallback =
       typeof err.error === 'string'
         ? err.error
-        : `Hosted checkout session failed (${res.status}).`
+        : `Hosted checkout session failed (${res.status}).`;
+    throw new Error(
+      err.code ? translateServerErrorCode(err.code, fallback, params.language) : fallback
     );
   }
 

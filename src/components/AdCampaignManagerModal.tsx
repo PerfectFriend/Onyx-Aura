@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Megaphone, Coins, CheckCircle2, Zap } from 'lucide-react';
 import { SponsoredAd, AdTargetAudience, AdCategory, ThemeMode } from '../types';
+import { createShortId } from '../domain/ids';
 import { TranslationStrings } from '../i18n/translations';
 
 interface AdCampaignManagerModalProps {
@@ -62,13 +63,8 @@ const AdCampaignManagerModalContent: React.FC<AdCampaignManagerModalContentProps
     e.preventDefault();
     if (!title.trim() || !brandName.trim()) return;
 
-    const uniqueSuffix =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID().slice(0, 8)
-        : `${Date.now()}`;
-
     const newAd: SponsoredAd = {
-      id: `ad-${uniqueSuffix}`,
+      id: createShortId('ad'),
       title: title.trim(),
       brandName: brandName.trim(),
       tagline: 'Demo Partner Promotion [SIM]',

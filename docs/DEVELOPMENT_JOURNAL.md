@@ -4151,3 +4151,53 @@ CSP говорит: script только `'self'`.
 **Гриша**
 
 ---
+
+---
+
+### 2026-11-22 20:15 CET · [REPORT] · От: Женя → Кому: Гриша (куратор на CC)
+
+**Этап 5 · Спринт 5.1 — Гигиена перед социальным слоем (выполнен, Этап 4 не тронут)**
+
+Закрыты все пункты техдолга из задания 5.1 (`Q-10` / `V-07`) без добавления социальных API или изменения существующих серверных контрактов Этапа 4:
+
+1. **Разрез `salonRepository.ts` (`Q-10`):**
+   - Монолит на **1 267 строк** разделён на тонкий фасад [`src/infrastructure/storage/salonRepository.ts`](../src/infrastructure/storage/salonRepository.ts) (**784 строки**) и 4 сфокусированных модуля:
+     - [`src/infrastructure/storage/repositorySeed.ts`](../src/infrastructure/storage/repositorySeed.ts) (**53 строки**): множества seed ID, тегирование `origin: 'seed'` и `createSeedSnapshot()`.
+     - [`src/infrastructure/storage/repositoryMigrations.ts`](../src/infrastructure/storage/repositoryMigrations.ts) (**154 строки**): `SALON_SCHEMA_VERSION = 3`, миграции `v1 → v2 → v3`, сохранение пользовательского `origin: 'user'`.
+     - [`src/infrastructure/storage/repositoryOutbox.ts`](../src/infrastructure/storage/repositoryOutbox.ts) (**97 строк**): `sanitizeOutboxPayload` (allowlist без PII), `nextOutboxId()` на `createId('outbox')`, ограничение synced-хвоста queue.
+     - [`src/infrastructure/storage/repositoryCollections.ts`](../src/infrastructure/storage/repositoryCollections.ts) (**470 строк**): дискриминированное чтение `ok | missing | unreadable`, поэлементный карантин с `createShortId()` и batch-запись seed.
+   - В `SalonRepository` добавлена опция `{ language?: SupportedLanguage }` без нарушения обратной совместимости существующих конструкторов и re-export контрактов.
+
+2. **Единый криптографический генератор ID (`src/domain/ids.ts`):**
+   - Создан [`src/domain/ids.ts`](../src/domain/ids.ts) (`createRawUuid`, `createId`, `createShortId`): использует `crypto.randomUUID()` → `crypto.getRandomValues()` (формат UUIDv4) → монотонный hex-счётчик в stripped test shims без `Math.random()`.
+   - Переведены все точки генерации ID в домене/инфраструктуре/хуках/UI: `repositoryOutbox.ts`, `repositoryCollections.ts`, `mockPaymentProvider.ts`, `reminderService.ts`, `useBookingFlow.ts` (toast IDs), `useChatConcierge.ts` (`msg-*`), `usePortfolioGallery.ts` (`port-ig-*`), `CheckoutModal.tsx` (`apt-*`), `FriendModerationSection.tsx` (`fr-*`), `AdCampaignManagerModal.tsx` (`ad-*`), `cryptoLedger.ts` (`rev-*`), `App.tsx` (toast IDs). Оставшиеся `Date.now()` проверены `grep`: только честные epoch timestamps, TTL и имена скачиваемых `.json` файлов; `Math.random()` в ID-генерации отсутствует.
+
+3. **i18n тостов, storage/identity-сообщений и машинные `ServerErrorCode` (`V-07`):**
+   - Создан [`src/i18n/messages.ts`](../src/i18n/messages.ts) (`en` / `ru`) для всех уведомлений и ошибок в `useBookingFlow`, `useIdentitySession`, `webAuthnService`, `hostedCheckoutProvider`, `indexedDbAdapter`, `repositoryCollections`, `salonRepository` и inline-тостов в `App.tsx`; жёстко зашитая кириллица в `src/hooks/*` и `src/infrastructure/*` полностью удалена (`grep -rnE '[А-Яа-яЁё]' src/hooks src/infrastructure` → 0 совпадений).
+   - [`src/server/apiRouter.ts`](../src/server/apiRouter.ts) и [`src/server/rateLimiter.ts`](../src/server/rateLimiter.ts) отдают аддитивное поле `code?: ServerErrorCode` на всех JSON-ошибках (`origin_untrusted`, `rate_limited`, `invalid_request`, `challenge_invalid`, `challenge_expired`, `credential_conflict`, `invite_invalid`, `session_required`, `credential_not_found`, `signature_invalid`, `quote_invalid`, `checkout_conflict`, `intent_not_found`, `webhook_invalid`, `stripe_unavailable`), не меняя HTTP-статусы и текстовое поле `error`. Клиенты `webAuthnService` и `hostedCheckoutProvider` переводят `code` через `translateServerErrorCode(..., language)`.
+   - Обновлён ассерт в [`src/__tests__/localFirstHotfix.test.ts`](../src/__tests__/localFirstHotfix.test.ts) (строка 47) на двуязычный паттерн `/blocked|unreadable|заблокирована|прочитана/i` под EN default locale в Vitest и добавлен набор тестов [`src/__tests__/stage51.test.ts`](../src/__tests__/stage51.test.ts) (**7 тестов**).
+
+4. **Env hygiene и Prod Entry Note:**
+   - В [`.env.example`](../.env.example) удалена неиспользуемая `GEMINI_API_KEY`; оставлены актуальные `NAILIX_*`, `STRIPE_*`, `APP_URL`, `TRUST_PROXY`.
+   - В [`docs/ARCHITECTURE_NOTES.md`](./ARCHITECTURE_NOTES.md) (§18) и [`README.md`](../README.md) добавлена краткая заметка по текущему `NODE_ENV=production tsx server.ts` в Cloud Run vs будущему переходу на скомпилированный `node dist-server/server.js`.
+
+5. **Что не делалось (строго по границам 5.1):**
+   - Новые социальные эндпоинты отзывов/endorsements (`5.2+`), MediaPipe/Capacitor, DAO-механики и перекрой UI god-файлов не вносились.
+
+#### Честная фиксация проверок
+
+*Проверю финальные цифры после правки документации перед самым коммитом; на пред-док прогоне:*
+- **ESLint (`eslint src server.ts --quiet`)**: `0 errors`, `0 warnings` (воспроизведено).
+- **Typecheck (`npm run typecheck`)**: `tsc --noEmit` — `0 errors` (воспроизведено).
+- **Tests + V8 Coverage (`npm run test:coverage`)**: **15 files passed (99/99 tests passed)**, включая [`honestyWatchdog.test.ts`](../src/__tests__/honestyWatchdog.test.ts) и новый [`stage51.test.ts`](../src/__tests__/stage51.test.ts); покрытие `All files`: **72.44% Stmts / 65.39% Branches / 76.06% Funcs / 76% Lines** (выше порогов `60/60/50`) (воспроизведено).
+- **Build (`npm run build`)**: Vite 8 + PWA Workbox (`dist/sw.js`, 205 entries) за `1.48s` (воспроизведено).
+- **Не проверялось в браузере вручную на этом прогоне:** интерактивное переключение EN/RU тостов в live UI; проверено unit-тестами `stage51.test.ts` + HTTP router инстансами `withRouterServer`.
+
+😄 **Анекдот к отчёту 5.1:**
+> Удалили из `.env.example` осиротевший `GEMINI_API_KEY`, выкинули `Date.now()` из ID и перевели тосты из крика души в `messages.ts`.
+> Гриша смотрит на 4 модуля вместо одного `salonRepository.ts`:
+> — Ну всё, теперь отзывам из 5.2 есть куда ложиться — и даже не на `Date.now()`.
+> — А главное, в локали `en` база наконец перестала ругаться по-русски на битый IndexedDB!
+
+Готов принимать замечания или открывать **Спринт 5.2**, Гриша.  
+**Женя**

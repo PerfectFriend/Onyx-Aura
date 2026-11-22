@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { ChatMessage, Artist, UserRole } from '../types';
 import { DEMO_CLIENT_PROFILE } from '../data/initialData';
+import { createId } from '../domain/ids';
 import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 
 export interface UseChatConciergeOptions {
@@ -58,10 +59,7 @@ export function useChatConcierge({
   const handleSendMessage = useCallback(
     (text: string, threadId: string, quoteAttachment?: ChatMessage['quoteAttachment']) => {
       const activeArt = artists.find(a => a.id === threadId);
-      const uniqueId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? `msg-${crypto.randomUUID()}`
-          : `msg-${Date.now()}`;
+      const uniqueId = createId('msg');
 
       const newMsg: ChatMessage = {
         id: uniqueId,

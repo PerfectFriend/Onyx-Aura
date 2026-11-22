@@ -88,10 +88,10 @@
 │   ├── __tests__/           # Vitest (honestyWatchdog, paymentFoundation, serverIdentityAndStripe, serverHardening, stage45, ...)
 │   ├── components/          # UI-компоненты, модалки (вкл. PasskeyAuthModal, Zero-PCI CheckoutModal), ErrorBoundary
 │   ├── data/                # Начальные seed-фикстуры (origin: 'seed') для SalonRepository
-│   ├── domain/              # Чистые контракты Payments, ServiceCatalog, WebAuthnCbor, Storage, Schema Validators, IdentitySession
+│   ├── domain/              # Чистые контракты Payments, ServiceCatalog, WebAuthnCbor, IDs (createId/createShortId), Storage, Schema Validators, IdentitySession
 │   ├── hooks/               # Доменные хуки + useSalonBootstrap + useIdentitySession + useAppShell
-│   ├── i18n/                # Словарь переводов на 10 языков (LTR + RTL)
-│   ├── infrastructure/      # HostedCheckoutProvider & MockPaymentProvider [SIM], IndexedDBAdapter, SalonRepository v3, WebAuthnService, SecretHygiene, CSP
+│   ├── i18n/                # Словарь переводов UI на 10 языков (LTR + RTL) + словарь тостов/серверных кодов (messages.ts)
+│   ├── infrastructure/      # HostedCheckoutProvider & MockPaymentProvider [SIM], IndexedDBAdapter, модульный SalonRepository v3 (Seed/Migrations/Outbox/Collections), WebAuthnService, SecretHygiene, CSP
 │   ├── server/              # ServerStateStore, ServerSessionService, WebAuthnServerVerifier, OriginPolicy, RateLimiter, AuditLog, StripeHostedCheckoutService, SecurityHeaders, API Router
 │   ├── services/            # geoDistance (REAL) и reminderService ([SIM])
 │   ├── simulation/          # Явно изолированные [SIM] модули (cryptocloud, cryptoLedger)
@@ -133,6 +133,7 @@ npm run build
 - **`APP_URL` / `NAILIX_ALLOWED_ORIGINS`:** задать реальный `https://...` адрес сервиса — иначе в `production` браузерные `POST` (`/api/auth/webauthn/*`, `/api/payments/checkout-session`) получат `HTTP 403` (сервер выведет громкое предупреждение при старте).
 - **`TRUST_PROXY=1`:** включить (или указать точное число прокси-хопов), чтобы за балансировщиком Cloud Run лимитер частоты и квоты challenge разделялись по реальному IP клиента из `X-Forwarded-For`.
 - **Один экземпляр (`min=1, max=1`) и эфемерное состояние:** файл `.data/nailix-server.json` живёт в контейнере и теряется при редеплое/рестарте; в showcase-режиме без `NAILIX_SESSION_SECRET` ключ HMAC cookie создаётся заново при старте процесса. Для боевого запуска со Stripe и инвайт-кодами (`>= 16` символов) `NAILIX_SESSION_SECRET` строго обязателен.
+- **Production entrypoint (`tsx` vs compiled JS):** сейчас скрипт `"start"` запускает `NODE_ENV=production tsx server.ts` напрямую ради совместимости с текущим Cloud Run рантаймом и минимальных cold-start изменений. Плановый переход для выделенного Node-контейнера: предкомпиляция `server.ts` в `dist-server/server.js` на этапе `npm run build` и запуск через `node dist-server/server.js` без runtime-зависимости от `tsx`.
 
 ---
 

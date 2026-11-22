@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Appointment, Artist, PortfolioItem, NailService } from '../types';
+import { createId } from '../domain/ids';
 import { matchIntentToAppointment } from '../domain/payments';
+import { SupportedLanguage } from '../i18n/translations';
+import { formatAppMessage } from '../i18n/messages';
 import { fetchServerPaymentIntentStatus } from '../infrastructure/payments/hostedCheckoutProvider';
 import { createSeedSnapshot } from '../infrastructure/storage/salonRepository';
 import { reminderService, ReminderNotificationEvent } from '../services/reminderService';
@@ -21,6 +24,7 @@ export interface PendingBookingDetails {
 
 export interface UseBookingFlowProps {
   artists: Artist[];
+  language?: SupportedLanguage;
   initialBookingOpen?: boolean;
   initialAppointments?: Appointment[];
   externalRevision?: number;
@@ -59,6 +63,7 @@ export interface UseBookingFlowReturn {
  */
 export function useBookingFlow({
   artists,
+  language,
   initialBookingOpen = false,
   initialAppointments,
   externalRevision = 0,
@@ -95,10 +100,14 @@ export function useBookingFlow({
       const artist = artists.find(a => a.id === look.artistId) || null;
       if (!artist && onNotifyToast) {
         onNotifyToast({
-          id: `toast-artist-missing-${crypto.randomUUID?.() ?? Date.now()}`,
+          id: createId('toast-artist-missing'),
           type: 'push',
-          title: '[SIM] Master Profile Not Matched',
-          message: `Please pick a master artist manually for "${look.title}".`,
+          title: formatAppMessage('booking.artist_missing.title', {}, language),
+          message: formatAppMessage(
+            'booking.artist_missing.message',
+            { lookTitle: look.title },
+            language
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Client Device',
         });
@@ -107,7 +116,7 @@ export function useBookingFlow({
       setBookingLookTarget(look);
       setIsBookingModalOpen(true);
     },
-    [artists, onNotifyToast]
+    [artists, language, onNotifyToast]
   );
 
   const handleStartBookingWithArtist = useCallback((artist: Artist) => {
@@ -154,15 +163,23 @@ export function useBookingFlow({
       });
 
       onNotifyToast?.({
-        id: `toast-${crypto.randomUUID?.() ?? Date.now()}`,
+        id: createId('toast'),
         type: 'push',
-        title: 'Запись сохранена локально',
-        message: `${taggedAppointment.artistName} · ${taggedAppointment.date} ${taggedAppointment.timeSlot} (депозит [SIM]).`,
+        title: formatAppMessage('booking.saved_local.title', {}, language),
+        message: formatAppMessage(
+          'booking.saved_local.message',
+          {
+            artistName: taggedAppointment.artistName,
+            date: taggedAppointment.date,
+            timeSlot: taggedAppointment.timeSlot,
+          },
+          language
+        ),
         timestamp: new Date().toLocaleTimeString(),
         phoneOrTarget: 'Local Storage',
       });
     },
-    [onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
+    [language, onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
   );
 
   const handleHostedPendingCreated = useCallback(
@@ -190,15 +207,23 @@ export function useBookingFlow({
       );
 
       onNotifyToast?.({
-        id: `toast-pending-${crypto.randomUUID?.() ?? Date.now()}`,
+        id: createId('toast-pending'),
         type: 'push',
-        title: 'Бронь ожидает оплаты Stripe',
-        message: `${taggedAppointment.artistName} · ${taggedAppointment.date} ${taggedAppointment.timeSlot}`,
+        title: formatAppMessage('booking.hosted_pending.title', {}, language),
+        message: formatAppMessage(
+          'booking.hosted_pending.message',
+          {
+            artistName: taggedAppointment.artistName,
+            date: taggedAppointment.date,
+            timeSlot: taggedAppointment.timeSlot,
+          },
+          language
+        ),
         timestamp: new Date().toLocaleTimeString(),
         phoneOrTarget: 'Stripe Hosted Checkout',
       });
     },
-    [onNotifyToast, onPersistAppointments]
+    [language, onNotifyToast, onPersistAppointments]
   );
 
   const reconcileHostedCheckoutReturn = useCallback(
@@ -206,10 +231,14 @@ export function useBookingFlow({
       const serverIntent = await fetchServerPaymentIntentStatus(intentId);
       if (!serverIntent) {
         onNotifyToast?.({
-          id: `toast-intent-missing-${crypto.randomUUID?.() ?? Date.now()}`,
+          id: createId('toast-intent-missing'),
           type: 'push',
-          title: 'Статус оплаты недоступен',
-          message: `Сервер не вернул подтверждение для платежа ${intentId}. Проверьте вкладку «Мои записи».`,
+          title: formatAppMessage('booking.intent_missing.title', {}, language),
+          message: formatAppMessage(
+            'booking.intent_missing.message',
+            { intentId },
+            language
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Stripe Server Intent',
         });
@@ -227,10 +256,18 @@ export function useBookingFlow({
               ? ` (${serverIntent.appointmentDate} ${serverIntent.appointmentTimeSlot})`
               : '';
           onNotifyToast?.({
-            id: `toast-unmatched-capture-${crypto.randomUUID?.() ?? Date.now()}`,
+            id: createId('toast-unmatched-capture'),
             type: 'push',
-            title: 'Платёж получен — подтвердите время в салоне',
-            message: `Депозит $${authoritativePrice} USD подтверждён (${serverIntent.id.slice(0, 18)}...)${slotInfo}, но локальная бронь на этом устройстве не найдена.`,
+            title: formatAppMessage('booking.unmatched_capture.title', {}, language),
+            message: formatAppMessage(
+              'booking.unmatched_capture.message',
+              {
+                amount: authoritativePrice,
+                intentShort: serverIntent.id.slice(0, 18),
+                slotInfo,
+              },
+              language
+            ),
             timestamp: new Date().toLocaleTimeString(),
             phoneOrTarget: 'Stripe Server Intent',
           });
@@ -272,10 +309,18 @@ export function useBookingFlow({
         });
 
         onNotifyToast?.({
-          id: `toast-captured-${crypto.randomUUID?.() ?? Date.now()}`,
+          id: createId('toast-captured'),
           type: 'push',
-          title: 'Депозит Stripe подтверждён',
-          message: `${updatedAppointment.artistName} · $${authoritativePrice} USD (${serverIntent.id.slice(0, 18)}...)`,
+          title: formatAppMessage('booking.captured.title', {}, language),
+          message: formatAppMessage(
+            'booking.captured.message',
+            {
+              artistName: updatedAppointment.artistName,
+              amount: authoritativePrice,
+              intentShort: serverIntent.id.slice(0, 18),
+            },
+            language
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Stripe Webhook',
         });
@@ -285,16 +330,25 @@ export function useBookingFlow({
       if (serverIntent.status === 'partially_refunded' || serverIntent.status === 'disputed') {
         const refundedUsd = Number(((serverIntent.amountRefundedMinor ?? 0) / 100).toFixed(2));
         onNotifyToast?.({
-          id: `toast-adjust-${crypto.randomUUID?.() ?? Date.now()}`,
+          id: createId('toast-adjust'),
           type: 'push',
-          title:
+          title: formatAppMessage(
             serverIntent.status === 'disputed'
-              ? 'По платежу открыт спор (Dispute)'
-              : 'Выполнен частичный возврат',
-          message:
+              ? 'booking.disputed.title'
+              : 'booking.partially_refunded.title',
+            {},
+            language
+          ),
+          message: formatAppMessage(
             serverIntent.status === 'disputed'
-              ? `Бронь ${serverIntent.bookingReferenceId} ожидает разбора спора Stripe.`
-              : `Возвращено $${refundedUsd} USD по брони ${serverIntent.bookingReferenceId}; остаток депозита активен.`,
+              ? 'booking.disputed.message'
+              : 'booking.partially_refunded.message',
+            {
+              bookingRef: serverIntent.bookingReferenceId,
+              amount: refundedUsd,
+            },
+            language
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Stripe Server Intent',
         });
@@ -328,10 +382,25 @@ export function useBookingFlow({
         }
 
         onNotifyToast?.({
-          id: `toast-cancelled-${crypto.randomUUID?.() ?? Date.now()}`,
+          id: createId('toast-cancelled'),
           type: 'push',
-          title: serverIntent.status === 'released' ? 'Платёж возвращён' : 'Оплата не завершена',
-          message: `Статус сервера для ${serverIntent.bookingReferenceId}: ${serverIntent.status}.`,
+          title: formatAppMessage(
+            serverIntent.status === 'released'
+              ? 'booking.released.title'
+              : 'booking.incomplete.title',
+            {},
+            language
+          ),
+          message: formatAppMessage(
+            serverIntent.status === 'released'
+              ? 'booking.released.message'
+              : 'booking.incomplete.message',
+            {
+              bookingRef: serverIntent.bookingReferenceId,
+              status: serverIntent.status,
+            },
+            language
+          ),
           timestamp: new Date().toLocaleTimeString(),
           phoneOrTarget: 'Stripe Server Intent',
         });
@@ -339,15 +408,22 @@ export function useBookingFlow({
       }
 
       onNotifyToast?.({
-        id: `toast-awaiting-${crypto.randomUUID?.() ?? Date.now()}`,
+        id: createId('toast-awaiting'),
         type: 'push',
-        title: 'Ожидаем подтверждения от Stripe',
-        message: `Бронь ${serverIntent.bookingReferenceId} сохранена со статусом pending (${serverIntent.status}).`,
+        title: formatAppMessage('booking.awaiting.title', {}, language),
+        message: formatAppMessage(
+          'booking.awaiting.message',
+          {
+            bookingRef: serverIntent.bookingReferenceId,
+            status: serverIntent.status,
+          },
+          language
+        ),
         timestamp: new Date().toLocaleTimeString(),
         phoneOrTarget: 'Stripe Webhook',
       });
     },
-    [onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
+    [language, onBroadcastToSwarm, onNotifyToast, onPersistAppointments]
   );
 
   const handleReleaseEscrow = useCallback(

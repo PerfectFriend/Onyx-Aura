@@ -14,14 +14,8 @@ import {
   ReleaseDepositRequest,
   toMinorUnits,
 } from '../../domain/payments';
+import { createId } from '../../domain/ids';
 import { computeSHA256Detailed } from '../../simulation/cryptocloud';
-
-function nextId(prefix: string): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-}
 
 export class MockPaymentProvider implements PaymentProvider {
   public readonly id = 'mock_sim';
@@ -51,7 +45,7 @@ export class MockPaymentProvider implements PaymentProvider {
     const amountMinor = toMinorUnits(req.amountUsd);
     const now = Date.now();
     return Promise.resolve({
-      id: nextId('intent_sim'),
+      id: createId('intent_sim'),
       bookingReferenceId: req.bookingReferenceId,
       artistId: req.artistId,
       serviceId: req.serviceId,
@@ -77,7 +71,7 @@ export class MockPaymentProvider implements PaymentProvider {
     const { hash, isRealSha256 } = await computeSHA256Detailed(refInput);
 
     return {
-      sessionId: nextId('sess_sim'),
+      sessionId: createId('sess_sim'),
       intentId: req.intent.id,
       providerId: this.id,
       providerLabel: this.label,

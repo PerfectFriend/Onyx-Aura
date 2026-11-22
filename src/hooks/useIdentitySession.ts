@@ -6,6 +6,8 @@ import {
   PasskeyCredentialRecord,
   WebAuthnCapabilityReport,
 } from '../domain/identity';
+import { SupportedLanguage } from '../i18n/translations';
+import { formatAppMessage } from '../i18n/messages';
 import { UserRole } from '../types';
 import {
   authenticateDemoPasskeySim,
@@ -19,6 +21,7 @@ import {
 } from '../infrastructure/identity/webAuthnService';
 
 export interface UseIdentitySessionOptions {
+  language?: SupportedLanguage;
   initialPasskeys?: PasskeyCredentialRecord[];
   initialSession?: IdentitySession;
   externalRevision?: number;
@@ -33,6 +36,7 @@ export interface UseIdentitySessionOptions {
 }
 
 export function useIdentitySession({
+  language,
   initialPasskeys = [],
   initialSession = DEFAULT_ANONYMOUS_SESSION,
   externalRevision = 0,
@@ -156,6 +160,7 @@ export function useIdentitySession({
           role,
           masterInviteCode,
           existingCredentials: passkeys,
+          language,
         });
 
         const nextPasskeys = [created, ...passkeys];
@@ -180,19 +185,28 @@ export function useIdentitySession({
         );
 
         onNotify?.(
-          isServerBacked ? 'Passkey Server SPKI Active' : 'Passkey (WebAuthn) [LOCAL_ONLY]',
-          isServerBacked
-            ? `Ключ «${created.displayName}» зарегистрирован (${created.role}) и закреплён HttpOnly cookie.`
-            : `Ключ «${created.displayName}» сохранён в устройстве локально.`
+          formatAppMessage(
+            isServerBacked ? 'identity.register_server_title' : 'identity.register_local_title',
+            {},
+            language
+          ),
+          formatAppMessage(
+            isServerBacked ? 'identity.register_server_msg' : 'identity.register_local_msg',
+            { displayName: created.displayName, role: created.role },
+            language
+          )
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Не удалось создать Passkey.';
+        const message =
+          err instanceof Error
+            ? err.message
+            : formatAppMessage('identity.register_error', {}, language);
         setAuthError(message);
       } finally {
         setIsBusy(false);
       }
     },
-    [commitSession, onNotify, onPersistPasskeys, passkeys]
+    [commitSession, language, onNotify, onPersistPasskeys, passkeys]
   );
 
   const handleSignInWithPasskey = useCallback(async () => {
@@ -227,27 +241,46 @@ export function useIdentitySession({
         serverOk
       );
 
+      const detail = formatAppMessage(
+        verification === 'signature_verified'
+          ? 'identity.signin_sig_verified'
+          : 'identity.signin_presence_only',
+        {},
+        language
+      );
+
       onNotify?.(
+        formatAppMessage(
+          serverOk
+            ? 'identity.signin_server_title'
+            : verification === 'signature_verified'
+            ? 'identity.signin_local_sig_title'
+            : 'identity.signin_local_presence_title',
+          {},
+          language
+        ),
         serverOk
-          ? 'Passkey Server SPKI + HttpOnly Session'
-          : verification === 'signature_verified'
-          ? 'Passkey Signature Confirmed [LOCAL_ONLY]'
-          : 'Passkey Presence Only [LOCAL_ONLY]',
-        serverOk
-          ? `${credential.displayName}: подпись SPKI подтверждена на сервере + HttpOnly сессия (TTL 8ч).`
-          : `${credential.displayName}: ${
-              verification === 'signature_verified'
-                ? 'криптоподпись SPKI проверена локально'
-                : 'подтверждено только присутствие (без SPKI ключа)'
-            } (TTL 8ч).`
+          ? formatAppMessage(
+              'identity.signin_server_msg',
+              { displayName: credential.displayName },
+              language
+            )
+          : formatAppMessage(
+              'identity.signin_local_msg',
+              { displayName: credential.displayName, detail },
+              language
+            )
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не удалось выполнить вход по Passkey.';
+      const message =
+        err instanceof Error
+          ? err.message
+          : formatAppMessage('identity.signin_error', {}, language);
       setAuthError(message);
     } finally {
       setIsBusy(false);
     }
-  }, [commitSession, onNotify, onPersistPasskeys, passkeys]);
+  }, [commitSession, language, onNotify, onPersistPasskeys, passkeys]);
 
   const handleCreateDemoFallbackPasskey = useCallback(
     async (displayName: string, role: UserRole) => {
@@ -266,17 +299,24 @@ export function useIdentitySession({
         await commitSession(demoCred, true);
 
         onNotify?.(
-          '[SIM] Demo Passkey Preview',
-          `[SIM] Профиль «${demoCred.displayName}» активирован локально (без WebAuthn).`
+          formatAppMessage('identity.sim_create_title', {}, language),
+          formatAppMessage(
+            'identity.sim_create_msg',
+            { displayName: demoCred.displayName },
+            language
+          )
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Не удалось создать [SIM] ключ.';
+        const message =
+          err instanceof Error
+            ? err.message
+            : formatAppMessage('identity.sim_create_error', {}, language);
         setAuthError(message);
       } finally {
         setIsBusy(false);
       }
     },
-    [commitSession, onNotify, onPersistPasskeys, passkeys]
+    [commitSession, language, onNotify, onPersistPasskeys, passkeys]
   );
 
   const handleSignInDemoPasskey = useCallback(
@@ -284,7 +324,7 @@ export function useIdentitySession({
       setIsBusy(true);
       setAuthError(null);
       try {
-        const demoCred = authenticateDemoPasskeySim(passkeys, preferredId);
+        const demoCred = authenticateDemoPasskeySim(passkeys, preferredId, language);
         const nextPasskeys = passkeys.map(c => (c.id === demoCred.id ? demoCred : c));
 
         await onPersistPasskeys?.(nextPasskeys, 'DEMO_PASSKEY_SIM_SIGNIN', {
@@ -295,17 +335,24 @@ export function useIdentitySession({
         await commitSession(demoCred, false);
 
         onNotify?.(
-          '[SIM] Demo Passkey Sign-In',
-          `[SIM] Вход выполнен с сохранённым ключом «${demoCred.displayName}».`
+          formatAppMessage('identity.sim_signin_title', {}, language),
+          formatAppMessage(
+            'identity.sim_signin_msg',
+            { displayName: demoCred.displayName },
+            language
+          )
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Не удалось войти с [SIM] ключом.';
+        const message =
+          err instanceof Error
+            ? err.message
+            : formatAppMessage('identity.sim_signin_error', {}, language);
         setAuthError(message);
       } finally {
         setIsBusy(false);
       }
     },
-    [commitSession, onNotify, onPersistPasskeys, passkeys]
+    [commitSession, language, onNotify, onPersistPasskeys, passkeys]
   );
 
   const handleSignOut = useCallback(async () => {
@@ -317,14 +364,20 @@ export function useIdentitySession({
       await onPersistSession?.(anonymous, 'IDENTITY_SIGNED_OUT');
       setSession(anonymous);
       onRoleSynced?.('client');
-      onNotify?.('Passkey Session Ended', 'Сеанс завершён (клиент и HttpOnly cookie).');
+      onNotify?.(
+        formatAppMessage('identity.signout_title', {}, language),
+        formatAppMessage('identity.signout_msg', {}, language)
+      );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не удалось завершить сеанс в хранилище.';
+      const message =
+        err instanceof Error
+          ? err.message
+          : formatAppMessage('identity.signout_error', {}, language);
       setAuthError(message);
     } finally {
       setIsBusy(false);
     }
-  }, [onNotify, onPersistSession, onRoleSynced]);
+  }, [language, onNotify, onPersistSession, onRoleSynced]);
 
   const handleRevokePasskey = useCallback(
     async (credentialId: string) => {
@@ -343,13 +396,16 @@ export function useIdentitySession({
           onRoleSynced?.('client');
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Не удалось удалить ключ из хранилища.';
+        const message =
+          err instanceof Error
+            ? err.message
+            : formatAppMessage('identity.revoke_error', {}, language);
         setAuthError(message);
       } finally {
         setIsBusy(false);
       }
     },
-    [onPersistPasskeys, onPersistSession, onRoleSynced, passkeys, session.credentialId]
+    [language, onPersistPasskeys, onPersistSession, onRoleSynced, passkeys, session.credentialId]
   );
 
   return {

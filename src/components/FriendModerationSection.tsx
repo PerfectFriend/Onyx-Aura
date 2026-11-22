@@ -4,6 +4,7 @@ import {
   UserPlus, Award, ThumbsUp, ThumbsDown
 } from 'lucide-react';
 import { TranslationStrings } from '../i18n/translations';
+import { createShortId } from '../domain/ids';
 
 export interface FriendJuror {
   id: string;
@@ -113,13 +114,8 @@ export const FriendModerationSection: React.FC<FriendModerationSectionProps> = (
     e.preventDefault();
     if (!inviteInput.trim()) return;
 
-    const uniqueId =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID().slice(0, 8)
-        : `${Date.now()}`;
-
     const newFriend: FriendJuror = {
-      id: `fr-${uniqueId}`,
+      id: createShortId('fr'),
       name: inviteInput.trim(),
       avatar: '/assets/images/juror_user.jpg',
       handle: `@${inviteInput.trim().toLowerCase().replace(/\s+/g, '_')}`,

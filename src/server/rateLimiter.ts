@@ -43,6 +43,7 @@ export function createSlidingWindowRateLimiter(options: SlidingWindowRateLimitOp
       res.setHeader('Retry-After', String(retryAfterSec));
       options.onRateLimited?.(clientKey, bucketLabel);
       res.status(429).json({
+        code: 'rate_limited',
         error: `Too many requests to ${bucketLabel}; please retry after ${retryAfterSec}s.`,
       });
       return;

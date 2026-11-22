@@ -44,7 +44,7 @@ describe('Sprint 3.3 Hotfix — Kolyan Probes P1, P4, P5, N-06, N-07, N-11', () 
     expect(loaded.warnings.some(w => w.includes('chats'))).toBe(true);
 
     // Refuses overwriting an unreadable key until clean read
-    await expect(repo.saveChats([])).rejects.toThrow(/заблокирована|прочитана/i);
+    await expect(repo.saveChats([])).rejects.toThrow(/blocked|unreadable|заблокирована|прочитана/i);
   });
 
   it('N-02 (Proba P5): legacy v2 records without origin are migrated to v3 with explicit origin="user"', async () => {

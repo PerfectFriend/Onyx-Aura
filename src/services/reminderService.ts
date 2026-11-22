@@ -5,6 +5,7 @@
 // =============================================================================
 
 import { Appointment } from '../types';
+import { createShortId } from '../domain/ids';
 
 export interface ReminderNotificationEvent {
   id: string;
@@ -16,13 +17,6 @@ export interface ReminderNotificationEvent {
 }
 
 type ReminderListener = (event: ReminderNotificationEvent) => void;
-
-function nextId(prefix: string): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
-  }
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-}
 
 class ReminderService {
   private listeners: ReminderListener[] = [];
@@ -82,7 +76,7 @@ class ReminderService {
     const smsMessage = `[SIM Preview] 24h reminder: Appointment with ${apt.artistName} for "${apt.serviceName}" on ${apt.date} at ${apt.timeSlot}. No live SMS is sent.`;
 
     this.notify({
-      id: nextId('sim-24h'),
+      id: createShortId('sim-24h'),
       type: 'sms',
       title: '[SIM] Simulated 24h SMS Preview',
       message: smsMessage,
@@ -92,7 +86,7 @@ class ReminderService {
 
     if (apt.pushReminderScheduled) {
       this.notify({
-        id: nextId('sim-push-24h'),
+        id: createShortId('sim-push-24h'),
         type: 'push',
         title: `[SIM] 24h Push Preview: ${apt.serviceName}`,
         message: `Local preview for session with ${apt.artistName} at ${apt.timeSlot}.`,
@@ -107,7 +101,7 @@ class ReminderService {
     const smsMessage = `[SIM Preview] 2h alert: ${apt.artistName} for "${apt.serviceName}" at ${apt.timeSlot}. Demo notification only.`;
 
     this.notify({
-      id: nextId('sim-2h'),
+      id: createShortId('sim-2h'),
       type: 'sms',
       title: '[SIM] Simulated 2h SMS Preview',
       message: smsMessage,
@@ -116,7 +110,7 @@ class ReminderService {
     });
 
     this.notify({
-      id: nextId('sim-push-2h'),
+      id: createShortId('sim-push-2h'),
       type: 'push',
       title: `[SIM] 2h Push Preview: ${apt.artistName}`,
       message: `Session scheduled for ${apt.timeSlot} (instant demo alert).`,

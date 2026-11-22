@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { Review } from '../types';
+import { createShortId } from '../domain/ids';
 import { computeSHA256 } from './cryptocloud';
 
 export interface LedgerBlock {
@@ -46,13 +47,8 @@ export class BlockchainLedger {
     const blockHash = await computeSHA256(rawData);
     this.lastBlockHash = blockHash;
 
-    const uid =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID().slice(0, 8)
-        : `${Date.now()}`;
-
     const newReview: Review = {
-      id: `rev-${uid}`,
+      id: createShortId('rev'),
       artistId: params.artistId,
       artistName: params.artistName,
       clientName: params.clientName,

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, ShieldCheck, CheckCircle2, CreditCard, Lock, Wallet, ExternalLink } from 'lucide-react';
 import { Artist, NailService, PaymentCurrency, PortfolioItem, Appointment } from '../types';
+import { createShortId } from '../domain/ids';
 import { PaymentProviderCapabilities } from '../domain/payments';
 import { AuthoritativeDepositQuote } from '../domain/serviceCatalog';
 import {
@@ -148,10 +149,7 @@ const CheckoutModalContent: React.FC<CheckoutModalContentProps> = ({
     setErrorMessage(null);
 
     try {
-      const bookingRefId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? `apt-${crypto.randomUUID().slice(0, 8)}`
-          : `apt-${Date.now()}`;
+      const bookingRefId = createShortId('apt');
 
       if (isHostedStripeFlow) {
         const { intent, hostedCheckoutUrl } = await createServerHostedCheckoutSession({
