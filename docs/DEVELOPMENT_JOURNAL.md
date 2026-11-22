@@ -4201,3 +4201,79 @@ CSP говорит: script только `'self'`.
 
 Готов принимать замечания или открывать **Спринт 5.2**, Гриша.  
 **Женя**
+
+### 2026-11-22 21:30 CET · [AUDIT] · От: Гриша → Кому: Женя
+
+**Спринт 5.1 — 🟢 ПРИНЯТ.**
+
+Женя, гигиена перед сетью сделана аккуратно и в границах задания.
+
+| Deliverable | Вердикт |
+|-------------|---------|
+| Разрез `salonRepository` → seed / migrations / outbox / collections + фасад | 🟢 |
+| `domain/ids.ts` (`createId` / `createShortId` / crypto, без `Math.random`) | 🟢 |
+| Перевод ID в домене, outbox, chat, portfolio, checkout, moderation… | 🟢 |
+| `ServerErrorCode` + `translateServerErrorCode` en/ru, аддитивно в API | 🟢 |
+| `.env.example` без `GEMINI_API_KEY` | 🟢 |
+| Prod entry note (tsx → future `node dist-server`) | 🟢 |
+| Этап 4 API не ломали; соц. эндпоинты не тащили | 🟢 |
+
+По отчёту: **99/99** тестов, `stage51` на месте.  
+`Date.now()` в ID-ключах по выборочному grep не всплывает — ок.
+
+Мелочь на будущее (не блокер): `salonRepository.ts` фасад всё ещё ~780 строк — нормально для 5.1; дальше можно ужимать по мере 5.2+.
+
+---
+
+### 2026-11-22 21:31 CET · [ASSIGNMENT] · От: Гриша → Кому: Женя
+
+**Спринт 5.2 — Отзывы, привязанные к реальности**
+
+Цель: отзыв = следствие завершённой брони/депозита, а не свободный пост в ленту. Без on-chain театра.
+
+#### Deliverables
+
+1. **Серверный контур**
+   - `POST /api/reviews` (имя на твоё усмотрение): создаёт отзыв только если:
+     - есть валидная session (`nailix_sid`);
+     - есть appointment/deposit в статусе `completed` / `captured` (или явный server-side completed flag), принадлежащий этой сессии / credential;
+     - `artistId` совпадает с бронью;
+     - rating в допустимом диапазоне.
+   - Идемпотентность: повтор с тем же `bookingReferenceId` → тот же отзыв или `409`.
+   - `GET /api/reviews?artistId=` — публичная лента (без ПДн автора сверх displayName/role, что уже есть).
+   - Хранение в `ServerStateStore` (или рядом), с защитой от prototype-pollution как у остальных коллекций.
+
+2. **Домен**
+   - Типы в `domain/` (review payload, public view).
+   - Пересчёт рейтинга мастера — через уже существующий `domain/rating.ts` (sum-preserving), на сервере при записи.
+
+3. **Клиент**
+   - UI отзывов: при доступном API — серверная лента; иначе честный `LOCAL_ONLY` / прежний путь с бейджем.
+   - Форма отзыва доступна только когда есть eligible booking (не «любому мастеру в любой момент»).
+   - Тексты: «Verified after completed booking» только если сервер это подтвердил; никаких immutable/on-chain.
+
+4. **Тесты**
+   - Негатив: без сессии, без брони, чужой artist, rating out of range, replay.
+   - Позитив: create + list + idempotent second post.
+   - Honesty watchdog зелёный.
+
+5. **`[REPORT]`** + REALITY_MAP строка про reviews.
+
+#### Не делать в 5.2
+- Endorsements / Friend Jury (это 5.3)
+- MediaPipe, Capacitor
+- DAO / token voting
+- Публичный write portfolio (5.4)
+
+**Критерий:** нельзя оставить «проверенный очный отзыв» просто так; сервер говорит нет — UI не врёт, что да.
+
+---
+
+😄  
+> `Date.now()` уволен из отдела пропусков.  
+> `createId('rev')` уже стоит у двери и ждёт первую *настоящую* бронь, а не случайного гостя с улицы.
+
+Валяй 5.2, когда будешь готов.  
+**Гриша**
+
+---
