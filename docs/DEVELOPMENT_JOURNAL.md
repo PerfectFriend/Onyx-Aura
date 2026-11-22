@@ -4314,3 +4314,76 @@ CSP говорит: script только `'self'`.
 
 Готов к приёмке **Спринта 5.2** и постановке **Спринта 5.3**, Гриша.  
 **Женя**
+
+### 2026-11-22 21:45 CET · [AUDIT] · От: Гриша → Кому: Женя
+
+**Спринт 5.2 — 🟢 ПРИНЯТ.**
+
+Женя, это ровно тот социальный инвариант, который нужен: отзыв = следствие `captured` брони владельца сессии, а не пост «с улицы».
+
+| Критерий | Вердикт |
+|----------|---------|
+| Session `server_spki_verified` обязательна | 🟢 |
+| `ownerCredentialId` на intent + gate `booking_not_eligible` | 🟢 |
+| artist match, rating/text bounds | 🟢 |
+| Idempotent replay `200` / conflict `409` | 🟢 |
+| Public list без credential/intent | 🟢 |
+| `GET /api/reviews/eligible` | 🟢 |
+| Rating через `computeExactArtistRatingUpdate` на сервере | 🟢 |
+| UI: server vs `[SIM]` seed разделены; форма только при eligible | 🟢 |
+| REALITY_MAP v3.8 | 🟢 |
+| `stage52` adversarial-набор | 🟢 (по отчёту) |
+
+Бейдж «Confirmed after completed booking» только на серверных записях — закон 8 соблюдён.
+
+---
+
+### 2026-11-22 21:46 CET · [ASSIGNMENT] · От: Гриша → Кому: Женя
+
+**Спринт 5.3 — Круг доверия без DAO**
+
+Цель: рекомендации / endorsements от реальных passkey-сессий, **без** «голосования жюри в блокчейне».
+
+#### Deliverables
+
+1. **Сервер**
+   - `POST /api/trust/endorsements` — требует валидную session; body: `artistId` (+ optional short text).
+   - Правила (минимум):
+     - нельзя endors’ить самого себя;
+     - rate-limit per credential;
+     - один активный endorsement на пару (author, artist) — повтор идемпотентен или `409`;
+     - опционально soft-gate: автор когда-либо имел `captured` у этого artist (предпочтительно) **или** явный режим «client-session endorsement» с честной меткой `strength: 'session_only' | 'after_booking'`.
+   - `GET /api/trust/endorsements?artistId=` — публичный список (без authorCredentialId).
+   - Хранение в `ServerStateStore`, anti prototype-pollution, audit log codes.
+
+2. **Домен**
+   - Типы endorsement + public view в `domain/`.
+   - Никаких «consensus», «DAO», «on-chain vote» в именах и текстах.
+
+3. **Клиент**
+   - Friend Jury / moderation UI: переподписать на endorsements; `[SIM]` локальный путь оставить только с явным бейджем для оффлайна.
+   - Подписи вроде «Recommendation from Passkey client» / «After completed booking», не «Friend Jury DAO».
+
+4. **Тесты** — self-endorse reject, no session, rate limit smoke, list public shape, honesty watchdog.
+
+5. **`[REPORT]`** + REALITY_MAP.
+
+#### Не делать в 5.3
+- Token balances, staking, quadratic vote  
+- Portfolio publish API (5.4)  
+- Capacitor / AR
+
+**Критерий:** в UI и API нигде не торчит DAO-театр; рекомендация либо session-backed, либо честно `[SIM]`.
+
+---
+
+😄  
+> Friend Jury заходит в зал с табличкой «DAO CONSENSUS».  
+> Сервер: — Табличку снимите. Есть passkey и, желательно, `captured`.  
+> Jury: — А блокчейн?  
+> Гриша: — В музее симуляций, третий этаж, зал `[SIM]`.
+
+Удачи с 5.3.  
+**Гриша**
+
+---
